@@ -1,0 +1,84 @@
+{
+  "id": "P6",
+  "version": "1.0.0",
+  "name": "解説・講義（要点テロップ）",
+  "genre": "ビジネス",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      30,
+      60
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "question",
+      "strong_claim"
+    ],
+    "max_sec": 2.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end",
+      "shot_boundary"
+    ],
+    "min_shot_sec": 1.5,
+    "target_asl_sec": [
+      2.0,
+      4.0
+    ],
+    "remove_silence_over_sec": 0.6,
+    "punch_in_scale": 1.1,
+    "cold_open": "none",
+    "scene_fade_sec": 0.3
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "headline",
+      "counter"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 76,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "light",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "chill",
+    "bgm_db": -24
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "card": {
+    "opening": "問い・結論から入る",
+    "tempo": "言いよどみを削る（2〜4秒）",
+    "telop": "要点の強調・見出し・数字",
+    "sound": "原音を明瞭に"
+  },
+  "examples": [
+    {
+      "title": "中田敦彦のYouTube大学",
+      "url": "https://www.youtube.com/watch?v=qh5t4WMroyU"
+    },
+    {
+      "title": "Ali Abdaal: 10 Time Management Tips",
+      "url": "https://www.youtube.com/watch?v=iONDebHX9qk"
+    }
+  ],
+  "selection_rules": "1つの問いや主張に対して、理由や具体例を含む答えが完結している30〜60秒を選ぶ。数字・固有名詞は書き起こしのとおりに扱う。",
+  "reframe": "auto"
+}

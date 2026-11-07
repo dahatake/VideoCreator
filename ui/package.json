@@ -1,0 +1,20 @@
+{
+  "name": "videocreator-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fluent 2 web components bundle and icon rasteriser for VideoCreator",
+  "scripts": {
+    "build": "esbuild src/fluent.js --bundle --minify --format=esm --target=es2022 --outfile=../src/VideoCreator.App/wwwroot/js/fluent.bundle.js",
+    "icons": "node make-icons.mjs"
+  },
+  "dependencies": {
+    "@fluentui/tokens": "^1.0.0-alpha.24",
+    "@fluentui/web-components": "^3.1.4"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.65.0-alpha-2026-10-30"
+  }
+}

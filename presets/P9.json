@@ -1,0 +1,75 @@
+{
+  "id": "P9",
+  "version": "1.0.0",
+  "name": "ミニマル/環境音",
+  "genre": "趣味",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      30,
+      90
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "result"
+    ],
+    "max_sec": 3.0
+  },
+  "cut": {
+    "snap_to": [
+      "shot_boundary",
+      "sentence_end"
+    ],
+    "min_shot_sec": 3.0,
+    "target_asl_sec": [
+      3.0,
+      8.0
+    ],
+    "remove_silence_over_sec": null,
+    "punch_in_scale": 1.0,
+    "cold_open": "none"
+  },
+  "telop": {
+    "types": [],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 78,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "none",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "none"
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "incompatible_with": [
+    "P3"
+  ],
+  "card": {
+    "opening": "静かに作業の核心から",
+    "tempo": "長めのショット（3〜8秒）",
+    "telop": "なし",
+    "sound": "環境音のみ"
+  },
+  "examples": [
+    {
+      "title": "Primitive Technology: Tiled Roof Hut",
+      "url": "https://www.youtube.com/watch?v=P73REgj-3UE"
+    }
+  ],
+  "selection_rules": "テロップや音楽に頼らず、映像と環境音だけで没入できる、作業の核心や完成に近い連続した場面を選ぶ。",
+  "reframe": "blur"
+}

@@ -1,0 +1,83 @@
+{
+  "id": "P8",
+  "version": "1.0.0",
+  "name": "プロセス圧縮（料理/DIY）",
+  "genre": "趣味",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      20,
+      60
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "result"
+    ],
+    "max_sec": 1.5
+  },
+  "cut": {
+    "snap_to": [
+      "shot_boundary"
+    ],
+    "min_shot_sec": 1.0,
+    "target_asl_sec": [
+      1.0,
+      2.0
+    ],
+    "remove_silence_over_sec": 0.5,
+    "punch_in_scale": 1.1,
+    "cold_open": "teaser",
+    "speed_up": {
+      "teaser_sec": 1.5,
+      "max_factor": 12,
+      "speech_factor": 1.0,
+      "tail_sec": 4.0
+    }
+  },
+  "telop": {
+    "types": [
+      "emphasis",
+      "headline",
+      "counter"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 78,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "light",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "chill",
+    "bgm_db": -14
+  },
+  "loop": {
+    "required": false,
+    "enabled": true
+  },
+  "card": {
+    "opening": "完成品を先に見せる",
+    "tempo": "工程は1〜2秒で圧縮",
+    "telop": "工程名・数字",
+    "sound": "調理音（ASMR）重視"
+  },
+  "examples": [
+    {
+      "title": "Nick DiGiovanni: MasterChef Potatoes",
+      "url": "https://www.youtube.com/watch?v=HE_rKC9B6BY"
+    }
+  ],
+  "planner": "speed",
+  "reframe": "auto",
+  "selection_rules": "長い工程を早送りで圧縮し、完成の場面を先に見せる。"
+}

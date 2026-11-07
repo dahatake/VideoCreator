@@ -1,0 +1,15 @@
+# build
+bin/
+obj/
+*.user
+.vs/
+
+# third-party tools downloaded by scripts/get-tools.ps1
+tools/
+
+# node
+ui/node_modules/
+
+# generated test media and spike outputs (recreate with spikes/make-media.ps1, spikes/04a-make-speech.cs, spikes/07-make-long.cs)
+spikes/media/
+spikes/out/

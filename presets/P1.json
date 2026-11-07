@@ -1,0 +1,80 @@
+{
+  "id": "P1",
+  "version": "1.0.0",
+  "name": "ハイテンション・チャレンジ",
+  "genre": "エンタメ",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      25,
+      45
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "result",
+      "surprise"
+    ],
+    "max_sec": 1.5
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end",
+      "shot_boundary"
+    ],
+    "min_shot_sec": 0.8,
+    "target_asl_sec": [
+      0.8,
+      1.5
+    ],
+    "remove_silence_over_sec": 0.4,
+    "punch_in_scale": 1.2,
+    "cold_open": "teaser"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "headline",
+      "sfx",
+      "counter"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 80,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "heavy",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "upbeat",
+    "bgm_db": -17
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "card": {
+    "opening": "結果や賞金を1.5秒以内に見せる",
+    "tempo": "0.8〜1.5秒の速いカット＋ズーム",
+    "telop": "強調・効果音・カウンター",
+    "sound": "アップテンポBGMと効果音"
+  },
+  "examples": [
+    {
+      "title": "MrBeast: $456,000 Squid Game In Real Life!",
+      "url": "https://www.youtube.com/watch?v=0e3GPea1Tyg"
+    }
+  ],
+  "planner": "speech",
+  "reframe": "auto"
+}

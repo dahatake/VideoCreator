@@ -1,0 +1,82 @@
+{
+  "id": "P7",
+  "version": "1.0.0",
+  "name": "対談スイッチング",
+  "genre": "ビジネス/ポッドキャスト",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      30,
+      60
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "strong_claim"
+    ],
+    "max_sec": 2.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end"
+    ],
+    "min_shot_sec": 2.0,
+    "target_asl_sec": [
+      2.0,
+      6.0
+    ],
+    "remove_silence_over_sec": 1.2,
+    "punch_in_scale": 1.0,
+    "cold_open": "teaser"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "headline"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 76,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    },
+    "speaker_colors": true
+  },
+  "audio": {
+    "sfx": "none",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "none"
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "card": {
+    "opening": "最も強い発言を先出し",
+    "tempo": "話者切替（最小2秒）＋リアクション",
+    "telop": "話者色付き字幕",
+    "sound": "マスター音声1本"
+  },
+  "examples": [
+    {
+      "title": "PIVOT 公式チャンネル",
+      "url": "https://www.youtube.com/watch?v=JOE7Y_b7RlE"
+    }
+  ],
+  "planner": "switch",
+  "switching": {
+    "reaction_sec": 1.2,
+    "min_hold_sec": 2.0,
+    "wide_open_sec": 2.0,
+    "wide_every_sec": 45
+  },
+  "reframe": "auto"
+}

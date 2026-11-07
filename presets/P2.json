@@ -1,0 +1,80 @@
+{
+  "id": "P2",
+  "version": "1.0.0",
+  "name": "一発ネタ・ループ",
+  "genre": "エンタメ",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      15,
+      25
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "question",
+      "surprise"
+    ],
+    "max_sec": 1.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end",
+      "shot_boundary"
+    ],
+    "min_shot_sec": 1.0,
+    "target_asl_sec": [
+      1.0,
+      2.0
+    ],
+    "remove_silence_over_sec": 0.5,
+    "punch_in_scale": 1.1,
+    "cold_open": "none"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 80,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "none",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "none"
+  },
+  "loop": {
+    "required": true,
+    "enabled": true
+  },
+  "card": {
+    "opening": "問いや“ありえない瞬間”から入る",
+    "tempo": "15〜25秒で一点突破",
+    "telop": "最小限（字幕＋強調）",
+    "sound": "原音中心、余韻なしで冒頭に戻る"
+  },
+  "examples": [
+    {
+      "title": "MrBeast: Katana Vs Bullet",
+      "url": "https://www.youtube.com/shorts/L5kIXRdwGAI"
+    },
+    {
+      "title": "Zach King (TikTok)",
+      "url": "https://www.tiktok.com/@zachking/video/6768504823336815877"
+    }
+  ],
+  "selection_rules": "1つの問い（または驚き）とその答え（オチ）だけで完結する、15〜25秒の短い場面を選ぶ。最後の文が冒頭の問いに答え、繰り返し見たくなるものを優先する。",
+  "reframe": "auto"
+}

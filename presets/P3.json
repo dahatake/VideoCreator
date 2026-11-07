@@ -1,0 +1,82 @@
+{
+  "id": "P3",
+  "version": "1.0.0",
+  "name": "バラエティ・テロップ",
+  "genre": "エンタメ（日本）",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      25,
+      60
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "laughter",
+      "surprise"
+    ],
+    "max_sec": 2.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end",
+      "shot_boundary"
+    ],
+    "min_shot_sec": 1.0,
+    "target_asl_sec": [
+      1.0,
+      2.5
+    ],
+    "remove_silence_over_sec": 0.5,
+    "punch_in_scale": 1.15,
+    "cold_open": "teaser"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "tsukkomi",
+      "headline",
+      "sfx"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 80,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "heavy",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "upbeat",
+    "bgm_db": -19
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "incompatible_with": [
+    "P9"
+  ],
+  "card": {
+    "opening": "笑い・リアクションの瞬間から",
+    "tempo": "1〜2.5秒、ツッコミで間を作る",
+    "telop": "ツッコミ・擬音・強調をフル活用",
+    "sound": "効果音多め"
+  },
+  "examples": [
+    {
+      "title": "東海オンエア: 即帰宅の京都旅",
+      "url": "https://www.youtube.com/watch?v=SJdhLwEKDc4"
+    }
+  ],
+  "reframe": "auto"
+}

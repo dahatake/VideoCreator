@@ -1,0 +1,82 @@
+{
+  "id": "P4",
+  "version": "1.0.0",
+  "name": "切り抜き（長尺→30秒）",
+  "genre": "全ジャンル",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      25,
+      35
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "strong_claim",
+      "laughter",
+      "surprise"
+    ],
+    "max_sec": 2.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end",
+      "shot_boundary"
+    ],
+    "min_shot_sec": 1.0,
+    "target_asl_sec": [
+      1.5,
+      3.0
+    ],
+    "remove_silence_over_sec": 0.7,
+    "punch_in_scale": 1.15,
+    "cold_open": "teaser"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "headline"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 78,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "light",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "none"
+  },
+  "loop": {
+    "required": false,
+    "enabled": true
+  },
+  "card": {
+    "opening": "最も強い一言・オチを冒頭2秒に",
+    "tempo": "無音を詰めたジャンプカット＋パンチイン",
+    "telop": "全文字幕・強調・見出し",
+    "sound": "原音を -14 LUFS に整える"
+  },
+  "examples": [
+    {
+      "title": "HikakinClipTV: ジャンケンに勝たせてくれるヒカキン",
+      "url": "https://www.youtube.com/watch?v=rYNxkATSgk0"
+    },
+    {
+      "title": "The Diary Of A CEO",
+      "url": "https://www.youtube.com/watch?v=a1mI-ozLyYM"
+    }
+  ],
+  "selection_rules": "単体で意味が通り、冒頭に結果・驚き・強い主張・問いがあり、最後にオチ（ペイオフ）がある25〜35秒を選ぶ。",
+  "reframe": "auto"
+}
