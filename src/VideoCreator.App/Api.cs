@@ -137,13 +137,22 @@ public static class Api
             rt.Store.Put(Kinds.Rights, r.Id, id, r);
             return Results.Json(r, Json.Options, statusCode: 201);
         });
-        api.MapGet("/projects/{id}/estimate", (Runtime rt, string id) =>
+        api.MapGet("/projects/{id}/estimate", (Runtime rt, string id, string? preset) =>
         {
             var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
             var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
             if (main == null) return Error(404, "E-NOT-FOUND", "素材がありません");
             var runner = rt.CreateRunner();
-            return Results.Json(new { cost = runner.EstimateCost(main), scopes = runner.EstimateScopes(main), duration = main.Media.Duration }, Json.Options);
+            // series preview: the length after jump cuts when the source has been transcribed before (the transcript is cached), else null
+            var tr = runner.LoadTranscript(main);
+            var p = rt.Presets.GetValueOrDefault(preset ?? "P4") ?? rt.Presets["P4"];
+            double? edited = tr.Sentences.Count > 0 ? Math.Round(Planning.SeriesPlanner.EditedLength(tr, p, main.Media.Duration), 1) : null;
+            var series = new
+            {
+                edited_sec = edited,
+                max_parts = Planning.SeriesPlanner.MaxPartsFor(edited ?? main.Media.Duration, tr.Sentences.Count > 0 ? tr.Sentences.Count : int.MaxValue),
+            };
+            return Results.Json(new { cost = runner.EstimateCost(main), scopes = runner.EstimateScopes(main), duration = main.Media.Duration, series }, Json.Options);
         });
 
         api.MapPatch("/assets/{id}", (Runtime rt, string id, PatchAsset req) =>
@@ -270,7 +279,7 @@ public static class Api
                 if (req.Ops.Any(o => o.Op == "set_bgm") && rt.Presets[plan.Preset.Id].Planner == "beat")
                     return Error(422, "E-VALIDATION", "ビート同期では BGM を変えるとカットも変わります。条件を変えて作り直してください");
                 if (plan.Series != null && req.Ops.Any(o => o.Op is "adjust" or "replan"))
-                    return Error(422, "E-VALIDATION", "前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません。1本あたりの長さを変えて作り直してください");
+                    return Error(422, "E-VALIDATION", "前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません。本数か1本あたりの長さを変えて作り直してください");
                 if (req.Ops.Any(o => o.Op == "set_bgm" && !string.IsNullOrEmpty(o.Target) && o.Target != "none" && rt.Audio.Find(o.Target) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, o.Target) == null))
                     return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
                 var simple = req.Ops.Where(o => o.Op is not ("adjust" or "replan")).ToList();
@@ -357,16 +366,23 @@ public static class Api
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
         var runner = rt.CreateRunner();
         var mainAsset = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets[0];
+        if (options.PartMinutes != null && options.Parts != null) return Error(422, "E-VALIDATION", "本数と1本あたりの長さは、どちらか一方だけを指定してください");
+        if (options.Parts is int np)
+        {
+            if (np < 2 || np > Planning.SeriesPlanner.MaxParts) return Error(422, "E-VALIDATION", $"本数は 2〜{Planning.SeriesPlanner.MaxParts} 本で指定してください");
+            int max = Planning.SeriesPlanner.MaxPartsFor(mainAsset.Media.Duration, int.MaxValue);
+            if (np > max) return Error(422, "E-SERIES-PARTS", max < 2 ? $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため分けられません" : $"{np}本に分けると1本あたり{Planning.SeriesPlanner.MinPartSec / 60:0}分未満になります。この動画（{mainAsset.Media.Duration / 60:F1}分）は最大 {max} 本まで分けられます");
+        }
+        if (options.IsSeries && main.Planner is not ("speech" or "switch")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
         if (options.PartMinutes is double pm)
         {
             if (!double.IsFinite(pm) || pm < MinPartMinutes || pm > MaxPartMinutes) return Error(422, "E-VALIDATION", $"1本あたりの長さは {MinPartMinutes}〜{MaxPartMinutes} 分で指定してください");
-            if (main.Planner is not ("speech" or "switch")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
             if (mainAsset.Media.Duration < 1.5 * pm * 60) return Error(422, "E-SERIES-SHORT", $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため、{pm:0.#}分ずつに分けられません。1本あたりの長さを {Math.Floor(mainAsset.Media.Duration / 60 / 2 * 10) / 10:0.#}分以下にしてください");
         }
         var job = new Job
         {
             Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = presetIds, Instruction = instruction, Options = options,
-            ExcludeCandidateIds = exclude, Cost = runner.EstimateCost(mainAsset, options.PartMinutes != null ? "full" : options.Scope),
+            ExcludeCandidateIds = exclude, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope),
         };
         q.EnqueueJob(job);
         return Results.Json(new { job_id = job.Id, cost = job.Cost }, Json.Options, statusCode: 202);

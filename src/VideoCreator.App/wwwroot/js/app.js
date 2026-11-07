@@ -162,10 +162,10 @@ async function project(id) {
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   let selected = sessionStorage.getItem(`preset:${id}`) ?? 'P4';
   const saved = JSON.parse(sessionStorage.getItem(`opts:${id}`) ?? '{}');
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, part_minutes: saved.part_minutes ?? 15 };
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15 };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
-  if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate`); } catch { }
+  if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
   const lastJob = d.jobs[0];
   const roleLabel = { main: '基準（音声の元）', cam_a: 'カメラA', cam_b: 'カメラB', wide: '引き（全体）', audio_master: '音声のみの基準' };
   const scopeLabel = { economy: ['節約', '盛り上がりの大きい区間だけを AI に送ります（速い・安い）'], balanced: ['標準', '半分程度に絞って AI に送ります'], full: ['全文', '書き起こし全体を AI に送ります（いちばん見落としが少ない）'] };
@@ -231,9 +231,12 @@ async function project(id) {
         <h2 id="h-gen">3. 生成する</h2>
         <div class="col-body stack" style="gap:16px">
         <div class="stack">
-          <h3>長さを指定して分ける（前編・後編）</h3>
-          ${field('1本の長さを指定して、前編・後編のように続けて見るシリーズにする', `<fluent-switch slot="input" id="seriesSw" ${opts.series ? 'checked' : ''}></fluent-switch>`)}
-          <label class="caption">1本あたり <input class="native" type="number" id="partMin" min="1" max="60" step="0.5" value="${esc(opts.part_minutes)}" style="width:72px" aria-describedby="seriesInfo"> 分</label>
+          <h3>シリーズに分ける（前編・中編・後編…）</h3>
+          ${field('長尺を、前編・後編のように続けて見るシリーズに分ける', `<fluent-switch slot="input" id="seriesSw" ${opts.series ? 'checked' : ''}></fluent-switch>`)}
+          <fieldset class="series-by" aria-describedby="seriesInfo"><legend class="caption">分け方</legend>
+            <label class="caption"><input type="radio" name="seriesBy" value="parts" ${opts.series_by === 'parts' ? 'checked' : ''}> 本数で指定 <input class="native" type="number" id="partCount" min="2" max="20" step="1" value="${esc(opts.parts)}" style="width:64px" aria-label="本数"> 本</label>
+            <label class="caption"><input type="radio" name="seriesBy" value="minutes" ${opts.series_by !== 'parts' ? 'checked' : ''}> 1本の長さで指定 <input class="native" type="number" id="partMin" min="1" max="60" step="0.5" value="${esc(opts.part_minutes)}" style="width:72px" aria-label="1本あたりの分数"> 分</label>
+          </fieldset>
           <p class="caption" id="seriesInfo" aria-live="polite"></p>
         </div>
         <div id="scopeBox">
@@ -308,22 +311,38 @@ async function project(id) {
   showCost();
   const seriesLabels = (n) => n === 2 ? ['前編', '後編'] : n === 3 ? ['前編', '中編', '後編'] : Array.from({ length: n }, (_, i) => `第${i + 1}話`);
   const showSeries = () => {
-    const on = opts.series, min = Number(opts.part_minutes);
-    $('#partMin').disabled = !on;
+    const on = opts.series, byParts = opts.series_by === 'parts', min = Number(opts.part_minutes), parts = Number(opts.parts);
+    $('#partMin').disabled = !on || byParts; $('#partCount').disabled = !on || !byParts;
+    $$('input[name=seriesBy]').forEach(r => { r.disabled = !on; });
     $('#scopeBox').classList.toggle('muted-box', on); $('#scopeBox').inert = on;
-    $('#gen').textContent = on ? '前編・後編をつくる' : '候補を3本つくる';
     const el = $('#seriesInfo');
-    if (!on) { el.textContent = 'オフのときは、見どころを切り出したショート候補を3本つくります。'; return; }
+    if (!on) { $('#gen').textContent = '候補を3本つくる'; el.textContent = 'オフのときは、見どころを切り出したショート候補を3本つくります。'; return; }
+    $('#gen').textContent = byParts && parts >= 2 ? `${seriesLabels(parts).length}本（${seriesLabels(parts).slice(0, 3).join('・')}${parts > 3 ? '…' : ''}）をつくる` : '前編・後編をつくる';
+    if (!estimate) { el.textContent = '素材を追加すると、1本あたりの長さの目安が表示されます。'; return; }
+    // the length after jump cuts is known once the video has been transcribed (any earlier generation); otherwise the raw length is used
+    const se = estimate.series ?? {}, edited = se.edited_sec, base = edited ?? estimate.duration;
+    const basis = edited != null ? `無音カット後の推定 ${fmt(edited)}` : `元の長さ ${fmt(estimate.duration)}（無音のカットで短くなります）`;
+    const max = se.max_parts ?? 0;
+    $('#partCount').max = String(Math.max(2, max));
+    const tail = '分け目は時間ではなく話題の切れ目で決まるため、各パートの長さは前後します。各パートの冒頭に見どころ、2本目以降に前のパートのおさらい、最後に「〜につづく」と次の予告が入ります。AI には書き起こし全体を送ります。';
+    if (byParts) {
+      if (!(Number.isInteger(parts) && parts >= 2 && parts <= 20)) { el.textContent = '本数は 2〜20 本の整数で指定してください。'; return; }
+      if (max < 2) { el.textContent = `この動画（${basis}）は短いため分けられません（1本あたり1分以上が必要です）。`; return; }
+      if (parts > max) { el.textContent = `${parts}本では1本あたり1分未満になります。この動画（${basis}）は最大 ${max} 本まで分けられます。`; return; }
+      el.textContent = `${parts}本（${seriesLabels(parts).join('・')}）、1本あたり 約${fmt(base / parts)}（${basis}を${parts}等分した目安）。${tail}`;
+      return;
+    }
     if (!(min >= 1 && min <= 60)) { el.textContent = '1本あたりの長さは 1〜60 分で指定してください。'; return; }
-    if (!estimate) { el.textContent = '素材を追加すると、何本に分かれるかの目安が表示されます。'; return; }
-    const n = Math.round(estimate.duration / (min * 60));
+    const n = Math.round(base / (min * 60));
     el.textContent = n < 2
-      ? `この動画（${fmt(estimate.duration)}）は ${min} 分の2本分に足りません。1本あたりの長さを ${Math.floor(estimate.duration / 120 * 10) / 10} 分以下にしてください。`
-      : `この動画（${fmt(estimate.duration)}）なら約 ${n} 本（${seriesLabels(n).join('・')}）。分け目は時間ではなく話題の切れ目で決まるため、各パートの長さは前後します（無音のカットでも短くなります）。各パートの冒頭に見どころ、2本目以降に前のパートのおさらい、最後に「〜につづく」と次の予告が入ります。AI には書き起こし全体を送ります。`;
+      ? `この動画（${basis}）は ${min} 分の2本分に足りません。1本あたりの長さを短くするか、本数で指定してください。`
+      : `約 ${n} 本（${seriesLabels(n).join('・')}）、1本あたり 約${fmt(base / n)}（${basis}から）。${tail}`;
   };
   showSeries();
   $('#seriesSw').addEventListener('change', () => { opts.series = $('#seriesSw').checked; saveOpts(); showSeries(); showCost(); });
   $('#partMin').addEventListener('input', () => { opts.part_minutes = Number($('#partMin').value); saveOpts(); showSeries(); });
+  $('#partCount').addEventListener('input', () => { opts.parts = Number($('#partCount').value); saveOpts(); showSeries(); });
+  $$('input[name=seriesBy]').forEach(r => r.addEventListener('change', () => { if (r.checked) { opts.series_by = r.value; saveOpts(); showSeries(); } }));
   $$('#scopes [role=radio]').forEach(el => {
     const pick = () => { opts.scope = el.dataset.scope; saveOpts(); $$('#scopes [role=radio]').forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); showCost(); };
     el.addEventListener('click', pick);
@@ -380,14 +399,16 @@ async function project(id) {
     if (el.classList.contains('disabled')) return;
     selected = el.dataset.id; sessionStorage.setItem(`preset:${id}`, selected);
     $$('#presets [role=radio]').forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); });
+    // the pattern's pause threshold changes the length after jump cuts, so refresh the series preview
+    if (assets.length) api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`).then(e => { estimate = e; showSeries(); }).catch(() => { });
   };
   $$('#presets [role=radio]').forEach(el => {
     el.addEventListener('click', (e) => { if (e.target.closest('a')) return; choose(el); });
     el.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); choose(el); } });
   });
   $('#gen').addEventListener('click', async () => {
-    const { series, part_minutes, ...rest } = opts;
-    const options = { ...rest, part_minutes: series ? Number(part_minutes) : null };
+    const { series, series_by, parts, part_minutes, ...rest } = opts;
+    const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null };
     try { const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options } }); location.hash = `#/job/${r.job_id}`; }
     catch (e) { $('#genMsg').innerHTML = errorBar(e); }
   });
@@ -486,7 +507,7 @@ function seriesView(j, list) {
     <div class="row" style="justify-content:space-between"><h1>シリーズ（${list.length}本）${first.series_title ? `: ${esc(first.series_title)}` : ''}</h1>
       <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
-    <p class="caption">1本あたり 約${(first.target_sec / 60).toFixed(1)}分の指定 · 合計 ${fmt(total)} · 章分け: ${esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : '書き起こしの語彙の変化（AI なし）')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
+    <p class="caption">${first.requested_parts ? `${first.requested_parts}本に指定（1本あたり 約${(first.target_sec / 60).toFixed(1)}分）` : `1本あたり 約${(first.target_sec / 60).toFixed(1)}分の指定`} · 合計 ${fmt(total)} · 章分け: ${esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : '書き起こしの語彙の変化（AI なし）')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
     <div class="grid cols-cands">
       ${list.map(({ candidate: c, preview_url, preview }) => {
         const se = c.series;
@@ -503,7 +524,7 @@ function seriesView(j, list) {
         </article>`;
       }).join('')}
     </div>
-    <p class="caption" style="margin-top:16px">分け目を変えたいときは、プロジェクトに戻って1本あたりの長さを変えて作り直してください。書き出しはパートごとに行います（投稿用メタデータにチャプターとシリーズのリンク欄が入ります）。</p>`;
+    <p class="caption" style="margin-top:16px">分け目を変えたいときは、プロジェクトに戻って本数か1本あたりの長さを変えて作り直してください。書き出しはパートごとに行います（投稿用メタデータにチャプターとシリーズのリンク欄が入ります）。</p>`;
   wireSafeToggle();
 }
 
@@ -546,7 +567,7 @@ async function review(epId) {
           <details><summary class="caption">書き起こしを直す（誤認識の修正）</summary>
             <p class="caption">この動画に使われている範囲の単語です。直すと字幕が作り直されます（時刻はそのまま。字幕を手で直していた場合はやり直しになります）。</p>
             <div class="words">${tr.words.filter(w => plan.timeline.some(c => (w.t0 + w.t1) / 2 >= (c.audio_in ?? c.src_in) && (w.t0 + w.t1) / 2 <= (c.audio_in ?? c.src_in) + (c.src_out - c.src_in))).map(w => `<input class="native wd" data-id="${esc(w.id)}" value="${esc(w.text)}" size="${Math.max(2, [...w.text].length + 1)}" maxlength="30" aria-label="単語 ${esc(w.text)}">`).join('')}</div></details>
-          ${plan.series ? '<p class="caption">前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません（1本あたりの長さを変えて作り直します）。</p>' : `<h3>区間の調整（文単位）</h3>
+          ${plan.series ? '<p class="caption">前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません（本数か1本あたりの長さを変えて作り直します）。</p>' : `<h3>区間の調整（文単位）</h3>
           <div class="row"><fluent-button size="small" data-adj="start:1">開始を1文前へ</fluent-button><fluent-button size="small" data-adj="start:-1">開始を1文後へ</fluent-button></div>
           <div class="row"><fluent-button size="small" data-adj="end:-1">終了を1文前へ</fluent-button><fluent-button size="small" data-adj="end:1">終了を1文後へ</fluent-button></div>`}
           <h3 style="margin-top:8px">自動チェック</h3>

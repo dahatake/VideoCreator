@@ -94,7 +94,7 @@ public static class PlanBuilder
             series = new SeriesInfo
             {
                 Part = part.Index + 1, Parts = part.Count, Label = part.Label, Labels = part.Labels, SeriesTitle = part.SeriesTitle,
-                TargetSec = part.TargetSec, MinSec = part.MinSec, MaxSec = part.MaxSec, Body = part.Body, Chapters = chapters, Boundary = part.Boundary,
+                TargetSec = part.TargetSec, RequestedParts = part.RequestedParts, MinSec = part.MinSec, MaxSec = part.MaxSec, Body = part.Body, Chapters = chapters, Boundary = part.Boundary,
             };
         }
         else telops = TelopBuilder.Build(clips, tr, p, r.Candidate.HookText, r.Candidate.Headline, r.Candidate.EmphasisWords, notes);

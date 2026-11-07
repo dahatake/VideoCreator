@@ -35,6 +35,7 @@ public sealed record SeriesPart
     public List<ChapterMark> Chapters { get; init; } = [];
     public List<string> Emphasis { get; init; } = [];
     public double TargetSec { get; init; }
+    public int? RequestedParts { get; init; }
     public double MinSec { get; init; }
     public double MaxSec { get; init; }
     public double EstSec { get; init; }
@@ -423,7 +424,13 @@ public static partial class SeriesPlanner
             string boundary = k + 1 < parts ? Describe(tr, depth, outline, bounds[k + 1], labels[k + 1]) : "最後のパート";
             specs[k] = sp with { Recap = recap, Next = next, Boundary = boundary };
         }
-        notes.Add($"編集後の合計 約{total / 60:F1}分を、指定の {targetSec / 60:0.#}分に近い {parts} 本（{string.Join("・", labels)}）に分けました。分け目は話題の切れ目から選んでいます（{(outline.Source == "llm" ? "AI の章分け" : "書き起こしの語彙の変化")}＋間＋話題転換語）");
+        var how = requestedParts != null ? $"指定の {parts} 本（{string.Join("・", labels)}、1本あたり約{total / parts / 60:F1}分）" : $"指定の {targetSec!.Value / 60:0.#}分に近い {parts} 本（{string.Join("・", labels)}）";
+        notes.Add($"編集後の合計 約{total / 60:F1}分を、{how}に分けました。分け目は話題の切れ目から選んでいます（{(outline.Source == "llm" ? "AI の章分け" : "書き起こしの語彙の変化")}＋間＋話題転換語）");
+        // a split that is not at a topic change (not a chapter start, no topic-change words) means the requested count outran the material's topics
+        var starts = outline.Chapters.Where(c => c.SplitScore >= 0).Select(c => c.Start).ToHashSet();
+        var mid = cuts.Select((c, k) => (c, k)).Where(x => !starts.Contains(x.c) && !IsTopicMarker(s[x.c].Text)).ToList();
+        if (mid.Count > 0)
+            notes.Add($"話題の切れ目が足りないため、{string.Join("、", mid.Select(x => $"{labels[x.k]}と{labels[x.k + 1]}の間（{(int)(s[x.c].T0 / 60)}:{(int)(s[x.c].T0 % 60):D2}）"))}は話題の途中で分けています（文の切れ目では分けています）。本数を減らすと話題の切れ目で分けやすくなります");
         return specs;
     }
 

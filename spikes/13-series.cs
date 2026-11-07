@@ -5,7 +5,7 @@
 //     clock split (15:00) and with ablations (no AI; no AI and no topic-change words), and scores the chapters (Pk / WindowDiff).
 //  3. Measures the exported files with ffprobe and the EBU R128 meter (ebur128), and re-transcribes them with
 //     Azure AI Speech to check that the body speech is really in the output and the structure (cold open, recap, next) is where it should be.
-// Usage (app running): dotnet run spikes/13-series.cs [path-to-video] [minutes-per-part]
+// Usage (app running): dotnet run spikes/13-series.cs [path-to-video] [minutes-per-part | parts=N]
 #:property PublishAot=false
 #:project ../src/VideoCreator.Core/VideoCreator.Core.csproj
 using System.Diagnostics;
@@ -25,12 +25,13 @@ using VideoCreator.Signals;
 
 var root = Directory.GetCurrentDirectory();
 var video = Path.GetFullPath(args.Length > 0 ? args[0] : Path.Combine(root, "spikes", "media", "long30.mp4"));
-double minutes = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 15;
+int? partsWanted = args.Length > 1 && args[1].StartsWith("parts=") ? int.Parse(args[1][6..]) : null;
+double minutes = args.Length > 1 && partsWanted == null ? double.Parse(args[1], CultureInfo.InvariantCulture) : 15;
 var outDir = Path.Combine(root, "spikes", "out", "series"); Directory.CreateDirectory(outDir);
 var bin = Path.Combine(root, "tools", "ffmpeg", "bin");
 int fails = 0;
 void Check(bool ok, string msg) { Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {msg}"); if (!ok) fails++; }
-var report = new JsonObject { ["video"] = video, ["minutes_per_part"] = minutes };
+var report = new JsonObject { ["video"] = video, ["minutes_per_part"] = partsWanted == null ? minutes : null, ["parts"] = partsWanted };
 
 using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8765/"), Timeout = TimeSpan.FromMinutes(10) };
 http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
@@ -50,7 +51,8 @@ var pid = project["id"]!.GetValue<string>();
 var asset = await Api(HttpMethod.Post, $"api/projects/{pid}/assets", new { path = video });
 var aid = asset["id"]!.GetValue<string>();
 await Api(HttpMethod.Post, $"api/projects/{pid}/rights", new { asset_id = aid, confirmed = true });
-var start = await Api(HttpMethod.Post, $"api/projects/{pid}/jobs", new { preset_ids = new[] { "P4" }, options = new { part_minutes = minutes } });
+// after the job the transcript is cached, so the estimate endpoint returns the same edited length the screen shows before generating
+var start = await Api(HttpMethod.Post, $"api/projects/{pid}/jobs", new { preset_ids = new[] { "P4" }, options = partsWanted != null ? (object)new { parts = partsWanted } : new { part_minutes = minutes } });
 var jobId = start["job_id"]!.GetValue<string>();
 Console.WriteLine($"job {jobId} (estimate ¥{start["cost"]?["estimated_jpy"]})");
 JsonNode job;
@@ -80,7 +82,11 @@ static string Clock(double t) => $"{(int)(t / 60)}:{(int)(t % 60):D2}";
 double Nearest(double t) => truth.Min(i => Math.Abs(tr.Sentences[i].T0 - t));
 
 var parts = cands.Select(c => c["candidate"]!["series"]!).ToList();
-Check(parts.Count == (int)Math.Round(tr.Duration / 60 / minutes), $"{parts.Count} parts for {tr.Duration / 60:F1} min at {minutes} min per part ({string.Join("・", parts.Select(p => p["label"]))})");
+var est = await Api(HttpMethod.Get, $"api/projects/{pid}/estimate?preset=P4");
+double editedSec = est["series"]!["edited_sec"]!.GetValue<double>();
+int expectedParts = partsWanted ?? (int)Math.Round(editedSec / 60 / minutes);
+Check(parts.Count == expectedParts, $"{parts.Count} parts (requested {(partsWanted != null ? $"{partsWanted} parts" : $"{minutes} min per part")}: {string.Join("・", parts.Select(p => p["label"]))}); screen preview: edited {Clock(editedSec)} → about {Clock(editedSec / expectedParts)} per part, max {est["series"]!["max_parts"]} parts");
+report["preview_per_part_sec"] = Math.Round(editedSec / expectedParts, 1);
 var appCuts = parts.Skip(1).Select(p => p["body"]!["t0"]!.GetValue<double>()).ToList();
 foreach (var (cut, k) in appCuts.Select((c, k) => (c, k)))
 {
@@ -126,7 +132,7 @@ var refSeg = Seg(truth); int kw = Math.Max(2, (int)Math.Round(n / (double)truth.
 var variantsReport = new JsonArray();
 foreach (var (name, t, o) in variants)
 {
-    var cuts = SeriesPlanner.Split(t, sig, preset, tr.Duration, minutes * 60, o, []).Skip(1).Select(p => p.First).ToList();
+    var cuts = SeriesPlanner.Split(t, sig, preset, tr.Duration, partsWanted == null ? minutes * 60 : null, partsWanted, o, []).Skip(1).Select(p => p.First).ToList();
     var (pk, wd) = Score(Seg(o.Chapters.Select(c => c.Start)));
     int hits = cuts.Count(truth.Contains);
     Console.WriteLine($"      {name}: split at {string.Join(", ", cuts.Select(c => Clock(tr.Sentences[c].T0)))} → on a true topic start {hits}/{cuts.Count}; chapters {o.Chapters.Count} (truth {truth.Count}) Pk={pk:F3} WindowDiff={wd:F3}");
@@ -178,7 +184,9 @@ foreach (var c in cands)
     var tp = double.Parse(System.Text.RegularExpressions.Regex.Matches(eb, @"Peak:\s+(-?[\d.]+) dBFS").Last().Groups[1].Value, CultureInfo.InvariantCulture);
     double min = se["min_sec"]!.GetValue<double>(), max = se["max_sec"]!.GetValue<double>();
     Check($"{vs["width"]}x{vs["height"]}" == "1080x1920", $"{label}: ffprobe {vs["width"]}x{vs["height"]}");
-    Check(dur >= min && dur <= max, $"{label}: ffprobe duration {Clock(dur)} within {Clock(min)}–{Clock(max)} (requested {minutes} min)");
+    Check(dur >= min && dur <= max, $"{label}: ffprobe duration {Clock(dur)} within {Clock(min)}–{Clock(max)}");
+    double previewSec = editedSec / expectedParts;
+    Check(Math.Abs(dur - previewSec) / previewSec <= 0.25, $"{label}: measured {Clock(dur)} vs the length shown before generating {Clock(previewSec)} ({(dur - previewSec) / previewSec:+0%;-0%})");
     Check(Math.Abs(I + 14) <= 1 && tp <= -1.0, $"{label}: ebur128 integrated {I:F1} LUFS, true peak {tp:F1} dBTP");
     // re-transcribe the output
     var flac = Path.Combine(outDir, $"{label}.flac");

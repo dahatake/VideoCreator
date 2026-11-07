@@ -105,6 +105,50 @@ public class SeriesTests
         Assert.Contains("分けやすさ 10/10", ai[0].Boundary);
     }
 
+    [Fact] // the user picks the count: exactly that many parts, balanced, every split on a true topic start
+    public void Requested_count_gives_exactly_that_many_parts_on_topic_starts()
+    {
+        var (tr, truth) = SyntheticTalk.Build(Topics);
+        var sig = Fixtures.Signals(tr);
+        var notes = new List<string>();
+        var parts = SeriesPlanner.Split(tr, sig, P4, tr.Duration, null, 3, SeriesPlanner.FallbackOutline(tr, sig), notes);
+        Assert.Equal(3, parts.Count);
+        Assert.Equal(["前編", "中編", "後編"], parts.Select(p => p.Label));
+        Assert.All(parts.Skip(1), p => Assert.Contains(p.First, truth));
+        Assert.All(parts, p => { Assert.Equal(3, p.RequestedParts); Assert.InRange(p.EstSec, p.MinSec, p.MaxSec); });
+        Assert.Contains(notes, n => n.Contains("指定の 3 本"));
+        Assert.DoesNotContain(notes, n => n.Contains("話題の途中"));
+        // 4 parts of the same material: still exactly 4, numbered labels
+        var four = SeriesPlanner.Split(tr, sig, P4, tr.Duration, null, 4, SeriesPlanner.FallbackOutline(tr, sig), []);
+        Assert.Equal(["第1話", "第2話", "第3話", "第4話"], four.Select(p => p.Label));
+    }
+
+    [Fact] // a count the material cannot hold is refused with the maximum, so the user knows what to enter
+    public void Too_many_parts_are_rejected_with_the_maximum()
+    {
+        var (tr, _) = SyntheticTalk.Build(Topics);
+        var sig = Fixtures.Signals(tr);
+        int max = SeriesPlanner.MaxPartsFor(SeriesPlanner.EditedLength(tr, P4, tr.Duration), tr.Sentences.Count);
+        Assert.InRange(max, 2, SeriesPlanner.MaxParts);
+        var ex = Assert.Throws<PlanException>(() => SeriesPlanner.Split(tr, sig, P4, tr.Duration, null, max + 1, SeriesPlanner.FallbackOutline(tr, sig), []));
+        Assert.Equal("E-SERIES-PARTS", ex.Code);
+        Assert.Contains($"最大 {max} 本", ex.Message);
+        Assert.Equal(max, SeriesPlanner.Split(tr, sig, P4, tr.Duration, null, max, SeriesPlanner.FallbackOutline(tr, sig), []).Count);
+    }
+
+    [Fact] // more parts than topics: the split still falls between sentences, and the user is told where it is mid-topic
+    public void More_parts_than_topics_names_the_mid_topic_splits()
+    {
+        var (tr, _) = SyntheticTalk.Build([200, 200]);
+        var sig = Fixtures.Signals(tr);
+        var notes = new List<string>();
+        var parts = SeriesPlanner.Split(tr, sig, P4, tr.Duration, null, 4, SeriesPlanner.FallbackOutline(tr, sig), notes);
+        Assert.Equal(4, parts.Count);
+        var warn = Assert.Single(notes, n => n.Contains("話題の途中"));
+        Assert.Contains("第1話と第2話の間", warn);
+        Assert.All(tr.Words, w => Assert.Equal(1, parts.Count(p => w.T0 >= p.Body.T0 - 1e-6 && w.T1 <= p.Body.T1 + 1e-6)));
+    }
+
     [Fact]
     public void Too_short_for_two_parts_is_rejected_with_guidance()
     {

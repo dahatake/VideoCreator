@@ -174,14 +174,14 @@ public sealed class PipelineRunner(PipelineServices s)
             bgm = preset.Planner == "beat" || t0.Bpm <= 0 ? await AnalyzedBgmAsync(t0, ct) : t0;
         }
 
-        Stage(JobStatus.Selecting, 0.45, job.Options.PartMinutes != null ? (s.Llm == null ? "話題の切れ目を書き起こしから探しています" : $"AI が話題の切れ目と章を探しています（{s.Llm.Model}）")
+        Stage(JobStatus.Selecting, 0.45, job.Options.IsSeries ? (s.Llm == null ? "話題の切れ目を書き起こしから探しています" : $"AI が話題の切れ目と章を探しています（{s.Llm.Model}）")
             : preset.Planner == "speed" ? "早送りに向く区間を探しています" : s.Llm == null ? "音声の盛り上がりから選んでいます" : $"AI がハイライトを選んでいます（{s.Llm.Model}）");
         var exclude = job.ExcludeCandidateIds.Select(id => s.Store.Get<Candidate>(Kinds.Candidate, id)).Where(c => c != null).SelectMany(c => c!.Segments).ToList();
         SelectionOutcome outcome;
         var seriesParts = new Dictionary<string, SeriesPart>();
-        if (job.Options.PartMinutes is double partMin)
+        if (job.Options.IsSeries)
         {
-            var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, partMin, warnings, ct);
+            var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, job.Options.PartMinutes, job.Options.Parts, warnings, ct);
             outcome = o; seriesParts = partsById;
         }
         else if (preset.Planner == "speed")
@@ -253,8 +253,8 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public const string SeriesPromptVersion = "series-1.0.0";
 
-    /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
-    async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double partMinutes, List<string> warnings, CancellationToken ct)
+    /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into exactly <paramref name="parts"/> parts, or parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
+    async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double? partMinutes, int? parts0, List<string> warnings, CancellationToken ct)
     {
         if (preset.Planner is not ("speech" or "switch")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
         if (tr.Sentences.Count == 0) throw new PipelineException("E-SERIES-NOSPEECH", "前編・後編の分割は、話の切れ目を書き起こしから探します。発話のある動画を選んでください");
@@ -268,7 +268,7 @@ public sealed class PipelineRunner(PipelineServices s)
         outline ??= SeriesPlanner.FallbackOutline(tr, sig);
         var notes = new List<string>();
         List<SeriesPart> parts;
-        try { parts = SeriesPlanner.Split(tr, sig, preset, main.Media.Duration, partMinutes * 60, outline, notes); }
+        try { parts = SeriesPlanner.Split(tr, sig, preset, main.Media.Duration, partMinutes * 60, parts0, outline, notes); }
         catch (PlanException ex) { throw new PipelineException(ex.Code, ex.Message); }
         warnings.AddRange(notes);
         var cands = parts.Select(pt => new Candidate

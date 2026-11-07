@@ -148,3 +148,5 @@ fluent-message-bar { margin-bottom: var(--s12); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .words { display: flex; flex-wrap: wrap; gap: 4px; max-height: 220px; overflow: auto; padding: 4px; }
 .words input.native { min-height: 28px; padding: 2px 6px; }
+fieldset.series-by { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
+fieldset.series-by legend { padding: 0; margin-bottom: 4px; }
