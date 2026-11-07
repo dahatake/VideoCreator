@@ -70,7 +70,7 @@ public static class ProjectDeletion
             && Path.GetFileName(dir).EndsWith("_" + p.Id[2..8], StringComparison.OrdinalIgnoreCase);
     }
 
-    static bool TryDeleteInside(string root, string name)
+    internal static bool TryDeleteInside(string root, string name)
     {
         var path = Path.GetFullPath(Path.Combine(root, name));
         if (!string.Equals(Path.GetDirectoryName(path), Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) || !Directory.Exists(path)) return false;

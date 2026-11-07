@@ -54,6 +54,11 @@ app.UseStaticFiles();
 Api.Map(app);
 
 _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg/presets
+{
+    var rt = app.Services.GetRequiredService<Runtime>();
+    var n = RenderMaintenance.RemoveDuplicateFinals(rt.Store, rt.Options.ResolvedDataDir);
+    if (n > 0) app.Logger.LogInformation("removed {Count} duplicate export records", n);
+}
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     var url = $"http://127.0.0.1:{options.Port}/";

@@ -45,6 +45,27 @@ function phone(src, id = '') {
   return `<div class="phone" ${id ? `id="${id}"` : ''}><video src="${esc(src)}" controls playsinline preload="metadata"></video><div class="safezone" aria-hidden="true"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i></div></div>`;
 }
 function field(label, control) { return `<fluent-field label-position="after"><label slot="label">${label}</label>${control}</fluent-field>`; }
+// WAI-ARIA radio group on custom role=radio elements: one tab stop (the checked radio), arrows move and select, disabled radios are skipped.
+// Returns a function that re-syncs the tab stop after a selection made elsewhere.
+function radioGroup(radios, pick) {
+  const enabled = () => radios.filter(r => r.getAttribute('aria-disabled') !== 'true');
+  const sync = () => { const en = enabled(); const cur = en.find(r => r.getAttribute('aria-checked') === 'true') ?? en[0]; radios.forEach(r => { r.tabIndex = r === cur ? 0 : -1; }); };
+  const select = (r) => { if (r.getAttribute('aria-disabled') === 'true') return; pick(r); sync(); };
+  radios.forEach(r => {
+    r.addEventListener('click', () => select(r));
+    r.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select(r); return; }
+      const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+      if (!d) return;
+      e.preventDefault();
+      const en = enabled(); if (!en.length) return;
+      const next = en[(en.indexOf(r) + d + en.length) % en.length];
+      select(next); next.focus();
+    });
+  });
+  sync();
+  return sync;
+}
 function safeToggle() { return field('安全領域を表示', '<fluent-switch slot="input" class="safe-toggle"></fluent-switch>'); }
 function wireSafeToggle(root = main) {
   $$('.safe-toggle', root).forEach(sw => sw.addEventListener('change', () => root.classList.toggle('show-safe', sw.checked)));
@@ -202,6 +223,8 @@ async function project(id) {
   const [d, presets, bgmList] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`)]);
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
+  // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
+  const notReady = !assets.length ? '素材を追加してください' : !allRights ? '権利確認にチェックしてください' : '';
   let selected = sessionStorage.getItem(`preset:${id}`) ?? 'P4';
   const saved = JSON.parse(sessionStorage.getItem(`opts:${id}`) ?? '{}');
   const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15 };
@@ -232,7 +255,7 @@ async function project(id) {
         <div class="drop" id="drop">
           <p><b>動画ファイルをここにドラッグ＆ドロップ</b></p>
           <p class="caption">MP4 / MOV / MKV / WebM、10秒〜3時間。複数カメラの切り替え（P7）では同じ場面を撮った動画を複数追加します。</p>
-          <input type="file" id="file" accept="video/*,.mkv" class="sr-only">
+          <input type="file" id="file" accept="video/*,.mkv" hidden>
           <fluent-button id="pick">ファイルを選ぶ</fluent-button>
           <div id="upload" class="stack" style="margin-top:12px"></div>
         </div>
@@ -260,11 +283,13 @@ async function project(id) {
         <h2 id="h-pat">2. パターンを選ぶ</h2>
         <div class="grid col-body" id="presets" role="radiogroup" aria-label="編集パターン">
           ${presets.map(p => `
-            <div class="card selectable ${p.available ? '' : 'disabled'} ${p.id === selected ? 'selected' : ''}" role="radio" aria-checked="${p.id === selected}" aria-disabled="${!p.available}" tabindex="${p.available ? 0 : -1}" data-id="${esc(p.id)}" style="padding:16px">
+            <div class="card selectable preset ${p.available ? '' : 'disabled'} ${p.id === selected ? 'selected' : ''}" style="padding:16px">
+              <div class="preset-radio" role="radio" aria-checked="${p.id === selected}" aria-disabled="${!p.available}" tabindex="-1" data-id="${esc(p.id)}">
               <div class="card-head"><span><span class="pid">${esc(p.id)}</span> <b>${esc(p.name)}</b></span>
                 <span class="badges"><fluent-badge appearance="tint" color="informative">${esc(p.genre)}</fluent-badge>${p.available ? `<fluent-badge appearance="tint" color="brand">${p.target.duration_sec[0]}〜${p.target.duration_sec[1]}秒</fluent-badge>` : '<fluent-badge appearance="tint" color="subtle">準備中</fluent-badge>'}</span></div>
               ${p.card ? `<dl class="facts"><dt>冒頭</dt><dd>${esc(p.card.opening)}</dd><dt>テンポ</dt><dd>${esc(p.card.tempo)}</dd><dt>テロップ</dt><dd>${esc(p.card.telop)}</dd><dt>音</dt><dd>${esc(p.card.sound)}</dd></dl>` : ''}
               ${p.available ? '' : `<div class="caption">${esc(p.unavailable_reason)}</div>`}
+              </div>
               <div class="caption">例: ${p.examples.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>`).join(' / ')}</div>
             </div>`).join('')}
         </div>
@@ -285,7 +310,7 @@ async function project(id) {
           <h3>長い動画の絞り込み（速さ・費用と見落としの少なさ）</h3>
           <div class="grid" id="scopes" role="radiogroup" aria-label="長尺の絞り込み">
             ${(estimate?.scopes ?? [{ scope: 'economy' }, { scope: 'balanced' }, { scope: 'full' }]).map(s => `
-              <div class="card selectable ${s.scope === opts.scope ? 'selected' : ''}" role="radio" aria-checked="${s.scope === opts.scope}" tabindex="0" data-scope="${s.scope}" style="padding:12px">
+              <div class="card selectable ${s.scope === opts.scope ? 'selected' : ''}" role="radio" aria-checked="${s.scope === opts.scope}" tabindex="-1" data-scope="${s.scope}" style="padding:12px">
                 <div class="card-head"><b>${scopeLabel[s.scope][0]}</b>${s.cost ? `<span class="badges"><fluent-badge appearance="tint" color="informative">AI に送る量 約${Math.round(s.share * 100)}%</fluent-badge><fluent-badge appearance="tint" color="brand">約 ${jpy(s.cost)}</fluent-badge></span>` : ''}</div>
                 <div class="caption">${scopeLabel[s.scope][1]}</div>
               </div>`).join('')}
@@ -311,8 +336,8 @@ async function project(id) {
         <div class="col-foot">
           ${estimate ? `<p class="caption" id="costLine"></p>` : ''}
           <div id="genMsg"></div>
-          <fluent-button appearance="primary" id="gen" ${assets.length && allRights ? '' : 'disabled'}>候補を3本つくる</fluent-button>
-          ${!assets.length ? '<span class="caption"> 素材を追加してください</span>' : !allRights ? '<span class="caption"> 権利確認にチェックしてください</span>' : ''}
+          <fluent-button appearance="primary" id="gen" ${notReady ? 'aria-describedby="genHint"' : ''}>候補を3本つくる</fluent-button>
+          ${notReady ? `<span class="caption" id="genHint"> ${notReady}</span>` : ''}
         </div>
       </section>
     </div>`;
@@ -385,11 +410,8 @@ async function project(id) {
   $('#partMin').addEventListener('input', () => { opts.part_minutes = Number($('#partMin').value); saveOpts(); showSeries(); });
   $('#partCount').addEventListener('input', () => { opts.parts = Number($('#partCount').value); saveOpts(); showSeries(); });
   $$('input[name=seriesBy]').forEach(r => r.addEventListener('change', () => { if (r.checked) { opts.series_by = r.value; saveOpts(); showSeries(); } }));
-  $$('#scopes [role=radio]').forEach(el => {
-    const pick = () => { opts.scope = el.dataset.scope; saveOpts(); $$('#scopes [role=radio]').forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); showCost(); };
-    el.addEventListener('click', pick);
-    el.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pick(); } });
-  });
+  const scopeRadios = $$('#scopes [role=radio]');
+  radioGroup(scopeRadios, (el) => { opts.scope = el.dataset.scope; saveOpts(); scopeRadios.forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); showCost(); });
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; saveOpts(); });
@@ -437,18 +459,26 @@ async function project(id) {
     try { await api(`/api/projects/${id}/rights`, { method: 'POST', body: { asset_id: cb.dataset.asset, confirmed: true } }); router(); }
     catch (e) { $('#assetMsg').innerHTML = errorBar(e); }
   }));
+  const presetRadios = $$('#presets [role=radio]');
   const choose = (el) => {
-    if (el.classList.contains('disabled')) return;
     selected = el.dataset.id; sessionStorage.setItem(`preset:${id}`, selected);
-    $$('#presets [role=radio]').forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); });
+    presetRadios.forEach(c => { c.closest('.preset').classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); });
     // the pattern's pause threshold changes the length after jump cuts, so refresh the series preview
     if (assets.length) api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`).then(e => { estimate = e; showSeries(); }).catch(() => { });
   };
-  $$('#presets [role=radio]').forEach(el => {
-    el.addEventListener('click', (e) => { if (e.target.closest('a')) return; choose(el); });
-    el.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); choose(el); } });
-  });
+  const syncPresets = radioGroup(presetRadios, choose);
+  // the whole card is the click target; the example links below the radio keep working as links
+  $$('#presets .preset').forEach(card => card.addEventListener('click', (e) => {
+    const r = $('[role=radio]', card);
+    if (e.target.closest('a') || r.contains(e.target) || r.getAttribute('aria-disabled') === 'true') return;
+    choose(r); syncPresets();
+  }));
   $('#gen').addEventListener('click', async () => {
+    if (notReady) {
+      $('#genMsg').innerHTML = info(`${notReady}。`, 'warning');
+      (!assets.length ? $('#pick') : $$('.rights').find(c => !c.checked))?.focus();
+      return;
+    }
     const { series, series_by, parts, part_minutes, ...rest } = opts;
     const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null };
     try { const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options } }); location.hash = `#/job/${r.job_id}`; }

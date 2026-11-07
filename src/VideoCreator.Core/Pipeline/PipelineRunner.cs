@@ -375,14 +375,19 @@ public sealed class PipelineRunner(PipelineServices s)
         return File.Exists(f) ? Json.Deserialize<SignalSet>(File.ReadAllText(f)) : new SignalSet();
     }
 
-    /// <summary>Render (preview or final) + QA. Final renders are blocked by hard QA failures (E-QA-HARDFAIL).</summary>
-    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null)
+    /// <summary>
+    /// Render (preview or final) + QA. Final renders are blocked by hard QA failures (E-QA-HARDFAIL).
+    /// When <paramref name="renderId"/> is given the caller owns that id and persists the Render itself (after adding its own outputs),
+    /// so a final export is stored exactly once under the id the UI already polls.
+    /// </summary>
+    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null)
     {
         var project = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)!;
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).ToDictionary(a => a.Id);
         var preset = s.Presets[plan.Preset.Id];
         var ctx = QaContextFor(plan);
-        var renderId = $"r_{Guid.NewGuid():N}"[..14];
+        var persist = renderId == null;
+        renderId ??= $"r_{Guid.NewGuid():N}"[..14];
         if (!preview)
         {
             var pre = QaEngine.PlanChecks(ctx).Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
@@ -415,7 +420,7 @@ public sealed class PipelineRunner(PipelineServices s)
             Id = renderId, EditplanId = plan.EditplanId, Kind = preview ? "preview" : "final", Path = file, Duration = plan.Duration,
             FfmpegVersion = await s.Ff.VersionAsync(), Commands = outp.Commands, Qa = qa, Outputs = outputs,
         };
-        s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
+        if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
         return render;
     }
 

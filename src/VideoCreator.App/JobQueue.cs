@@ -78,7 +78,7 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
             {
                 var runner = runnerFactory();
                 var project = store.Get<Project>(Kinds.Project, plan.ProjectId)!;
-                var render = await runner.RenderAsync(plan, preview: false, ct, PipelineRunner.ExportBaseName(project, plan, rank));
+                var render = await runner.RenderAsync(plan, preview: false, ct, PipelineRunner.ExportBaseName(project, plan, rank), renderId);
                 var cand = plan.Provenance.CandidateId is string cid ? store.Get<Candidate>(Kinds.Candidate, cid) : null;
                 if (cand != null)
                 {
@@ -87,7 +87,6 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
                     await File.WriteAllTextAsync(mdFile, md, ct);
                     render = render with { Outputs = new Dictionary<string, string>(render.Outputs) { ["metadata"] = mdFile } };
                 }
-                render = render with { Id = renderId };
                 store.Put(Kinds.Render, renderId, plan.EditplanId, render);
                 Exports[renderId] = Exports[renderId] with { State = "done", Message = "書き出しが完了しました" };
             }
