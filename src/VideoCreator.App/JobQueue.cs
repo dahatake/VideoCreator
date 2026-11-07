@@ -23,6 +23,8 @@ public sealed class JobEvents
 
     public void Unsubscribe(string jobId, Guid id) { if (_subs.TryGetValue(jobId, out var d) && d.TryRemove(id, out var ch)) ch.Writer.TryComplete(); }
 
+    public void Forget(string jobId) => _last.TryRemove(jobId, out _);
+
     public void Publish(JobUpdate u)
     {
         _last[u.JobId] = u;
@@ -52,6 +54,18 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
     {
         if (!_running.TryGetValue(jobId, out var cts)) return false;
         cts.Cancel(); return true;
+    }
+
+    /// <summary>True while a generation job is queued/running or a final export is queued/rendering for the project.</summary>
+    public bool IsBusy(string projectId) =>
+        _running.Keys.Any(id => store.Get<Job>(Kinds.Job, id)?.ProjectId == projectId)
+        || Exports.Values.Any(e => e.State is "queued" or "rendering" && store.Get<EditPlan>(Kinds.EditPlan, e.EditplanId)?.ProjectId == projectId);
+
+    /// <summary>Drops in-memory state for deleted documents.</summary>
+    public void Forget(IEnumerable<string> jobIds, IEnumerable<string> renderIds)
+    {
+        foreach (var j in jobIds) events.Forget(j);
+        foreach (var r in renderIds) Exports.TryRemove(r, out _);
     }
 
     public void EnqueueExport(string renderId, EditPlan plan, int rank)

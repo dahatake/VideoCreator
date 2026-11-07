@@ -84,6 +84,18 @@ body.fit .col-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1
 .card.selected { border-color: var(--colorBrandStroke1, #0f6cbd); }
 .card.disabled { opacity: .6; cursor: not-allowed; }
 .card-head { display: flex; align-items: baseline; gap: var(--s8); justify-content: space-between; margin-bottom: var(--s8); }
+/* whole card is clickable via the title link's ::after, so the delete button is not nested inside a link */
+.project-card { position: relative; }
+.project-card h3 { margin: 0; overflow-wrap: anywhere; }
+.project-card a.stretch { color: inherit; text-decoration: none; }
+.project-card a.stretch::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.project-card a.stretch:focus-visible { outline: none; }
+.project-card:has(a.stretch:focus-visible) { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 2px; }
+.project-card .del { position: relative; z-index: 1; flex: none; }
+fluent-button.danger { background-color: var(--colorStatusDangerBackground3, #c50f1f); border-color: transparent; color: var(--colorNeutralForegroundOnBrand, #fff); }
+fluent-button.danger:hover { background-color: var(--colorStatusDangerForeground1, #b10e1c); }
+fluent-button.danger:hover:active { background-color: var(--colorStatusDangerForeground2, #8e192e); }
+.del-list { margin: var(--s8) 0; padding-left: 1.4em; line-height: 1.6; }
 .pid { font-size: 12px; font-weight: 600; color: var(--colorBrandForeground1, #0f6cbd); }
 dl.facts { display: grid; grid-template-columns: auto 1fr; gap: var(--s4) var(--s12); margin: var(--s8) 0; font-size: 12px; line-height: 16px; }
 dl.facts dt { color: var(--colorNeutralForeground3); }

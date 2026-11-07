@@ -32,5 +32,13 @@
       <fluent-button slot="action" appearance="primary" id="settings-close">閉じる</fluent-button>
     </fluent-dialog-body>
   </fluent-dialog>
+  <fluent-dialog id="delete-dialog" type="alert" aria-label="プロジェクトの削除">
+    <fluent-dialog-body>
+      <h2 slot="title">プロジェクトを削除しますか？</h2>
+      <div id="delete-body"></div>
+      <fluent-button slot="action" appearance="primary" class="danger" id="delete-confirm">削除する</fluent-button>
+      <fluent-button slot="action" id="delete-cancel" autofocus>キャンセル</fluent-button>
+    </fluent-dialog-body>
+  </fluent-dialog>
 </body>
 </html>

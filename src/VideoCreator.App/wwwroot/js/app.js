@@ -19,6 +19,8 @@ const ERRORS = { // UX-04: plain-language explanation + what to do next
   'E-QA-HARDFAIL': '自動チェックで公開基準を満たさない項目がありました。下の一覧の項目を直してから、もう一度書き出してください。',
   'E-PRESET-UNAVAILABLE': 'このパターンはまだ使えません。',
   'E-RND-FFMPEG': '動画の書き出しに失敗しました。ディスクの空き容量を確認して、もう一度お試しください。',
+  'E-PROJECT-BUSY': 'ジョブ画面で「キャンセル」するか、完了を待ってから削除してください。',
+  'E-FILE-IN-USE': 'フォルダ内のファイルを開いているアプリを閉じてから、もう一度お試しください。プロジェクトはまだ削除されていません。',
 };
 
 async function api(path, opts = {}) {
@@ -133,26 +135,66 @@ async function router() {
 window.addEventListener('hashchange', router);
 
 // ---------------- home ----------------
+let flash = '';   // one-shot message shown on the next home render (e.g. after a delete)
 async function home() {
   setSteps(-1);
   const projects = await api('/api/projects');
+  const notice = flash; flash = '';
   main.innerHTML = `
     <div class="row" style="justify-content:space-between;margin-bottom:16px">
       <div><h1>プロジェクト</h1><p class="muted">長い動画を選んで、パターンを選ぶだけ。AI が見どころを探して、字幕付きの縦型ショートを作ります。</p></div>
       <form id="new" class="row"><fluent-text-input id="name" placeholder="プロジェクト名" aria-label="プロジェクト名"></fluent-text-input><fluent-button appearance="primary" type="submit">新しいプロジェクト</fluent-button></form>
     </div>
+    <div id="homeMsg" role="status">${notice}</div>
     ${projects.length === 0 ? `<div class="card empty"><img src="/img/icon.svg" alt=""><h2>はじめましょう</h2><p class="muted">「新しいプロジェクト」から動画を追加してください。</p></div>` :
       `<div class="grid cols-auto">${projects.map(p => `
-        <a class="card selectable" href="#/p/${esc(p.id)}" style="text-decoration:none;color:inherit">
-          <div class="card-head"><h3>${esc(p.name)}</h3></div>
+        <article class="card selectable project-card">
+          <div class="card-head"><h3><a class="stretch" href="#/p/${esc(p.id)}">${esc(p.name)}</a></h3>
+            <fluent-button appearance="subtle" size="small" class="del" data-id="${esc(p.id)}" aria-label="「${esc(p.name)}」を削除">削除</fluent-button></div>
           <dl class="facts"><dt>作成</dt><dd>${esc(new Date(p.created_at).toLocaleString('ja-JP'))}</dd><dt>素材</dt><dd>${p.assets} 本</dd>
           <dt>最新の生成</dt><dd>${p.last_job ? esc(p.last_job.message || p.last_job.status) : '—'}</dd></dl>
-        </a>`).join('')}</div>`}`;
+        </article>`).join('')}</div>`}`;
   $('#new').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const p = await api('/api/projects', { method: 'POST', body: { name: $('#name').value || '' } });
     location.hash = `#/p/${p.id}`;
   });
+  $$('.project-card .del').forEach(b => b.addEventListener('click', () => confirmDelete(projects.find(p => p.id === b.dataset.id), b)));
+}
+
+const RUNNING = ['queued', 'ingesting', 'transcribing', 'analyzing', 'selecting', 'planning', 'previewing'];
+function confirmDelete(p, opener) {
+  const dlg = $('#delete-dialog'), ok = $('#delete-confirm'), cancel = $('#delete-cancel');
+  const busy = p.last_job && RUNNING.includes(p.last_job.status);
+  $('#delete-body').innerHTML = `
+    <p><b>${esc(p.name)}</b> を削除します。</p>
+    <ul class="del-list">
+      <li>プロジェクトのフォルダ（書き出した動画・プレビュー・アップロードした素材）は<b>ごみ箱</b>に移動します。</li>
+      <li>候補・編集内容・書き起こしなどの解析データは削除され、元に戻せません。</li>
+      <li>パスを指定して追加した<b>元の動画ファイルは削除しません</b>。</li>
+    </ul>
+    <p class="caption">フォルダ: ${esc(p.directory)}</p>
+    ${busy ? info('生成の途中です。完了するか、キャンセルしてから削除してください。', 'warning') : ''}
+    <div id="deleteMsg"></div>`;
+  ok.disabled = false;
+  let done = false;
+  const close = () => { ok.removeEventListener('click', onOk); cancel.removeEventListener('click', onCancel); dlg.removeEventListener('toggle', onToggle); };
+  const onCancel = () => dlg.hide();
+  const onToggle = (e) => { if (e.detail?.newState === 'closed') { close(); if (!done) opener?.focus(); } };
+  const onOk = async () => {
+    ok.disabled = true;
+    try {
+      const r = await api(`/api/projects/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+      done = true;
+      const where = r.folder === 'removed' ? 'フォルダはごみ箱に移動しました。' : r.folder === 'kept' ? `フォルダはアプリの管理外のため残しています（${r.folder_path}）。` : '';
+      flash = info(`「${r.name}」を削除しました。${where}`, 'success');
+      dlg.hide();
+      await home();
+      main.focus();
+    } catch (e) { $('#deleteMsg').innerHTML = errorBar(e); ok.disabled = false; }
+  };
+  ok.addEventListener('click', onOk); cancel.addEventListener('click', onCancel); dlg.addEventListener('toggle', onToggle);
+  dlg.show();
 }
 
 // ---------------- project: assets + rights + pattern + generate ----------------

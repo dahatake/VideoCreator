@@ -53,6 +53,32 @@ public sealed class Store : IDisposable
         return list;
     }
 
+    public List<string> Ids(string kind, string parent)
+    {
+        using var c = Open(); using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT id FROM docs WHERE kind=$k AND parent=$p";
+        cmd.Parameters.AddWithValue("$k", kind); cmd.Parameters.AddWithValue("$p", parent);
+        using var r = cmd.ExecuteReader(); var list = new List<string>();
+        while (r.Read()) list.Add(r.GetString(0));
+        return list;
+    }
+
+    /// <summary>Deletes all the given documents in one transaction (all or nothing). Returns the number of rows removed.</summary>
+    public int Delete(IEnumerable<(string Kind, string Id)> docs)
+    {
+        lock (_gate)
+        {
+            using var c = Open(); using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM docs WHERE kind=$k AND id=$i";
+            var k = cmd.Parameters.Add("$k", SqliteType.Text); var i = cmd.Parameters.Add("$i", SqliteType.Text);
+            var n = 0;
+            foreach (var (kind, id) in docs) { k.Value = kind; i.Value = id; n += cmd.ExecuteNonQuery(); }
+            tx.Commit();
+            return n;
+        }
+    }
+
     public void Dispose() => SqliteConnection.ClearAllPools();
 }
 

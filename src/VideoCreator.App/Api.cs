@@ -104,6 +104,19 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
+        api.MapDelete("/projects/{id}", (Runtime rt, JobQueue q, RemoveFolder remove, string id) =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (q.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "このプロジェクトは生成または書き出しの途中です。終わるか、キャンセルしてから削除してください");
+            try
+            {
+                var r = ProjectDeletion.Delete(rt.Store, p, rt.Options.ResolvedProjectsDir, rt.Options.ResolvedDataDir, remove, out var jobs, out var renders);
+                q.Forget(jobs, renders);
+                return Results.Json(r, Json.Options);
+            }
+            catch (FolderInUseException ex) { return Error(409, "E-FILE-IN-USE", ex.Message); }
+        });
 
         // ---- assets (FR-ING-01/02/06) ----
         api.MapPost("/projects/{id}/assets", async (Runtime rt, string id, AddAsset req, CancellationToken ct) =>
