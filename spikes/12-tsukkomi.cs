@@ -29,7 +29,7 @@ var system = """
 - 面白くなりそうな箇所が少なければ、個数を減らしてよい（0個でもよい）
 """;
 var user = "字幕:\n" + string.Join("\n", caps.Select(c => $"{c.Item1}: {c.Item2}"));
-var client = new ChatClient("gpt-5.4-mini", new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+var client = new ChatClient("gpt-chat-latest", new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions { Endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1") });
 int total = 0, ok = 0, tooLong = 0, badId = 0, invented = 0;
 for (int trial = 0; trial < 4; trial++)

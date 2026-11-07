@@ -137,7 +137,33 @@ public sealed record Candidate
     public List<string> Notes { get; init; } = [];     // validator adjustments, warnings
     public string? EditPlanId { get; init; }
     public string? PreviewRenderId { get; init; }
+    /// <summary>Set when this candidate is one part of a 前編/後編 series (JobOptions.PartMinutes).</summary>
+    public SeriesInfo? Series { get; init; }
     public double TotalDuration => Segments.Sum(s => s.Length);
+}
+
+// ---- Series (前編/後編): a long source edited into consecutive parts of a user-chosen length ----
+/// <summary>A chapter on the part's OUTPUT timeline (seconds).</summary>
+public sealed record SeriesChapter(double Start, string Title);
+
+public sealed record SeriesInfo
+{
+    public int Part { get; init; }                 // 1-based
+    public int Parts { get; init; }
+    public required string Label { get; init; }    // 前編 / 中編 / 後編 / 第n話
+    /// <summary>Labels of every part in order (structural text, used by the H-07 grounding check).</summary>
+    public List<string> Labels { get; init; } = [];
+    public string SeriesTitle { get; init; } = "";
+    public double TargetSec { get; init; }
+    /// <summary>Set when the user chose the number of parts (TargetSec is then the balanced length).</summary>
+    public int? RequestedParts { get; init; }
+    public double MinSec { get; init; }
+    public double MaxSec { get; init; }
+    /// <summary>Source range (master time) of this part's main body; bodies of consecutive parts tile the source.</summary>
+    public required Interval Body { get; init; }
+    public List<SeriesChapter> Chapters { get; init; } = [];
+    /// <summary>Why the split before / after this part was placed where it is.</summary>
+    public string Boundary { get; init; } = "";
 }
 
 // ---- EditPlan (PRD §9.3) ----
@@ -167,7 +193,7 @@ public sealed record Clip
     public ReframeSpec Reframe { get; init; } = new();
     public double Zoom { get; init; } = 1.0;
     public string TransitionIn { get; init; } = "cut";
-    public string Role { get; init; } = "body";      // body | teaser | reaction | wide
+    public string Role { get; init; } = "body";      // body | teaser | reaction | wide | recap | next (series)
     /// <summary>> 0: this clip is entered with a video cross-fade of that many seconds (scene changes only, FR-SWT-05). Audio stays a hard cut; the previous clip's video is extended by the same amount, so the duration is unchanged.</summary>
     public double TransitionSec { get; init; }
     public double MasterIn => AudioIn ?? SrcIn;
@@ -237,6 +263,7 @@ public sealed record EditPlan
     public List<Telop> Telops { get; init; } = [];
     public required AudioSpec Audio { get; init; }
     public Provenance Provenance { get; init; } = new();
+    public SeriesInfo? Series { get; init; }
     public double Duration => Timeline.Sum(c => c.Length);
 }
 
@@ -254,6 +281,11 @@ public sealed record JobOptions
     public string Bgm { get; init; } = "auto";
     public bool Sfx { get; init; } = true;
     public bool Tsukkomi { get; init; }
+    /// <summary>Series mode: edit the whole source into consecutive parts (前編/後編…) of about this many minutes each. Null = short candidates.</summary>
+    public double? PartMinutes { get; init; }
+    /// <summary>Series mode by count: exactly this many parts of balanced length. Mutually exclusive with <see cref="PartMinutes"/>.</summary>
+    public int? Parts { get; init; }
+    public bool IsSeries => PartMinutes != null || Parts != null;
 }
 
 public sealed record Job

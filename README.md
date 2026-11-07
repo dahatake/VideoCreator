@@ -18,13 +18,14 @@
 | テロップ | 日本語の改行規則（助詞・小書き文字で始めない、バランスの良い2分割）、強調・フック・見出し、はみ出し防止の自動縮小 |
 | 品質 | 自動 QA（PRD §13）: 尺・解像度・**−14 LUFS / −1 dBTP**・**テロップの安全領域を実測**・発話途中切り・**テロップの事実確認**・権利。ハード違反は書き出しを禁止 |
 | 出力 | MP4（H.264/AAC）・SRT・編集計画 JSON・ASS・サムネイル3枚・投稿用メタデータ案 |
+| 前編・後編 | **1本あたりの長さ（例: 15分）を指定**すると、長尺全体を同じ編集（字幕・強調・ジャンプカット・縦型化・QA）で **前編/後編（3本なら中編、4本以上は第n話）** に分けます。分け目は時計ではなく **話題の切れ目**（AI の章分け＋語彙の変化＋間＋話題転換語）から、各パートが指定の長さに近くなるよう動的計画法で選びます。各パートは「見どころの先出し → 前のパートのおさらい → 本編（章ごとの見出し） → 『〜につづく』と次の予告」の構成。投稿用メタデータには YouTube の条件を満たすチャプターとシリーズのリンク欄が入ります（3分を超えるため #Shorts は付けません） |
 
 編集パターン: **P1〜P9 のすべて**が利用可能です（BGM・効果音、ツッコミ・擬音テロップ、顔追従の縦型化、複数カメラ切り替え、ビート同期、早送りを含む。[presets/](presets)）。長い動画の絞り込み（節約／標準／全文）は画面で選べます。
 
 ## 必要なもの
 
 - Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）
-- Azure（字幕のための書き起こしに必要。選定用の AI は任意で、「ローカルのみ」にすると AI 選定を使いません）: AI Services リソース（Speech + `gpt-5.4-mini` などのデプロイ）と、利用者への `Cognitive Services User` / `Cognitive Services OpenAI User` ロール。キーは使わず、Azure CLI のサインインで認証します
+- Azure（字幕のための書き起こしに必要。選定用の AI は任意で、「ローカルのみ」にすると AI 選定を使いません）: AI Services リソース（Speech + `gpt-chat-latest` のデプロイ）と、利用者への `Cognitive Services User` / `Cognitive Services OpenAI User` ロール。キーは使わず、Azure CLI のサインインで認証します
 - GitHub Copilot を使う場合: GitHub Copilot CLI（`run.cmd --setup --with-copilot` で導入）にサインイン済み
 
 ## セットアップと起動
@@ -71,7 +72,7 @@ dotnet run --project src/VideoCreator.App -c Release
 |---|---|---|
 | `Asr:Endpoint` | — | `https://<resource>.cognitiveservices.azure.com/`（カスタムドメイン必須） |
 | `Llm:Provider` | `azure-openai` | `azure-openai` / `copilot` / `none`（画面の「設定」からも切替可） |
-| `Llm:Endpoint` / `Deployment` | — / `gpt-5.4-mini` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
+| `Llm:Endpoint` / `Deployment` | — / `gpt-chat-latest` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
 | `Llm:SingleCallCharBudget` | 12000 | これを超える書き起こしは信号で絞り込み分割（NFR-COST-03）。品質優先なら大きくする |
 | `LocalOnly` | false | true で AI（LLM）による選定を使わない（字幕のための書き起こしは Azure AI Speech を使います） |
 | `DataDir` / `ProjectsDir` | `%LOCALAPPDATA%\VideoCreator` / `ビデオ\VideoCreator` | データベース・キャッシュ / プロジェクトと書き出し先 |
@@ -80,7 +81,7 @@ dotnet run --project src/VideoCreator.App -c Release
 ## テスト
 
 ```powershell
-dotnet test --project tests/VideoCreator.Tests   # 67 件（FFmpeg・顔検出モデルを使う結合テストを含む。tools/ が必要）
+dotnet test --project tests/VideoCreator.Tests   # 88 件（FFmpeg・顔検出モデルを使う結合テストを含む。tools/ が必要）
 cd ui; npm ci; node e2e.mjs ..\path\to\video.mp4 # 起動中のアプリに対する E2E（OS の Microsoft Edge をヘッドレスで使用）
 ```
 

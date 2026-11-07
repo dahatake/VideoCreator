@@ -9,7 +9,7 @@ public sealed record PlanRequest(
     Candidate Candidate, Transcript Transcript, SignalSet Signals, Preset Preset,
     IReadOnlyList<SourceAsset> Assets, SourceAsset Master, string ProjectId, Job Job,
     IReadOnlyDictionary<string, List<FaceSample>> Faces, BgmTrack? Bgm, IHighlightSelector? Llm,
-    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null);
+    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null);
 
 /// <summary>Candidate → EditPlan. Dispatches on preset.Planner, then reframes, adds telops, BGM and SFX (PRD FR-SOL, FR-SWT, FR-SPD, FR-BGM, FR-AUD).</summary>
 public static class PlanBuilder
@@ -30,14 +30,25 @@ public static class PlanBuilder
         var p = r.Preset; var tr = r.Transcript; var sig = r.Signals; var notes = new List<string>(); var master = r.Master;
         var segs = r.OverrideSegments ?? r.Candidate.Segments;
         var bursts = r.Bursts ?? [];
-        if (p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && tr.Sentences.Count > 0)
+        if (p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && r.Part == null && tr.Sentences.Count > 0)
         {
             try { if (await LoopEnding.ChooseAsync(r.Llm, tr, segs, sig, p, master.Media, master.Id, ct) is { } lp) { segs = lp.Segments; notes.Add(lp.Note); } }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("ループの終わりの判定に失敗しました: " + ex.Message); }
         }
         List<Clip> clips;
-        switch (p.Planner)
+        switch (r.Part != null ? "series" : p.Planner)
         {
+            case "series":
+            {
+                clips = SeriesPlanner.Clips(r.Part!, tr, sig, p, master.Media, master.Id, notes);
+                if (p.Planner == "switch")
+                {
+                    var cams = r.Assets.Where(a => SwitchPlanner.SpeakerOf(a) > 0 || a.Role == AssetRole.Wide).ToList();
+                    if (cams.Count >= 2) clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes);
+                    else notes.Add("カメラ素材が 2 つ以上ないため、切り替えは行いませんでした");
+                }
+                break;
+            }
             case "speed":
                 clips = SpeedPlanner.Plan(segs[0], tr, p, master.Id, master.Media, notes);
                 break;
@@ -73,7 +84,20 @@ public static class PlanBuilder
         clips = ApplyFaces(clips, r, notes);
 
         double total = clips.Sum(c => c.Length);
-        var telops = TelopBuilder.Build(clips, tr, p, r.Candidate.HookText, r.Candidate.Headline, r.Candidate.EmphasisWords, notes);
+        SeriesInfo? series = null;
+        List<Telop> telops;
+        if (r.Part is { } part)
+        {
+            telops = TelopBuilder.Build(clips, tr, p, "", "", part.Emphasis, notes);
+            var (st, chapters) = SeriesPlanner.Telops(part, clips, tr, p);
+            telops.AddRange(st);
+            series = new SeriesInfo
+            {
+                Part = part.Index + 1, Parts = part.Count, Label = part.Label, Labels = part.Labels, SeriesTitle = part.SeriesTitle,
+                TargetSec = part.TargetSec, MinSec = part.MinSec, MaxSec = part.MaxSec, Body = part.Body, Chapters = chapters, Boundary = part.Boundary,
+            };
+        }
+        else telops = TelopBuilder.Build(clips, tr, p, r.Candidate.HookText, r.Candidate.Headline, r.Candidate.EmphasisWords, notes);
         if (r.Llm != null)
         {
             try { var (sh, ch) = await CaptionShortener.ApplyAsync(r.Llm, telops, p.Telop.Caption.MaxCps, ct); telops = sh; if (ch > 0) notes.Add($"表示が間に合わない字幕 {ch} 件を、文字を削って短くしました（言い換えなし）"); }
@@ -119,6 +143,7 @@ public static class PlanBuilder
         {
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Timeline = clips, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
+            Series = series,
         };
         return (plan, notes);
     }

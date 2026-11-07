@@ -29,19 +29,55 @@ public sealed partial class Renderer(FFmpeg ff)
     public sealed record Inputs(List<string[]> Args, Dictionary<string, int> Index, Dictionary<string, MediaInfo> Media)
     {
         public IEnumerable<string> Flat => Args.SelectMany(a => a);
+        /// <summary>Per timeline clip: input index and the source time at which that input starts (non-zero for seeked inputs).</summary>
+        public List<(int Index, double Offset)> Video { get; init; } = [];
+        public List<(int Index, double Offset)> Audio { get; init; } = [];
     }
+
+    /// <summary>Series plans are long and play clips out of source order (cold open, recap, next teaser). Sharing one input would make FFmpeg
+    /// buffer every decoded frame of the later clips while it seeks forward for an earlier-played one, so each forward-running block of clips
+    /// gets its own input, opened with an accurate input seek (verified: the first frame after -ss matches the un-seeked frame's checksum).</summary>
+    public const double SeekMargin = 0.5;
 
     public Inputs ResolveInputs(EditPlan plan, IReadOnlyDictionary<string, SourceAsset> assets)
     {
         var args = new List<string[]>(); var idx = new Dictionary<string, int>(); var media = new Dictionary<string, MediaInfo>();
+        var video = new List<(int, double)>(); var audio = new List<(int, double)>();
+        SourceAsset Asset(string id) => assets.TryGetValue(id, out var a) ? a : throw new FFmpegException($"asset {id} not found");
         void AddAsset(string id)
         {
             if (idx.ContainsKey(id)) return;
-            if (!assets.TryGetValue(id, out var a)) throw new FFmpegException($"asset {id} not found");
+            var a = Asset(id);
             idx[id] = args.Count; args.Add(["-i", a.Path]); media[id] = a.Media;
         }
-        foreach (var id in plan.Timeline.Select(c => c.AssetId).Distinct()) AddAsset(id);
-        AddAsset(plan.Audio.Master);
+        if (plan.Series == null)
+        {
+            foreach (var id in plan.Timeline.Select(c => c.AssetId).Distinct()) AddAsset(id);
+            AddAsset(plan.Audio.Master);
+            foreach (var c in plan.Timeline) { video.Add((idx[c.AssetId], 0)); audio.Add((idx[plan.Audio.Master], 0)); }
+        }
+        else
+        {
+            var open = new Dictionary<string, (int index, double offset, double last)>();
+            (int, double) Block(string assetId, double t0, double t1)
+            {
+                if (open.TryGetValue(assetId, out var b) && t0 >= b.last - 0.01) { open[assetId] = b with { last = t1 }; return (b.index, b.offset); }
+                var a = Asset(assetId); media[a.Id] = a.Media;
+                double seek = Math.Max(0, Math.Round(t0 - SeekMargin, 3));
+                var nb = (args.Count, seek, t1);
+                args.Add(seek > 0 ? ["-ss", F(seek), "-i", a.Path] : ["-i", a.Path]);
+                open[assetId] = nb;
+                return (nb.Item1, nb.Item2);
+            }
+            foreach (var c in plan.Timeline)
+            {
+                var v = Block(c.AssetId, c.SrcIn, c.SrcOut);
+                video.Add(v);
+                // single-source clips read their audio from the same input; other cameras take it from the master's own blocks
+                audio.Add(c.AssetId == plan.Audio.Master && c.AudioIn == null ? v : Block("audio:" + plan.Audio.Master, c.MasterIn, c.MasterOut));
+            }
+            media[plan.Audio.Master] = Asset(plan.Audio.Master).Media;
+        }
         if (plan.Audio.Bgm is { } bgm)
         {
             var path = BgmResolver?.Invoke(bgm) ?? throw new FFmpegException($"BGM {bgm} が見つかりません");
@@ -55,14 +91,14 @@ public sealed partial class Renderer(FFmpeg ff)
                 if (path == null || !File.Exists(path)) continue;
                 idx["sfx:" + kind] = args.Count; args.Add(["-i", path]);
             }
-        return new Inputs(args, idx, media);
+        return new Inputs(args, idx, media) { Video = video, Audio = audio };
     }
 
     static string DialogueClip(EditPlan plan, Inputs inp, int i, string label)
     {
-        var c = plan.Timeline[i]; var m = inp.Media[plan.Audio.Master]; int k = inp.Index[plan.Audio.Master];
+        var c = plan.Timeline[i]; var m = inp.Media[plan.Audio.Master]; var (k, off) = inp.Audio[i];
         if (m.AudioChannels > 0 && c.Speed <= 2.001)
-            return $"[{k}:a]atrim=start={F(c.MasterIn)}:end={F(c.MasterOut)},asetpts=PTS-STARTPTS{(Math.Abs(c.Speed - 1) > 0.001 ? $",atempo={F(c.Speed)}" : "")},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{label}];";
+            return $"[{k}:a]atrim=start={F(c.MasterIn - off)}:end={F(c.MasterOut - off)},asetpts=PTS-STARTPTS{(Math.Abs(c.Speed - 1) > 0.001 ? $",atempo={F(c.Speed)}" : "")},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{label}];";
         return $"anullsrc=r=48000:cl=stereo,atrim=duration={F(c.Length)},asetpts=PTS-STARTPTS[{label}];";
     }
 
@@ -101,12 +137,15 @@ public sealed partial class Renderer(FFmpeg ff)
     public static string BuildGraph(EditPlan plan, Inputs inp, string? assFile, string fontsDir, bool preview, string? loudnorm)
     {
         int W = plan.Canvas.Width, H = plan.Canvas.Height, fps = plan.Canvas.Fps;
+        // long series previews are composed directly at half size (4x fewer pixels to blur); ASS PlayRes keeps the 1080x1920 layout and libass scales it
+        bool half = preview && plan.Series != null;
+        if (half) { W /= 2; H /= 2; }
         var g = new StringBuilder(); var labels = new StringBuilder();
         for (int i = 0; i < plan.Timeline.Count; i++)
         {
-            var c = plan.Timeline[i]; int k = inp.Index[c.AssetId];
+            var c = plan.Timeline[i]; var (k, off) = inp.Video[i];
             double ext = i + 1 < plan.Timeline.Count ? plan.Timeline[i + 1].TransitionSec : 0;   // cross-fade overlap taken from this clip's tail
-            g.Append($"[{k}:v]trim=start={F(c.SrcIn)}:end={F(c.SrcOut + ext * c.Speed)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}");
+            g.Append($"[{k}:v]trim=start={F(c.SrcIn - off)}:end={F(c.SrcOut + ext * c.Speed - off)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}");
             bool zoom = c.Zoom > 1.001;
             if (c.Reframe.Mode == "face" && c.Reframe.Track is { Count: > 0 } track)
             {
@@ -121,7 +160,7 @@ public sealed partial class Renderer(FFmpeg ff)
                     g.Append($",scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];");
                 else
                     g.Append($",split[f{i}][b{i}];[b{i}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{i}];" +
-                             $"[f{i}]scale={W}:-2[ff{i}];[bb{i}][ff{i}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{c.Reframe.FgOffsetY},setsar=1[v{i}];");
+                             $"[f{i}]scale={W}:-2[ff{i}];[bb{i}][ff{i}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1[v{i}];");
             }
             g.Append(DialogueClip(plan, inp, i, $"a{i}"));
             labels.Append($"[v{i}][a{i}]");
@@ -146,10 +185,34 @@ public sealed partial class Renderer(FFmpeg ff)
         g.Append(MixChain(plan, inp, "ca0", "ca"));
         g.Append("[cv]");
         if (assFile != null) g.Append($"subtitles={FFmpeg.FilterPath(assFile)}:fontsdir={FFmpeg.FilterPath(fontsDir)},");
-        if (preview) g.Append($"scale={W / 2}:{H / 2},");
+        if (preview && !half) g.Append($"scale={W / 2}:{H / 2},");
         g.Append("format=yuv420p[vout];");
         g.Append($"[ca]{loudnorm ?? $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}"},aresample=48000[aout]");
-        return g.ToString();
+        return plan.Series != null ? ShareInputs(g.ToString()) : g.ToString();
+    }
+
+    /// <summary>Series plans read hundreds of clips from one input; an explicit split/asplit (one decoder output → one graph input) measured ~25% faster
+    /// than letting FFmpeg feed the same decoded stream to every clip's graph input. Frames are identical (same decoder, same trims).</summary>
+    public static string ShareInputs(string graph)
+    {
+        var uses = Regex.Matches(graph, @"\[(\d+):([va])\]").GroupBy(m => m.Value).Where(g => g.Count() > 1).ToDictionary(g => g.Key, g => g.Count());
+        if (uses.Count == 0) return graph;
+        var next = new Dictionary<string, int>();
+        var body = Regex.Replace(graph, @"\[(\d+):([va])\]", m =>
+        {
+            if (!uses.ContainsKey(m.Value)) return m.Value;
+            int n = next.GetValueOrDefault(m.Value) + 1; next[m.Value] = n;
+            return $"[in{m.Groups[1].Value}{m.Groups[2].Value}_{n}]";
+        });
+        var pre = new StringBuilder();
+        foreach (var (label, count) in uses.OrderBy(u => u.Key, StringComparer.Ordinal))
+        {
+            var m = Regex.Match(label, @"\[(\d+):([va])\]");
+            pre.Append($"{label}{(m.Groups[2].Value == "v" ? "split" : "asplit")}={count}");
+            for (int i = 1; i <= count; i++) pre.Append($"[in{m.Groups[1].Value}{m.Groups[2].Value}_{i}]");
+            pre.Append(';');
+        }
+        return pre + body;
     }
 
     public static string BuildAudioOnlyGraph(EditPlan plan, Inputs inp, string tail)
@@ -159,7 +222,7 @@ public sealed partial class Renderer(FFmpeg ff)
         g.Append($"{labels}concat=n={plan.Timeline.Count}:v=0:a=1[ca0];");
         g.Append(MixChain(plan, inp, "ca0", "ca"));
         g.Append($"[ca]{tail}[m]");
-        return g.ToString();
+        return plan.Series != null ? ShareInputs(g.ToString()) : g.ToString();
     }
 
     string[] EncodeArgs(bool preview, string output) => preview
@@ -179,21 +242,26 @@ public sealed partial class Renderer(FFmpeg ff)
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, preset), new UTF8Encoding(false), ct);
         }
         var inArgs = inp.Flat.ToList();
+        var scratch = new List<string>();
         string? ln = null;
-        if (!preview)
+        try
         {
-            // pass 1: measure the edited audio only (fast)
-            var m = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, "-filter_complex", BuildAudioOnlyGraph(plan, inp, $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:print_format=json"), "-map", "[m]", "-f", "null", "-"], ct);
-            cmds.Add(m.CommandLine);
-            string J(string k) => Regex.Match(m.StdErr, $"\"{k}\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value;
-            if (J("input_i") is { Length: > 0 } ii && ii != "-inf")
-                ln = $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:measured_I={J("input_i")}:measured_TP={J("input_tp")}:measured_LRA={J("input_lra")}:measured_thresh={J("input_thresh")}:offset={J("target_offset")}:linear=true";
+            if (!preview)
+            {
+                // pass 1: measure the edited audio only (fast)
+                var m = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(plan, inp, $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:print_format=json"), outFile + ".agraph.txt", scratch), "-map", "[m]", "-f", "null", "-"], ct);
+                cmds.Add(m.CommandLine);
+                string J(string k) => Regex.Match(m.StdErr, $"\"{k}\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value;
+                if (J("input_i") is { Length: > 0 } ii && ii != "-inf")
+                    ln = $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:measured_I={J("input_i")}:measured_TP={J("input_tp")}:measured_LRA={J("input_lra")}:measured_thresh={J("input_thresh")}:offset={J("target_offset")}:linear=true";
+            }
+            var tmp = outFile + ".part.mp4";
+            var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", .. inArgs, .. GraphArgs(BuildGraph(plan, inp, ass, ff.FontsDir, preview, ln), outFile + ".graph.txt", scratch), .. EncodeArgs(preview, tmp)], ct);
+            cmds.Add(r.CommandLine);
+            if (r.ExitCode != 0) throw new FFmpegException("レンダリングに失敗しました: " + FFmpeg.Tail(r.StdErr));
+            File.Move(tmp, outFile, true);
         }
-        var tmp = outFile + ".part.mp4";
-        var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", .. inArgs, "-filter_complex", BuildGraph(plan, inp, ass, ff.FontsDir, preview, ln), .. EncodeArgs(preview, tmp)], ct);
-        cmds.Add(r.CommandLine);
-        if (r.ExitCode != 0) throw new FFmpegException("レンダリングに失敗しました: " + FFmpeg.Tail(r.StdErr));
-        File.Move(tmp, outFile, true);
+        finally { foreach (var f in scratch) try { File.Delete(f); } catch (IOException) { } }
         if (preview) return new RenderOutput(outFile, cmds, double.NaN, double.NaN);
 
         // loudnorm can silently fall back to dynamic mode; correct with gain + oversampled limiter (audio only, video copied)
@@ -211,6 +279,17 @@ public sealed partial class Renderer(FFmpeg ff)
             (I, TP) = await MeasureLoudnessAsync(outFile, ct);
         }
         return new RenderOutput(outFile, cmds, I, TP);
+    }
+
+    /// <summary>Windows limits a command line to 32,767 characters; long graphs (series parts have hundreds of jump cuts) are passed as a file (FFmpeg 7+: -/option file).</summary>
+    public const int MaxInlineGraph = 16_000;
+
+    static string[] GraphArgs(string graph, string file, List<string> scratch)
+    {
+        if (graph.Length <= MaxInlineGraph) return ["-filter_complex", graph];
+        File.WriteAllText(file, graph, new UTF8Encoding(false));
+        scratch.Add(file);
+        return ["-/filter_complex", file];
     }
 
     public async Task<(double I, double TP)> MeasureLoudnessAsync(string file, CancellationToken ct)

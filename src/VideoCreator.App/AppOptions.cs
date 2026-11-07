@@ -34,7 +34,7 @@ public sealed class LlmOptions
 {
     public string Provider { get; set; } = "azure-openai";   // azure-openai | copilot | none
     public string Endpoint { get; set; } = "";               // https://<resource>.cognitiveservices.azure.com/openai/v1
-    public string Deployment { get; set; } = "gpt-5.4-mini";
+    public string Deployment { get; set; } = "gpt-chat-latest";
     public string? CopilotCliPath { get; set; }
     public string? CopilotModel { get; set; }
     public int SingleCallCharBudget { get; set; } = VideoCreator.Selection.SelectionService.DefaultCharBudget;

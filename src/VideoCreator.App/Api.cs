@@ -12,6 +12,7 @@ namespace VideoCreator.App;
 public static class Api
 {
     public sealed record CreateProject(string Name);
+    public sealed record RenameProject(string? Name);
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
     public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null);
@@ -64,8 +65,8 @@ public static class Api
         // ---- projects ----
         api.MapPost("/projects", (Runtime rt, CreateProject req) =>
         {
-            var name = string.IsNullOrWhiteSpace(req.Name) ? "新しいプロジェクト" : req.Name.Trim();
-            if (name.Length > 80) return Error(422, "E-VALIDATION", "プロジェクト名は80文字以内にしてください");
+            var name = string.IsNullOrWhiteSpace(req.Name) ? "新しいプロジェクト" : req.Name;
+            if (ValidateProjectName(name, out name) is string err) return Error(422, "E-VALIDATION", err);
             var id = "p_" + Guid.NewGuid().ToString("N")[..10];
             var dir = Path.Combine(rt.Options.ResolvedProjectsDir, $"{SafeName(name)}_{id[2..8]}");
             Directory.CreateDirectory(dir);
@@ -91,6 +92,17 @@ public static class Api
                 jobs = rt.Store.List<Job>(Kinds.Job, id),
                 rights_statement = RightsStatement.Text,
             }, Json.Options);
+        });
+        // Display name only: the folder and every stored absolute path stay as they are.
+        api.MapPatch("/projects/{id}", (Runtime rt, string id, RenameProject req) =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (ValidateProjectName(req.Name, out var name) is string err) return Error(422, "E-VALIDATION", err);
+            if (name == p.Name) return Results.Json(p, Json.Options);
+            p = p with { Name = name };
+            rt.Store.Put(Kinds.Project, id, null, p);
+            return Results.Json(p, Json.Options);
         });
 
         // ---- assets (FR-ING-01/02/06) ----
@@ -257,6 +269,8 @@ public static class Api
             {
                 if (req.Ops.Any(o => o.Op == "set_bgm") && rt.Presets[plan.Preset.Id].Planner == "beat")
                     return Error(422, "E-VALIDATION", "ビート同期では BGM を変えるとカットも変わります。条件を変えて作り直してください");
+                if (plan.Series != null && req.Ops.Any(o => o.Op is "adjust" or "replan"))
+                    return Error(422, "E-VALIDATION", "前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません。1本あたりの長さを変えて作り直してください");
                 if (req.Ops.Any(o => o.Op == "set_bgm" && !string.IsNullOrEmpty(o.Target) && o.Target != "none" && rt.Audio.Find(o.Target) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, o.Target) == null))
                     return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
                 var simple = req.Ops.Where(o => o.Op is not ("adjust" or "replan")).ToList();
@@ -343,10 +357,16 @@ public static class Api
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
         var runner = rt.CreateRunner();
         var mainAsset = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets[0];
+        if (options.PartMinutes is double pm)
+        {
+            if (!double.IsFinite(pm) || pm < MinPartMinutes || pm > MaxPartMinutes) return Error(422, "E-VALIDATION", $"1本あたりの長さは {MinPartMinutes}〜{MaxPartMinutes} 分で指定してください");
+            if (main.Planner is not ("speech" or "switch")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
+            if (mainAsset.Media.Duration < 1.5 * pm * 60) return Error(422, "E-SERIES-SHORT", $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため、{pm:0.#}分ずつに分けられません。1本あたりの長さを {Math.Floor(mainAsset.Media.Duration / 60 / 2 * 10) / 10:0.#}分以下にしてください");
+        }
         var job = new Job
         {
             Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = presetIds, Instruction = instruction, Options = options,
-            ExcludeCandidateIds = exclude, Cost = runner.EstimateCost(mainAsset, options.Scope),
+            ExcludeCandidateIds = exclude, Cost = runner.EstimateCost(mainAsset, options.PartMinutes != null ? "full" : options.Scope),
         };
         q.EnqueueJob(job);
         return Results.Json(new { job_id = job.Id, cost = job.Cost }, Json.Options, statusCode: 202);
@@ -373,6 +393,19 @@ public static class Api
             return Results.Json(asset, Json.Options, statusCode: 201);
         }
         catch (IngestException ex) { return Error(422, ex.Code, ex.Message); }
+    }
+
+    public const int MaxProjectNameLength = 80;
+    public const double MinPartMinutes = 1, MaxPartMinutes = 60;
+
+    /// <summary>Shared by create and rename. Returns an error message, or null with the normalized name.</summary>
+    public static string? ValidateProjectName(string? raw, out string name)
+    {
+        name = (raw ?? "").Normalize(System.Text.NormalizationForm.FormC).Trim();
+        if (name.Length == 0) return "プロジェクト名を入力してください";
+        if (name.Any(char.IsControl)) return "プロジェクト名に改行やタブなどの制御文字は使えません";
+        if (new System.Globalization.StringInfo(name).LengthInTextElements > MaxProjectNameLength) return $"プロジェクト名は{MaxProjectNameLength}文字以内にしてください";
+        return null;
     }
 
     static string SafeName(string s)

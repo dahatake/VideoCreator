@@ -22,7 +22,7 @@ var tmp = Path.Combine(root, "spikes", "out", "long"); Directory.CreateDirectory
 int episodes = args.Length > 0 ? int.Parse(args[0]) : 28;
 var resourceId = "/subscriptions/0e930937-43f5-484d-ba9e-1dd1151cf7ba/resourceGroups/rg-videocreator-jpe/providers/Microsoft.CognitiveServices/accounts/videocreator-ai-40800";
 var cred = new DefaultAzureCredential();
-var chat = new ChatClient("gpt-5.4-mini", new BearerTokenPolicy(cred, "https://ai.azure.com/.default"), new OpenAIClientOptions { Endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1") });
+var chat = new ChatClient("gpt-chat-latest", new BearerTokenPolicy(cred, "https://ai.azure.com/.default"), new OpenAIClientOptions { Endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1") });
 
 const string schema = """{"type":"object","additionalProperties":false,"required":["title","lines"],"properties":{"title":{"type":"string"},"lines":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["speaker","text"],"properties":{"speaker":{"type":"string","enum":["A","B"]},"text":{"type":"string"}}}}}}""";
 var themes = new[] { "激辛ラーメン完食チャレンジ", "1日1000円生活", "目隠し利き水", "早口言葉対決", "100均DIYで椅子作り", "知らない駅で途中下車", "全力で謝罪会見ごっこ", "料理初心者がカレーを作る", "クイズで負けたら罰ゲーム", "キャンプで火起こし", "スマホなしで待ち合わせ", "ガチャで出たもので晩ご飯", "30分で部屋を片付ける", "初めての釣り", "社長に企画をプレゼン", "地元の名物を当てる", "絵しりとり", "ダーツで旅先を決める", "最安値の家電を探す", "朝5時起きチャレンジ", "AIに人生相談", "苦手な虫と向き合う", "早食い対決", "昭和レトロ喫茶めぐり", "雪だるま作り", "ボウリング勝負", "書道で今年の漢字", "サウナ初体験", "手作りピザ対決", "落語を覚えて披露" };

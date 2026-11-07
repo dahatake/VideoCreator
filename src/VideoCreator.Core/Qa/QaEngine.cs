@@ -25,7 +25,8 @@ public sealed class QaEngine(FFmpeg ff)
         var res = new List<QaResult>();
         var p = ctx.Preset; var plan = ctx.Plan; var tr = ctx.Transcript;
         double dur = plan.Duration;
-        res.Add(new("H-01", dur >= p.Target.Min - 0.05 && dur <= p.Target.Max + 0.05 && dur <= 180 ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s", $"{p.Target.Min}–{p.Target.Max}s, ≤180s", "尺"));
+        var (minD, maxD, cap) = DurationRange(plan, p);
+        res.Add(new("H-01", dur >= minD - 0.05 && dur <= maxD + 0.05 && dur <= cap ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s", RangeText(minD, maxD, cap), "尺"));
 
         // H-06: an edge must not fall inside a word by more than the ASR timing tolerance on both sides
         var bad = new List<string>();
@@ -43,8 +44,11 @@ public sealed class QaEngine(FFmpeg ff)
         }
         res.Add(new("H-06", bad.Count == 0 ? QaStatus.Pass : p.Planner == "beat" ? QaStatus.Warn : QaStatus.Fail, bad.Count == 0 ? "0" : string.Join(", ", bad.Take(3)), p.Planner == "beat" ? "拍に合わせるため警告のみ" : "0 mid-word cuts (±150ms)", "発話途中のカット"));
 
-        // H-07: numbers / proper tokens in generated telops must be grounded in the clip transcript (or dictionary)
-        var src = string.Concat(tr.Sentences.Where(s => plan.Timeline.Any(c => s.T1 > c.MasterIn && s.T0 < c.MasterOut)).Select(s => s.Text));
+        // H-07: numbers / proper tokens in generated telops must be grounded in the clip transcript (or dictionary).
+        // Series parts: hook/chapter telops may name the series (whole source), and part labels (第2話 …) are structural, not claims.
+        var src = plan.Series is { } se
+            ? tr.FullText + string.Concat(se.Labels)
+            : string.Concat(tr.Sentences.Where(s => plan.Timeline.Any(c => s.T1 > c.MasterIn && s.T0 < c.MasterOut)).Select(s => s.Text));
         var ungrounded = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
             .SelectMany(t => JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary).Select(x => $"{t.Id}:{x}")).ToList();
         res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの忠実性"));
@@ -88,8 +92,22 @@ public sealed class QaEngine(FFmpeg ff)
             double ratio = total == 0 ? 1 : (double)match / total;
             res.Add(new("S-09", ratio >= 0.9 ? QaStatus.Pass : QaStatus.Warn, $"{ratio:P0} ({match}/{total})", "≥ 90% で話者とカメラが一致", "話者とカメラの一致"));
         }
+        if (plan.Series is { } series)
+        {
+            // S-10: YouTube chapter rules (YouTube Help "Video chapters"); S-11: TikTok accepts uploads up to 60 minutes
+            var yt = Planning.SeriesPlanner.YouTubeChapters(series.Chapters, dur);
+            res.Add(new("S-10", yt != null ? QaStatus.Pass : QaStatus.Warn, yt != null ? $"{yt.Count} チャプター" : "条件を満たさない", "00:00 から・3つ以上・各10秒以上", "YouTube のチャプター"));
+            res.Add(new("S-11", dur <= 3600 ? QaStatus.Pass : QaStatus.Warn, $"{dur / 60:F1}分", "≤ 60分（TikTok のアップロード上限）", "投稿先の長さの上限"));
+        }
         return res;
     }
+
+    /// <summary>Shorts: the preset's range and the 180 s cap (C-1). Series parts: the part's own range around the requested length.</summary>
+    public static (double Min, double Max, double Cap) DurationRange(EditPlan plan, Preset p) =>
+        plan.Series is { } s ? (s.MinSec, s.MaxSec, double.PositiveInfinity) : (p.Target.Min, p.Target.Max, 180);
+
+    static string RangeText(double min, double max, double cap) =>
+        double.IsInfinity(cap) ? $"{min / 60:F1}–{max / 60:F1}分（{min:F0}–{max:F0}s）" : $"{min}–{max}s, ≤{cap}s";
 
     /// <summary>Full QA on a rendered file. Preview renders skip loudness and black/freeze detection.</summary>
     public async Task<List<QaResult>> RunAsync(QaContext ctx, string rendered, bool preview, string workDir, CancellationToken ct)
@@ -103,8 +121,9 @@ public sealed class QaEngine(FFmpeg ff)
             var v = doc.RootElement.GetProperty("streams").EnumerateArray().First(s => s.GetProperty("codec_type").GetString() == "video");
             int w = v.GetProperty("width").GetInt32(), h = v.GetProperty("height").GetInt32();
             var p = ctx.Preset;
+            var (minD, maxD, cap) = DurationRange(ctx.Plan, p);
             res.RemoveAll(r => r.CheckId == "H-01");
-            res.Insert(0, new("H-01", dur >= p.Target.Min - 0.1 && dur <= p.Target.Max + 0.1 && dur <= 180 ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s (ffprobe)", $"{p.Target.Min}–{p.Target.Max}s", "尺"));
+            res.Insert(0, new("H-01", dur >= minD - 0.1 && dur <= maxD + 0.1 && dur <= cap ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s (ffprobe)", RangeText(minD, maxD, cap), "尺"));
             int ew = preview ? ctx.Plan.Canvas.Width / 2 : ctx.Plan.Canvas.Width, eh = preview ? ctx.Plan.Canvas.Height / 2 : ctx.Plan.Canvas.Height;
             res.Insert(1, new("H-02", w == ew && h == eh ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ew}x{eh}", "解像度・比率 9:16"));
         }
@@ -155,10 +174,22 @@ public sealed class QaEngine(FFmpeg ff)
         return new("S-05", hits.Count == 0 ? QaStatus.Pass : QaStatus.Warn, hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3)), "顔にテロップが重ならない", "顔とテロップの重なり");
     }
 
+    /// <summary>Long series parts have hundreds of captions; the measurement keeps the widest ones (most likely to overflow) plus an even spread.</summary>
+    public const int MaxSafeZoneSamples = 160;
+
+    public static List<Telop> SafeZoneSample(List<Telop> telops)
+    {
+        if (telops.Count <= MaxSafeZoneSamples) return telops;
+        var widest = telops.OrderByDescending(t => JapaneseText.DisplayWidth(t.Text)).ThenBy(t => t.Start).Take(MaxSafeZoneSamples / 2);
+        int step = (int)Math.Ceiling(telops.Count / (MaxSafeZoneSamples / 2.0));
+        var spread = telops.OrderBy(t => t.Start).Where((_, i) => i % step == 0);
+        return widest.Concat(spread).Concat(telops.Where(t => t.Type != TelopType.Caption).Take(MaxSafeZoneSamples / 4)).Distinct().OrderBy(t => t.Start).ToList();
+    }
+
     /// <summary>H-05 measured: render the telop layer alone (half resolution, 10 fps) and compute glyph bounding boxes from raw pixels.</summary>
     public async Task<QaResult> SafeZoneAsync(QaContext ctx, string workDir, CancellationToken ct)
     {
-        var telops = ctx.Plan.Telops.Where(t => t.Enabled && t.End - t.Start > 0.15).ToList();
+        var telops = SafeZoneSample(ctx.Plan.Telops.Where(t => t.Enabled && t.End - t.Start > 0.15).ToList());
         if (telops.Count == 0) return new("H-05", QaStatus.Pass, "no telops", "safe zone", "テロップの安全領域");
         Directory.CreateDirectory(workDir);
         var violations = new List<string>();

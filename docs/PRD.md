@@ -571,6 +571,7 @@ EditPlan は本システムの**中心となる成果物**である。人によ�
 | メソッド | パス | 説明 | 主なレスポンス |
 |---|---|---|---|
 | POST | `/api/projects` | プロジェクトを作成 | 201 `{id}` |
+| PATCH | `/api/projects/{id}` | プロジェクト名を変更 `{name}`（表示名のみ。保存先フォルダと保存済みのパスは変えない。以後の書き出しファイル名に反映） | 200 `Project` / 404 / 422 空・80文字超・制御文字 |
 | POST | `/api/projects/{id}/assets` | 素材を登録（ローカルパスを指定）し、ffprobeで解析 | 201 `SourceAsset` / 422 範囲外 |
 | POST | `/api/projects/{id}/rights` | 権利確認を記録 | 201 |
 | GET | `/api/presets` | プリセットの一覧 | 200 `Preset[]` |

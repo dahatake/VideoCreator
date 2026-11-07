@@ -147,7 +147,7 @@ public static class Solver
         return new Interval(Math.Max(0, start), Math.Max(start + 0.1, end));
     }
 
-    static double EstimatedLength(Transcript tr, int a, int b, Preset p)
+    public static double EstimatedLength(Transcript tr, int a, int b, Preset p)
     {
         var e = new Interval(tr.Sentences[a].T0, tr.Sentences[b].T1);
         double removable = 0;

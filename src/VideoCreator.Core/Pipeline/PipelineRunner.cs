@@ -19,9 +19,9 @@ namespace VideoCreator.Pipeline;
 public sealed record JobUpdate(string JobId, JobStatus Stage, double Progress, string Message);
 
 /// <summary>Retail list prices (JPY, Japan East) from prices.azure.com, retrieved 2026-11-07.</summary>
-public sealed record Pricing(double AsrJpyPerHour = 56.96, double LlmInJpyPer1M = 118.67, double LlmOutJpyPer1M = 712.03)
+public sealed record Pricing(double AsrJpyPerHour = 56.96, double LlmInJpyPer1M = 791.15, double LlmOutJpyPer1M = 4746.90)
 {
-    public const string Basis = "Azure Retail Prices API (JPY, japaneast, 2026-11-07): Fast Transcription ¥56.96/時間, gpt-5.4-mini 入力 ¥118.67/1M・出力 ¥712.03/1M トークン";
+    public const string Basis = "Azure Retail Prices API (JPY, japaneast, 2026-11-07): Fast Transcription ¥56.96/時間, gpt-chat-latest (2026-10-07, Global) 入力 ¥791.15/1M・出力 ¥4,746.90/1M トークン";
     public static int EstimateTokens(int chars) => (int)(chars * 1.1) + 1500;
 }
 
@@ -174,10 +174,17 @@ public sealed class PipelineRunner(PipelineServices s)
             bgm = preset.Planner == "beat" || t0.Bpm <= 0 ? await AnalyzedBgmAsync(t0, ct) : t0;
         }
 
-        Stage(JobStatus.Selecting, 0.45, preset.Planner == "speed" ? "早送りに向く区間を探しています" : s.Llm == null ? "音声の盛り上がりから選んでいます" : $"AI がハイライトを選んでいます（{s.Llm.Model}）");
+        Stage(JobStatus.Selecting, 0.45, job.Options.PartMinutes != null ? (s.Llm == null ? "話題の切れ目を書き起こしから探しています" : $"AI が話題の切れ目と章を探しています（{s.Llm.Model}）")
+            : preset.Planner == "speed" ? "早送りに向く区間を探しています" : s.Llm == null ? "音声の盛り上がりから選んでいます" : $"AI がハイライトを選んでいます（{s.Llm.Model}）");
         var exclude = job.ExcludeCandidateIds.Select(id => s.Store.Get<Candidate>(Kinds.Candidate, id)).Where(c => c != null).SelectMany(c => c!.Segments).ToList();
         SelectionOutcome outcome;
-        if (preset.Planner == "speed")
+        var seriesParts = new Dictionary<string, SeriesPart>();
+        if (job.Options.PartMinutes is double partMin)
+        {
+            var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, partMin, warnings, ct);
+            outcome = o; seriesParts = partsById;
+        }
+        else if (preset.Planner == "speed")
         {
             var spans = SpeedPlanner.Candidates(tr, sig, main.Media, preset).Where(c => exclude.Count == 0 || exclude.All(e => Math.Min(c.Segments[0].T1, e.T1) - Math.Max(c.Segments[0].T0, e.T0) < 0.5 * c.Segments[0].Length)).ToList();
             outcome = new SelectionOutcome(spans, "none", 0, 0, true, [], 0, 0);
@@ -210,20 +217,21 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             var cid = $"{job.Id}_{c0.Id}";
             (EditPlan plan, List<string> notes) built;
-            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs); }
+            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id)); }
             catch (PlanException ex) { warnings.Add($"{c0.Id}: {ex.Message}"); continue; }
             var (plan, notes) = built;
             s.Store.Put(Kinds.EditPlan, plan.EditplanId, project.Id, plan);
-            var cand = c0 with { Id = cid, EditPlanId = plan.EditplanId, Notes = [.. c0.Notes, .. notes] };
+            var cand = c0 with { Id = cid, EditPlanId = plan.EditplanId, Notes = [.. c0.Notes, .. notes], Series = plan.Series };
             candidates.Add(cand);
             s.Store.Put(Kinds.Candidate, cid, job.Id, cand);
         }
         if (candidates.Count == 0) throw new PipelineException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした。別のパターンを試してください。");
+        if (seriesParts.Count > 0 && candidates.Count != seriesParts.Count) throw new PipelineException("E-SOL-INFEASIBLE", "一部のパートの編集計画を作れませんでした: " + string.Join(" / ", warnings.TakeLast(seriesParts.Count - candidates.Count)));
         Mark("plan");
 
         for (int i = 0; i < candidates.Count; i++)
         {
-            Stage(JobStatus.Previewing, 0.65 + 0.3 * i / candidates.Count, $"プレビューを作成しています（{i + 1}/{candidates.Count}）");
+            Stage(JobStatus.Previewing, 0.65 + 0.3 * i / candidates.Count, seriesParts.Count > 0 ? $"プレビューを作成しています（{candidates[i].Series?.Label} {i + 1}/{candidates.Count}・長いので数分かかります）" : $"プレビューを作成しています（{i + 1}/{candidates.Count}）");
             var plan = s.Store.Get<EditPlan>(Kinds.EditPlan, candidates[i].EditPlanId!)!;
             var render = await RenderAsync(plan, preview: true, ct);
             candidates[i] = candidates[i] with { PreviewRenderId = render.Id };
@@ -237,14 +245,45 @@ public sealed class PipelineRunner(PipelineServices s)
             s.Log($"[{job.Id}] LLM input chars {outcome.SentChars}/{outcome.FullTextChars} ({100.0 * outcome.SentChars / outcome.FullTextChars:F0}%)");
         return job with
         {
-            Status = JobStatus.Ready, Progress = 1, Message = $"{candidates.Count} 件の候補ができました", CandidateIds = candidates.Select(c => c.Id).ToList(),
-            LlmModel = outcome.Model, PromptVersion = SelectionPrompt.Version, StageSeconds = stageTimes, Cost = cost, Warnings = warnings,
+            Status = JobStatus.Ready, Progress = 1, Message = seriesParts.Count > 0 ? $"{candidates.Count} 本のシリーズ（{string.Join("・", candidates.Select(c => c.Series?.Label))}）ができました" : $"{candidates.Count} 件の候補ができました",
+            CandidateIds = candidates.Select(c => c.Id).ToList(),
+            LlmModel = outcome.Model, PromptVersion = seriesParts.Count > 0 ? SeriesPromptVersion : SelectionPrompt.Version, StageSeconds = stageTimes, Cost = cost, Warnings = warnings,
         };
     }
 
+    public const string SeriesPromptVersion = "series-1.0.0";
+
+    /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
+    async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double partMinutes, List<string> warnings, CancellationToken ct)
+    {
+        if (preset.Planner is not ("speech" or "switch")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
+        if (tr.Sentences.Count == 0) throw new PipelineException("E-SERIES-NOSPEECH", "前編・後編の分割は、話の切れ目を書き起こしから探します。発話のある動画を選んでください");
+        ChapterOutline? outline = null;
+        if (s.Llm != null)
+        {
+            try { outline = await SeriesPlanner.OutlineAsync(s.Llm, tr, s.Log, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { s.Log("series outline failed: " + ex.Message); }
+            if (outline == null) warnings.Add("AI による章分けに失敗したため、書き起こしの語彙の変化と間から話題の切れ目を探しました");
+        }
+        outline ??= SeriesPlanner.FallbackOutline(tr, sig);
+        var notes = new List<string>();
+        List<SeriesPart> parts;
+        try { parts = SeriesPlanner.Split(tr, sig, preset, main.Media.Duration, partMinutes * 60, outline, notes); }
+        catch (PlanException ex) { throw new PipelineException(ex.Code, ex.Message); }
+        warnings.AddRange(notes);
+        var cands = parts.Select(pt => new Candidate
+        {
+            Id = $"part{pt.Index + 1}", Rank = pt.Index + 1, Segments = [pt.Body], HookText = SeriesPlanner.HookText(pt), Headline = pt.SeriesTitle,
+            EmphasisWords = pt.Emphasis, Reason = pt.Boundary, Source = "series",
+        }).ToList();
+        int inTok = outline.InputChars > 0 ? Pricing.EstimateTokens(outline.InputChars) : 0, outTok = outline.OutputChars;
+        var outcome = new SelectionOutcome(cands, outline.Source == "llm" ? s.Llm?.Model ?? "none" : "none", inTok, outTok, outline.Source != "llm", [], tr.Sentences.Sum(x => x.Text.Length), outline.InputChars);
+        return (outcome, parts.ToDictionary(pt => $"part{pt.Index + 1}"));
+    }
+
     public async Task<(EditPlan plan, List<string> notes)> BuildPlanAsync(Candidate c, Transcript tr, SignalSet sig, Preset p, SourceAsset main, IReadOnlyList<SourceAsset> assets, string projectId, Job job,
-        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null)
-        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts), ct);
+        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null)
+        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part), ct);
 
     /// <summary>FR-SWT-01: cameras without a user-set speaker get one from their own microphone, when the evidence is clear.</summary>
     async Task AutoAssignSpeakersAsync(List<SourceAsset> used, SourceAsset main, Transcript tr, List<string> warnings, CancellationToken ct)
@@ -392,6 +431,7 @@ public sealed class PipelineRunner(PipelineServices s)
     {
         var safe = new string(project.Name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) || ch is '.' ? '_' : ch).ToArray()).Trim();
         if (safe.Length == 0) safe = "video";
+        if (plan.Series is { } se) return $"{safe}_{plan.Preset.Id}_{se.Part:D2}{se.Label}_{DateTime.Now:yyyyMMdd-HHmm}";
         return $"{safe}_{plan.Preset.Id}_{rank}_{DateTime.Now:yyyyMMdd-HHmm}";
     }
 
@@ -415,6 +455,7 @@ public sealed class PipelineRunner(PipelineServices s)
             catch (Exception ex) when (ex is not OperationCanceledException) { s.Log("metadata generation failed: " + ex.Message); }
         }
         if (titles.Length == 0) titles = $"1. {(c.Headline.Length > 0 ? c.Headline : c.HookText)}";
+        if (plan.Series is { } se) return SeriesMetadata(se, plan, titles, desc, tags);
         return $"""
 # 投稿用メタデータ案（AI による提案。投稿前に内容を確認してください）
 
@@ -428,6 +469,52 @@ public sealed class PipelineRunner(PipelineServices s)
 
 ## ハッシュタグ
 {tags} #Shorts
+
+## AI 利用の開示（C-6 / FR-EXP-04）
+この動画は既存の映像を切り出して字幕を付けたもので、AI による写実的な映像・音声の生成や改変は含みません。
+YouTube の「AI use」は通常「いいえ」で問題ありません（YouTube ヘルプ「Disclosing use of GenAI content」）。
+""";
+    }
+
+    /// <summary>Series parts: label-prefixed titles, YouTube chapters (validated against YouTube's rules), links between parts, no #Shorts (vertical videos over 3 min are regular videos on YouTube).</summary>
+    public static string SeriesMetadata(SeriesInfo se, EditPlan plan, string titles, string desc, string tags)
+    {
+        var label = $"【{se.Label}】";
+        var prefixed = string.Join("\n", titles.Split('\n').Select(l =>
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(l, @"^(\d+\.\s*)(.*)$");
+            return m.Success && !m.Groups[2].Value.Contains(se.Label, StringComparison.Ordinal) ? $"{m.Groups[1].Value}{label}{m.Groups[2].Value}" : l;
+        }));
+        if (se.SeriesTitle.Length > 0) prefixed += $"\n{titles.Split('\n').Length + 1}. {label}{se.SeriesTitle}";
+        var chapters = SeriesPlanner.YouTubeChapters(se.Chapters, plan.Duration);
+        var chapterText = chapters != null ? string.Join("\n", chapters)
+            : "（チャプターが3つ未満、または10秒未満のため、YouTube のチャプター条件を満たしません。チャプターは付けずに投稿してください）";
+        var links = string.Join("\n", se.Labels.Select((l, i) => i + 1 == se.Part ? $"{l}: この動画" : $"{l}: （ここに{l}の URL を記入）"));
+        var length = plan.Duration > 180
+            ? $"長さ {SeriesPlanner.Stamp(plan.Duration, plan.Duration)}。縦型でも3分を超えるため、YouTube ではショートではなく通常の動画として扱われます（YouTube ヘルプ「Understand three-minute YouTube Shorts」）。TikTok のアップロードは60分まで"
+            : $"長さ {SeriesPlanner.Stamp(plan.Duration, plan.Duration)}。3分以内の縦型動画は YouTube でショートとして扱われます";
+        return $"""
+# 投稿用メタデータ案 {label}（{se.Part}/{se.Parts}。AI による提案。投稿前に内容を確認してください）
+
+## タイトル候補（シリーズで同じ書き方にそろえると、続きを探しやすくなります）
+{prefixed}
+
+## 説明文
+{desc}
+
+## チャプター（説明文に貼り付け。YouTube の条件: 先頭 00:00・3つ以上・各10秒以上）
+{chapterText}
+
+## シリーズ
+{links}
+
+元動画: （ここに元動画の URL を記入）
+
+## ハッシュタグ
+{tags}
+
+## 長さ
+{length}
 
 ## AI 利用の開示（C-6 / FR-EXP-04）
 この動画は既存の映像を切り出して字幕を付けたもので、AI による写実的な映像・音声の生成や改変は含みません。

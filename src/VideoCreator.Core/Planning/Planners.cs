@@ -51,7 +51,7 @@ public static class SwitchPlanner
         foreach (var sc in speech)
         {
             double m0 = sc.MasterIn, m1 = sc.MasterOut;
-            string baseRole = sc.Role == "teaser" ? "teaser" : "body";
+            string baseRole = sc.Role is "teaser" or "recap" or "next" ? sc.Role : "body";
             // speaker turns from sentences, clipped to this speech clip
             var turns = new List<Turn>();
             foreach (var s in tr.Sentences.Where(s => s.T1 > m0 && s.T0 < m1).OrderBy(s => s.T0))
