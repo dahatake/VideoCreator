@@ -72,7 +72,9 @@ main { padding: var(--s24); max-width: 1440px; width: 100%; margin: 0 auto; outl
 .pid { font-size: 12px; font-weight: 600; color: var(--colorBrandForeground1, #0f6cbd); }
 dl.facts { display: grid; grid-template-columns: auto 1fr; gap: var(--s4) var(--s12); margin: var(--s8) 0; font-size: 12px; line-height: 16px; }
 dl.facts dt { color: var(--colorNeutralForeground3); }
-dl.facts dd { margin: 0; }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+.llm-choice { margin: var(--s4) 0 var(--s12); align-items: start; }
+.llm-choice label { display: flex; flex-direction: column; gap: 2px; }
 
 .drop {
   border: 2px dashed var(--colorNeutralStroke1, #d1d1d1); border-radius: var(--borderRadiusXLarge, 8px);

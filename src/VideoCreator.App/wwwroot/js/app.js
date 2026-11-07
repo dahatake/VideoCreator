@@ -62,24 +62,53 @@ async function refreshProvider() {
   try {
     const h = await api('/api/health');
     const names = { 'azure-openai': `Azure OpenAI（${h.llm_model ?? ''}）`, copilot: 'GitHub Copilot（インストール済み CLI）', none: 'AI なし（音声の盛り上がりで選定）' };
-    $('#provider').textContent = `${h.local_only ? 'ローカルのみ · ' : ''}書き起こし: ${h.asr === 'none' ? 'なし' : 'Azure AI Speech'} · 選定: ${names[h.llm_provider] ?? h.llm_provider}`;
+    const sel = h.llm_provider !== 'none' && !h.llm_model ? 'AI なし（設定した AI が使えません）' : names[h.llm_provider] ?? h.llm_provider;
+    $('#provider').textContent = `${h.local_only ? 'ローカルのみ · ' : ''}書き起こし: ${h.asr === 'none' ? 'なし' : 'Azure AI Speech'} · 選定: ${sel}`;
     return h;
   } catch { $('#provider').textContent = ''; }
 }
+function llmChoice(value, title, lines, unavailable) {
+  return `<fluent-field label-position="after" class="llm-choice">
+    <label slot="label"><b>${esc(title)}</b>${lines.map(l => `<span class="caption">${esc(l)}</span>`).join('')}${unavailable ? `<span class="caption warnc">使えません：${esc(unavailable)}</span>` : ''}</label>
+    <fluent-radio slot="input" value="${value}" ${unavailable ? 'disabled' : ''}></fluent-radio>
+  </fluent-field>`;
+}
 $('#settings-btn').addEventListener('click', async () => {
   const s = await api('/api/settings'); const h = await api('/api/health');
+  const local = s.local_only ? 'ローカルのみモードで起動しています' : '';
+  const choices = [
+    ['azure-openai', `Azure OpenAI（${s.azure_deployment}）`, [
+      'おすすめ。JSON スキーマで出力を固定するため、候補の形式が崩れにくい方式です。',
+      '送るもの：書き起こしの文章と音量の要約（動画・音声ファイルは送りません）。Entra ID（az login）でサインインします。',
+      '料金：Azure の従量課金。生成前に見積もりを表示します。',
+    ], local || (s.azure_configured ? '' : 'エンドポイント（VideoCreator:Llm:Endpoint）が未設定です。scripts/setup.ps1 を実行してください')],
+    ['copilot', `GitHub Copilot（${s.copilot_model ?? '既定のモデル'}）`, [
+      'PC にインストール済みの Copilot CLI を使います。ファイル操作などのツールは渡しません。',
+      '送るもの：書き起こしの文章と音量の要約を GitHub に送ります。料金は Copilot のプランに含まれます。',
+      '出力形式を強制できないため、まれに形式エラーになることがあります。',
+    ], local || (s.copilot_cli ? '' : 'Copilot CLI が見つかりません（winget install GitHub.Copilot）')],
+    ['none', 'AI を使わない', [
+      '音量のピーク（盛り上がり）の周りを切り出します。選定のために外部へ送るものはなく、AI の料金もかかりません。',
+      '話の内容は考慮しません。ツッコミテロップなど、AI が必要な機能は使えません。',
+    ], ''],
+  ];
+  const cur = choices.find(c => c[0] === s.llm_provider);
   $('#settings-body').innerHTML = `
-    <p>ハイライトを選ぶ AI を選んでください。</p>
-    <fluent-radio-group id="llm" orientation="vertical" value="${esc(s.llm_provider)}" ${s.local_only ? 'disabled' : ''}>
-      <fluent-radio value="azure-openai">Azure OpenAI（${esc(s.azure_deployment)}・構造化出力）</fluent-radio>
-      <fluent-radio value="copilot" ${s.copilot_cli ? '' : 'disabled'}>GitHub Copilot（OS にインストール済みの CLI${s.copilot_cli ? '' : '：見つかりません'}）</fluent-radio>
-      <fluent-radio value="none">AI を使わない（音声の盛り上がりから選ぶ）</fluent-radio>
+    <p id="llm-label">ハイライトを選ぶ AI を選んでください。字幕用の書き起こし${s.asr_configured ? '（Azure AI Speech）' : ''}はどれを選んでも同じです。</p>
+    ${s.local_only ? info('ローカルのみモードのため、ハイライト選定には AI を使いません（「AI を使わない」に固定）。字幕用の書き起こしは引き続き使います。') : ''}
+    ${!s.local_only && cur?.[3] ? info(`設定されている「${cur[1]}」は使えないため、現在は AI を使わずに選んでいます。`, 'warning') : ''}
+    <fluent-radio-group id="llm" orientation="vertical" aria-labelledby="llm-label" value="${esc(s.llm_provider)}">
+      ${choices.map(([v, t, l, u]) => llmChoice(v, t, l, u)).join('')}
     </fluent-radio-group>
+    <p class="caption">AI の呼び出しに失敗して候補が得られなかった場合は、自動で「AI を使わない」方式に切り替えて続けます。</p>
     <fluent-divider style="margin:16px 0"></fluent-divider>
     <dl class="facts"><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>不足フィルタ</dt><dd>${esc(h.missing_filters.join(', ') || 'なし')}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? '未検出')}</dd><dt>パターン数</dt><dd>${h.presets}</dd></dl>`;
-  $('#llm')?.addEventListener('change', async (ev) => {
-    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: ev.target.value ?? $('#llm').value } }); await refreshProvider(); }
-    catch (e) { $('#settings-body').insertAdjacentHTML('afterbegin', errorBar(e)); }
+  $('#llm')?.addEventListener('change', async () => {
+    const radios = $$('#llm fluent-radio');
+    const value = radios.find(r => r.checked)?.value;
+    if (!value || value === s.llm_provider) return;
+    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: value } }); s.llm_provider = value; $('#settings-body fluent-message-bar[intent=warning]')?.remove(); await refreshProvider(); }
+    catch (e) { radios.forEach(r => { r.checked = r.value === s.llm_provider; }); $('#settings-body').insertAdjacentHTML('afterbegin', errorBar(e)); }
   });
   $('#settings-dialog').show();
 });

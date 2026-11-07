@@ -43,7 +43,16 @@ public static class Api
             presets = rt.Presets.Count,
         }, Json.Options));
 
-        api.MapGet("/settings", (Runtime rt) => Results.Json(new { llm_provider = rt.LlmProvider, local_only = rt.LocalOnly, copilot_cli = rt.CopilotCli, azure_deployment = rt.Options.Llm.Deployment }, Json.Options));
+        api.MapGet("/settings", (Runtime rt) => Results.Json(new
+        {
+            llm_provider = rt.LlmProvider,
+            local_only = rt.LocalOnly,
+            copilot_cli = rt.CopilotCli,
+            copilot_model = rt.Options.Llm.CopilotModel,
+            azure_deployment = rt.Options.Llm.Deployment,
+            azure_configured = !string.IsNullOrWhiteSpace(rt.Options.Llm.Endpoint),
+            asr_configured = rt.Asr != null,
+        }, Json.Options));
         api.MapPut("/settings", (Runtime rt, Settings s) =>
         {
             try { rt.SetLlmProvider(s.LlmProvider); return Results.Json(new { llm_provider = rt.LlmProvider }, Json.Options); }

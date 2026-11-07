@@ -54,6 +54,8 @@ public sealed class Runtime
     {
         if (LocalOnly && provider != "none") throw new InvalidOperationException("ローカルのみモードでは選定用の AI（LLM）を使えません。字幕のための書き起こしだけは使います");
         if (provider is not ("azure-openai" or "copilot" or "none")) throw new ArgumentException("provider must be azure-openai | copilot | none");
+        if (provider == "azure-openai" && string.IsNullOrWhiteSpace(_o.Llm.Endpoint)) throw new InvalidOperationException("Azure OpenAI のエンドポイント（VideoCreator:Llm:Endpoint）が設定されていません。scripts/setup.ps1 を実行してください");
+        if (provider == "copilot" && CopilotCli == null) throw new InvalidOperationException("GitHub Copilot CLI が見つかりません。winget install GitHub.Copilot でインストールしてください");
         LlmProvider = provider;
     }
 
