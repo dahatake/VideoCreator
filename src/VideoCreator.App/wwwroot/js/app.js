@@ -97,7 +97,7 @@ function llmChoice(value, title, lines, unavailable) {
   </fluent-field>`;
 }
 $('#settings-btn').addEventListener('click', async () => {
-  const s = await api('/api/settings'); const h = await api('/api/health');
+  const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
   const local = s.local_only ? 'ローカルのみモードで起動しています' : '';
   const choices = [
     ['azure-openai', `Azure OpenAI（${s.azure_deployment}）`, [
@@ -125,7 +125,10 @@ $('#settings-btn').addEventListener('click', async () => {
     </fluent-radio-group>
     <p class="caption">AI の呼び出しに失敗して候補が得られなかった場合は、自動で「AI を使わない」方式に切り替えて続けます。</p>
     <fluent-divider style="margin:16px 0"></fluent-divider>
+    ${projectsDirSection(pd)}
+    <fluent-divider style="margin:16px 0"></fluent-divider>
     <dl class="facts"><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>不足フィルタ</dt><dd>${esc(h.missing_filters.join(', ') || 'なし')}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? '未検出')}</dd><dt>パターン数</dt><dd>${h.presets}</dd></dl>`;
+  wireProjectsDir(pd);
   $('#llm')?.addEventListener('change', async () => {
     const radios = $$('#llm fluent-radio');
     const value = radios.find(r => r.checked)?.value;
@@ -136,6 +139,90 @@ $('#settings-btn').addEventListener('click', async () => {
   $('#settings-dialog').show();
 });
 $('#settings-close').addEventListener('click', () => $('#settings-dialog').hide());
+
+// ---------------- settings: projects folder ----------------
+const bytes = (b) => b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : b >= 2 ** 20 ? `${(b / 2 ** 20).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+function projectsDirSection(pd) {
+  const source = { default: '既定の場所', config: '設定ファイル（appsettings）で指定', app: 'この画面で指定' }[pd.source] ?? '';
+  return `<h3 id="pdirLabel" style="margin:0 0 4px">プロジェクトの保存先</h3>
+    <p class="caption">いまの保存先: <b id="pdirNow">${esc(pd.path)}</b>（${esc(source)}）· プロジェクト ${pd.projects} 件<br>新しいプロジェクトはこのフォルダーの中に作られ、素材のアップロード・プレビュー・書き出した動画もそこに保存されます。</p>
+    <div class="row" style="align-items:center"><fluent-text-input id="pdirPath" style="flex:1" placeholder="D:\\Videos\\VideoCreator" aria-label="新しい保存先のフォルダー（フルパス）"></fluent-text-input><fluent-button id="pdirBrowse" type="button">フォルダーを選ぶ…</fluent-button></div>
+    <p class="caption" id="pdirMoveLabel">いまの保存先にあるフォルダーとファイルをどうしますか（どちらかを選んでください）</p>
+    <fluent-radio-group id="pdirMove" orientation="vertical" aria-labelledby="pdirMoveLabel">
+      ${field('すべて新しい保存先へ移動する（プロジェクトのフォルダー・アップロードした素材・書き出した動画などをすべて移し、アプリ内の参照も新しい場所に書き換えます）', '<fluent-radio slot="input" value="move"></fluent-radio>')}
+      ${field('移動しない（いまのプロジェクトはいまの場所のまま使えます。新しく作るプロジェクトから新しい保存先に作ります）', '<fluent-radio slot="input" value="keep"></fluent-radio>')}
+    </fluent-radio-group>
+    <div><fluent-button id="pdirCheck" type="button">内容を確認する</fluent-button></div>
+    <div id="pdirPlan"></div>
+    <div class="progress-row" id="pdirRow" hidden><span class="caption" id="pdirStep"></span><fluent-progress-bar id="pdirBar" max="100" aria-label="保存先の移動の進み具合"></fluent-progress-bar><span class="caption pct" id="pdirPct"></span></div>
+    <div id="pdirMsg" aria-live="polite"></div>`;
+}
+function wireProjectsDir(pd) {
+  const choice = () => $$('#pdirMove fluent-radio').find(r => r.checked)?.value;
+  const reset = () => { $('#pdirPlan').innerHTML = ''; };
+  $('#pdirPath').addEventListener('input', reset);
+  $('#pdirMove').addEventListener('change', reset);
+  $('#pdirBrowse').addEventListener('click', async () => {
+    const b = $('#pdirBrowse'); b.disabled = true;
+    $('#pdirMsg').innerHTML = info('開いた「フォルダーの選択」画面でフォルダーを選んでください（画面が見えないときはタスク バーを確認してください）');
+    try {
+      const r = await api('/api/dialogs/folder', { method: 'POST', body: { initial_path: $('#pdirPath').value || pd.path } });
+      if (r.path != null) { $('#pdirPath').value = r.path; reset(); }
+      $('#pdirMsg').innerHTML = r.path == null ? info('選択をキャンセルしました。入力は変更していません') : '';
+    } catch (e) { $('#pdirMsg').innerHTML = errorBar(e); }
+    finally { b.disabled = false; }
+  });
+  $('#pdirCheck').addEventListener('click', async () => {
+    $('#pdirMsg').innerHTML = '';
+    const path = $('#pdirPath').value ?? '', how = choice();
+    if (!path.trim()) { $('#pdirMsg').innerHTML = info('新しい保存先のフォルダーを入力するか、「フォルダーを選ぶ…」で選んでください', 'warning'); return; }
+    if (!how) { $('#pdirMsg').innerHTML = info('いまのフォルダーとファイルを「移動する」か「移動しない」かを選んでください', 'warning'); return; }
+    let plan;
+    try { plan = await api('/api/settings/projects-dir/plan', { method: 'POST', body: { path, move: how === 'move' } }); }
+    catch (e) { $('#pdirMsg').innerHTML = errorBar(e); return; }
+    const projects = plan.items.filter(i => i.project_id), others = plan.items.filter(i => !i.project_id);
+    const list = (xs) => `<ul class="notes">${xs.slice(0, 8).map(i => `<li>${esc(i.project_name ?? i.name)}${i.project_name ? `<span class="caption">（${esc(i.name)}）</span>` : ''} · ${bytes(i.bytes)}${i.is_directory ? `・${i.files} ファイル` : ''}</li>`).join('')}${xs.length > 8 ? `<li>ほか ${xs.length - 8} 件</li>` : ''}</ul>`;
+    $('#pdirPlan').innerHTML = `<section class="card stack" style="margin-top:8px">
+      <p><b>${esc(plan.from)}</b><br>→ <b>${esc(plan.to)}</b></p>
+      ${plan.move ? `
+        <p class="caption">移動するもの: プロジェクト ${projects.length} 件${others.length ? `・その他 ${others.length} 件` : ''}（合計 ${bytes(plan.total_bytes)}）。${plan.same_volume ? '同じドライブなので、フォルダーの名前を変えるだけで済みます（すぐ終わります）。' : `別のドライブへコピーして中身を照合してから、元のファイルを消します（空き ${plan.free_bytes != null ? bytes(plan.free_bytes) : '不明'}）。`}</p>
+        ${projects.length ? `<details open><summary class="caption">プロジェクト</summary>${list(projects)}</details>` : ''}
+        ${others.length ? `<details><summary class="caption">その他のフォルダー・ファイル（アプリが作ったものではない可能性があります。これらも移動します）</summary>${list(others)}</details>` : ''}
+        ${!plan.items.length ? '<p class="caption">いまの保存先に移動するものはありません。</p>' : ''}`
+      : `<p class="caption">ファイルは動かしません。いまのプロジェクトは ${esc(plan.from)} のまま使い、削除するときはこれまでどおりフォルダーごとごみ箱に移します。新しく作るプロジェクトから新しい保存先に作ります。</p>`}
+      ${plan.projects_elsewhere ? `<p class="caption">ほかの場所にあるプロジェクト ${plan.projects_elsewhere} 件は動かしません。</p>` : ''}
+      ${plan.problems.length ? `<fluent-message-bar intent="error" layout="multiline"><b>このままでは変更できません</b><ul class="notes">${plan.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></fluent-message-bar>`
+        : `<div><fluent-button appearance="primary" id="pdirApply">${plan.move ? 'すべて移動して保存先を変更する' : '移動せずに保存先を変更する'}</fluent-button></div>`}
+    </section>`;
+    $('#pdirApply')?.addEventListener('click', () => apply(path, plan.move));
+  });
+  const apply = async (path, move) => {
+    const controls = ['#pdirApply', '#pdirCheck', '#pdirBrowse', '#settings-close'].map(s => $(s)).filter(Boolean);
+    controls.forEach(c => { c.disabled = true; });
+    $('#pdirMsg').innerHTML = '';
+    const row = $('#pdirRow');
+    const tick = setInterval(async () => {
+      try {
+        const p = (await api('/api/settings/projects-dir')).progress;
+        if (!p.running) return;
+        row.hidden = false;
+        const pct = p.total_bytes > 0 ? Math.round(100 * p.done_bytes / p.total_bytes) : Math.round(100 * p.done_items / Math.max(1, p.total_items));
+        $('#pdirBar').setAttribute('value', String(pct)); $('#pdirPct').textContent = `${pct}%`;
+        $('#pdirStep').textContent = `${p.done_items} / ${p.total_items} 件${p.current ? `（${p.current}）` : ''}`;
+      } catch { }
+    }, 500);
+    try {
+      const r = await api('/api/settings/projects-dir', { method: 'PUT', body: { path, move } });
+      $('#pdirNow').textContent = r.projects_dir; $('#pdirPlan').innerHTML = ''; $('#pdirPath').value = '';
+      const lines = [r.moved ? `${r.moved_items.length} 件を移動しました（アプリ内の参照 ${r.documents_updated} 件を書き換えました）。` : 'ファイルは動かしていません。', `新しいプロジェクトは ${r.projects_dir} に作ります。`];
+      $('#pdirMsg').innerHTML = info(lines.join(''), r.failed.length ? 'warning' : 'success')
+        + (r.failed.length ? `<fluent-message-bar intent="warning" layout="multiline"><b>移動できなかったため、元の場所に残したもの（そのまま使えます）</b><ul class="notes">${r.failed.map(f => `<li>${esc(f.name)}: ${esc(f.reason)}</li>`).join('')}</ul>開いているファイルを閉じてから、同じ保存先を選んでもう一度「移動する」で続きを移せます。</fluent-message-bar>` : '')
+        + (r.left_behind.length ? `<fluent-message-bar intent="warning" layout="multiline">新しい場所へのコピーは済みましたが、元のファイルの一部を消せませんでした（使用中の可能性）。不要なら手で削除してください: ${r.left_behind.map(esc).join('、')}</fluent-message-bar>` : '');
+      if (location.hash.startsWith('#/p/') || location.hash === '' || location.hash === '#/') router();
+    } catch (e) { $('#pdirMsg').innerHTML = errorBar(e); }
+    finally { clearInterval(tick); row.hidden = true; controls.forEach(c => { c.disabled = false; }); }
+  };
+}
 
 // ---------------- routes ----------------
 const routes = [
@@ -636,16 +723,16 @@ async function job(jobId) {
   if (j.status === 'ready' || j.status === 'done') return candidates(j);
   setSteps(2);
   const started = Date.now();
-  const render = (stage, progress, message, failed) => {
-    const idx = STAGES.findIndex(s => s[0] === stage);
+  const skeleton = (failed, message) => {
     main.innerHTML = `
       <h1>生成しています</h1>
       <div class="grid cols-2" style="align-items:start">
         <section class="card">
-          ${failed ? errorBar(failed) : `<p aria-live="polite">${esc(message)}</p>`}
-          <fluent-progress-bar max="100" value="${Math.round((progress ?? 0) * 100)}" aria-label="進捗"></fluent-progress-bar>
-          <p class="caption" style="margin-top:8px">経過 <span id="elapsed">0:00</span>${j.cost ? ` · 推定コスト 約 ¥${j.cost.estimated_jpy.toFixed(1)}` : ''}</p>
-          <div>${STAGES.map(([k, label], i) => `<div class="stage ${i < idx || stage === 'ready' ? 'done' : i === idx ? 'active' : ''}"><span class="dot"></span><span>${label}</span><span class="caption">${i < idx ? '完了' : i === idx ? '実行中' : ''}</span></div>`).join('')}</div>
+          ${failed ? errorBar(failed) : `<p id="jobMsg" aria-live="polite">${esc(message)}</p>`}
+          ${failed ? '' : `<div class="progress-row"><span class="caption">全体</span><fluent-progress-bar id="jobBar" max="100" value="0" aria-label="全体の進み具合"></fluent-progress-bar><span id="jobPct" class="caption pct">0%</span></div>
+          <div id="stepBox" class="progress-row" hidden><span id="stepLabel" class="caption"></span><fluent-progress-bar id="stepBar" max="100" aria-label="実行中の処理の進み具合"></fluent-progress-bar><span id="stepPct" class="caption pct"></span></div>`}
+          <p class="caption" style="margin-top:8px">経過 <span id="elapsed">0:00</span><span id="eta"></span>${j.cost ? ` · 推定コスト 約 ¥${j.cost.estimated_jpy.toFixed(1)}` : ''}</p>
+          <div id="stages">${STAGES.map(([k, label]) => `<div class="stage" data-stage="${k}"><span class="dot"></span><span>${label}</span><span class="caption"></span></div>`).join('')}</div>
           <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}">プロジェクトに戻る</fluent-anchor-button>` : '<fluent-button id="cancel">キャンセル</fluent-button>'}</div>
         </section>
         <section class="card"><h2>この間に行っていること</h2>
@@ -661,7 +748,37 @@ async function job(jobId) {
       </div>`;
     $('#cancel')?.addEventListener('click', async () => { try { await api(`/api/jobs/${jobId}/cancel`, { method: 'POST' }); } catch { } });
   };
-  render(j.status, j.progress, j.message);
+  // update values in place: rebuilding the DOM on every SSE message would restart the bars' animation and reset screen readers
+  let stepKey = null, stepT0 = 0;
+  const update = (u) => {
+    const idx = STAGES.findIndex(s => s[0] === u.stage);
+    if ($('#jobMsg') && $('#jobMsg').textContent !== u.message) $('#jobMsg').textContent = u.message ?? '';
+    const pct = Math.round((u.progress ?? 0) * 100);
+    $('#jobBar')?.setAttribute('value', String(pct));
+    if ($('#jobPct')) $('#jobPct').textContent = `${pct}%`;
+    const step = u.step_progress;
+    const box = $('#stepBox');
+    if (box) {
+      box.hidden = idx < 0;
+      $('#stepLabel').textContent = u.step ?? (idx >= 0 ? STAGES[idx][1] : '');
+      const bar = $('#stepBar');
+      if (typeof step === 'number') { bar.setAttribute('value', String(Math.round(step * 100))); $('#stepPct').textContent = `${Math.round(step * 100)}%`; }
+      else { bar.removeAttribute('value'); $('#stepPct').textContent = ''; }
+    }
+    // ETA only for a measured sub-task, from its own elapsed time
+    const key = `${u.stage}|${(u.step ?? '').split(':')[0]}`;
+    if (key !== stepKey) { stepKey = key; stepT0 = Date.now(); }
+    const eta = $('#eta');
+    if (eta) eta.textContent = typeof step === 'number' && step >= 0.05 && step < 1 && Date.now() - stepT0 > 3000 ? ` · この処理の残り 約 ${fmt((Date.now() - stepT0) / 1000 * (1 - step) / step)}` : '';
+    $$('#stages .stage').forEach((el, i) => {
+      const done = i < idx || u.stage === 'ready', active = i === idx;
+      el.classList.toggle('done', done); el.classList.toggle('active', active);
+      el.lastElementChild.textContent = done ? '完了' : active ? (typeof step === 'number' ? `実行中 ${Math.round(step * 100)}%` : '実行中') : '';
+    });
+  };
+  let last = { stage: j.status, progress: j.progress, message: j.message };
+  skeleton(null, j.message);
+  update(last);
   const timer = setInterval(() => { const el = $('#elapsed'); if (el) el.textContent = fmt((Date.now() - started) / 1000); }, 1000);
   const es = new EventSource(`/api/jobs/${jobId}/events`);
   es.onmessage = async (ev) => {
@@ -670,10 +787,14 @@ async function job(jobId) {
     if (u.stage === 'failed' || u.stage === 'cancelled') {
       es.close(); clearInterval(timer);
       const cur = await api(`/api/jobs/${jobId}`);
-      render(u.stage, 0, u.message, { message: cur.message, code: cur.error_code ?? (u.stage === 'cancelled' ? 'CANCELLED' : '') });
+      skeleton({ message: cur.message, code: cur.error_code ?? (u.stage === 'cancelled' ? 'CANCELLED' : '') });
+      update({ ...last, step_progress: null });
+      $$('#stages .stage.active').forEach(el => { el.lastElementChild.textContent = u.stage === 'cancelled' ? '中止' : '失敗'; });
+      $('#eta')?.replaceChildren();
       return;
     }
-    render(u.stage, u.progress, u.message);
+    last = u;
+    update(u);
   };
   cleanup = () => { es.close(); clearInterval(timer); };
 }
@@ -698,9 +819,11 @@ async function candidates(j) {
           <p>${esc(c.reason)}</p>
           <div class="scores">${bar('冒頭の引き', c.scores.hook)}${bar('単体で通じる', c.scores.standalone)}${bar('オチ', c.scores.payoff)}${bar('感情', c.scores.emotion)}${bar('音声の勢い', c.scores.signal)}${bar('総合', c.scores.final)}</div>
           ${c.notes?.length ? `<details><summary class="caption">調整の記録（${c.notes.length}）</summary><ul class="notes">${c.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}
-          <fluent-anchor-button appearance="primary" href="#/ep/${esc(c.edit_plan_id)}">この候補を確認・修正</fluent-anchor-button>
+          <fluent-anchor-button href="#/ep/${esc(c.edit_plan_id)}">この候補を確認・修正</fluent-anchor-button>
+          ${approvalBlock(list.find(x => x.candidate.id === c.id), `候補 #${c.rank}`)}
         </article>`).join('')}
     </div>
+    ${batchBox()}
     <section class="card" style="margin-top:16px">
       <h2>ほかの候補を出す</h2>
       <div class="chips" id="chips">${['もっと短く', '別の場面', 'もっと笑える所', 'オチがはっきりした所'].map(t => `<fluent-button size="small" data-t="${esc(t)}">${esc(t)}</fluent-button>`).join('')}</div>
@@ -708,6 +831,7 @@ async function candidates(j) {
       <div id="regenMsg"></div>
     </section>`;
   wireSafeToggle();
+  wireApprovals(j, list);
   $$('#chips fluent-button').forEach(b => b.addEventListener('click', () => { $('#instr').value = b.dataset.t; }));
   $('#regen').addEventListener('click', async () => {
     try { const r = await api(`/api/jobs/${j.id}/regenerate`, { method: 'POST', body: { instruction: $('#instr').value || null, exclude_candidate_ids: [] } }); location.hash = `#/job/${r.job_id}`; }
@@ -736,12 +860,155 @@ function seriesView(j, list) {
           <p class="caption">${se.part < se.parts ? `分け目: ${esc(se.boundary)}` : '最後のパート'}</p>
           ${se.chapters?.length ? `<details open><summary class="caption">構成（${se.chapters.length}）</summary><ul class="notes">${se.chapters.map(ch => `<li>${fmt(ch.start)} ${esc(ch.title)}</li>`).join('')}</ul></details>` : ''}
           ${c.notes?.length ? `<details><summary class="caption">編集の記録（${c.notes.length}）</summary><ul class="notes">${c.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}
-          <fluent-anchor-button appearance="primary" href="#/ep/${esc(c.edit_plan_id)}">${esc(se.label)}を確認・書き出し</fluent-anchor-button>
+          <fluent-anchor-button href="#/ep/${esc(c.edit_plan_id)}">${esc(se.label)}を確認・修正</fluent-anchor-button>
+          ${approvalBlock(list.find(x => x.candidate.id === c.id), se.label)}
         </article>`;
       }).join('')}
     </div>
-    <p class="caption" style="margin-top:16px">分け目を変えたいときは、プロジェクトに戻って本数か1本あたりの長さを変えて作り直してください。書き出しはパートごとに行います（投稿用メタデータにチャプターとシリーズのリンク欄が入ります）。</p>`;
+    ${batchBox()}
+    <p class="caption" style="margin-top:16px">分け目を変えたいときは、プロジェクトに戻って本数か1本あたりの長さを変えて作り直してください。パートごとに承認し、承認したパートをまとめて書き出せます（投稿用メタデータにチャプターとシリーズのリンク欄が入ります）。</p>`;
   wireSafeToggle();
+  wireApprovals(j, list);
+}
+
+// ---------------- approval & export of one or more candidates (candidates / series screens) ----------------
+function approvalBadge(a) {
+  if (!a) return '<fluent-badge appearance="tint" color="informative">未承認</fluent-badge>';
+  if (a.stale) return '<fluent-badge appearance="tint" color="warning">承認後に修正あり（再承認が必要）</fluent-badge>';
+  return `<fluent-badge appearance="tint" color="success">承認済み</fluent-badge><span class="caption">${esc(new Date(a.at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }))}${a.by ? ` · ${esc(a.by)}` : ''}</span>`;
+}
+function approvalBlock(x, name) {
+  const id = esc(x.candidate.id);
+  return `<div class="stack approval" data-cand="${id}" data-name="${esc(name)}">
+    <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap"><span class="row appr-badge" style="gap:8px;align-items:center">${approvalBadge(x.approval)}</span></div>
+    <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+      <fluent-button size="small" class="appr-btn"></fluent-button>
+      ${field('書き出す', `<fluent-checkbox slot="input" class="exp-pick" aria-label="${esc(name)}を書き出す"></fluent-checkbox>`)}
+    </div>
+    <div class="appr-msg" aria-live="polite"></div>
+    <div class="progress-row exp-row" hidden><span class="caption exp-label"></span><fluent-progress-bar max="100" aria-label="${esc(name)}の書き出しの進み具合"></fluent-progress-bar><span class="caption pct exp-pct"></span></div>
+    <p class="caption exp-text" aria-live="polite"></p>
+  </div>`;
+}
+function batchBox() {
+  return `<section class="card stack" id="batchBox" style="margin-top:16px">
+    <h2>承認した動画を書き出す</h2>
+    <p class="caption">内容を確かめて「この内容で承認する」を押し、書き出す動画に印を付けてください（1本でも複数でも書き出せます）。承認したあとに「確認・修正」で直すと、承認はやり直しになります。書き出せない動画が1本でもあるときは、どれも書き出しません。書き出しは1本ずつ順番に行います（1080×1920）。</p>
+    <div class="row"><fluent-button id="pickAll">承認済みをすべて選ぶ</fluent-button><fluent-button appearance="primary" id="batchExport" disabled>選んだ動画を書き出す</fluent-button></div>
+    <div class="progress-row" id="batchRow" hidden><span class="caption" id="batchLabel"></span><fluent-progress-bar id="batchBar" max="100" aria-label="まとめて書き出しの全体の進み具合"></fluent-progress-bar><span class="caption pct" id="batchPct"></span></div>
+    <div id="batchMsg" aria-live="polite"></div>
+  </section>`;
+}
+function wireApprovals(j, list) {
+  const items = new Map(list.map(x => [x.candidate.id, x]));
+  const key = `exportBatch:${j.id}`;
+  let batch = JSON.parse(sessionStorage.getItem(key) ?? '[]'); // render ids of the last batch started here
+  let timer = null;
+  const block = (cid) => main.querySelector(`.approval[data-cand="${CSS.escape(cid)}"]`);
+  const approved = (x) => x.approval && !x.approval.stale;
+  const active = (x) => x.export && (x.export.state === 'queued' || x.export.state === 'rendering');
+  const setHtml = (el, html) => { if (el.innerHTML !== html) el.innerHTML = html; };
+  const picked = () => [...items.values()].filter(x => block(x.candidate.id)?.querySelector('.exp-pick')?.checked && approved(x) && !active(x));
+  const updateButton = () => {
+    const n = picked().length, b = $('#batchExport');
+    b.disabled = n === 0;
+    b.textContent = n ? `選んだ ${n} 本を書き出す` : '選んだ動画を書き出す';
+  };
+  const show = (x) => {
+    const el = block(x.candidate.id); if (!el) return;
+    setHtml(el.querySelector('.appr-badge'), approvalBadge(x.approval));
+    const btn = el.querySelector('.appr-btn');
+    btn.textContent = approved(x) ? '承認を取り消す' : x.approval?.stale ? 'もう一度承認する' : 'この内容で承認する';
+    if (approved(x)) btn.removeAttribute('appearance'); else btn.setAttribute('appearance', 'primary');
+    btn.disabled = active(x);
+    const pick = el.querySelector('.exp-pick');
+    pick.disabled = !approved(x) || active(x);
+    if (pick.disabled && pick.checked) pick.checked = false;
+    const e = x.export, row = el.querySelector('.exp-row'), bar = row.querySelector('fluent-progress-bar');
+    row.hidden = !active(x);
+    if (active(x)) {
+      const pct = e.state === 'rendering' && typeof e.progress === 'number' ? Math.round(e.progress * 100) : 0;
+      bar.setAttribute('value', String(pct));
+      el.querySelector('.exp-label').textContent = e.state === 'queued' ? '書き出し待ち' : '書き出し中';
+      el.querySelector('.exp-pct').textContent = `${pct}%`;
+    }
+    const last = x.final_render_id ? `<a href="#/render/${esc(x.final_render_id)}">書き出した動画を開く</a>` : '';
+    setHtml(el.querySelector('.exp-text'),
+      e?.state === 'queued' ? `順番を待っています。<fluent-button size="small" class="exp-cancel" data-render="${esc(e.render_id)}">取り消す</fluent-button>`
+      : e?.state === 'rendering' ? esc(e.step ? `実行中: ${e.step}` : e.message ?? '')
+      : e?.state === 'failed' ? `<span class="fail">書き出しできませんでした。</span> <a href="#/render/${esc(e.render_id)}">理由を見る</a>${last ? ` · 前回の ${last}` : ''}`
+      : e?.state === 'cancelled' ? `書き出しを取り消しました。${last ? ` 前回の ${last}` : ''}`
+      : last ? `書き出し済み: ${last}` : '');
+  };
+  const showBatch = () => {
+    const xs = [...items.values()].filter(x => x.export && batch.includes(x.export.render_id));
+    const row = $('#batchRow');
+    if (!xs.length) { row.hidden = true; return; }
+    const val = (x) => x.export.state === 'rendering' ? (x.export.progress ?? 0) : x.export.state === 'queued' ? 0 : 1;
+    // withdrawn items are not part of the work any more; failed ones are finished (shown separately)
+    const work = xs.filter(x => x.export.state !== 'cancelled');
+    const pct = work.length ? Math.round(100 * work.reduce((a, x) => a + val(x), 0) / work.length) : 0;
+    const n = (s) => xs.filter(x => x.export.state === s).length;
+    row.hidden = false;
+    $('#batchBar').setAttribute('value', String(pct));
+    $('#batchPct').textContent = `${pct}%`;
+    const tail = [n('failed') ? `失敗 ${n('failed')}` : '', n('cancelled') ? `取り消し ${n('cancelled')}` : ''].filter(Boolean).join('・');
+    $('#batchLabel').textContent = `全体: ${n('done')} / ${work.length} 本 完了${tail ? `（${tail}）` : ''}`;
+    if (!xs.some(active)) { clearInterval(timer); timer = null; }
+  };
+  const refresh = async () => {
+    const fresh = await api(`/api/jobs/${j.id}/candidates`);
+    for (const x of fresh) { items.set(x.candidate.id, x); show(x); }
+    showBatch(); updateButton();
+    if ([...items.values()].some(active) && !timer) timer = setInterval(() => refresh().catch(() => { }), 1000);
+  };
+  for (const x of items.values()) {
+    show(x);
+    const el = block(x.candidate.id);
+    el.querySelector('.appr-btn').addEventListener('click', async () => {
+      const btn = el.querySelector('.appr-btn'); btn.disabled = true;
+      el.querySelector('.appr-msg').innerHTML = '';
+      try {
+        const r = await api(`/api/jobs/${j.id}/candidates/${encodeURIComponent(x.candidate.id)}/approval`, { method: 'PUT', body: { approved: !approved(items.get(x.candidate.id)) } });
+        const cur = { ...items.get(x.candidate.id), approval: r.approval ?? null };
+        items.set(x.candidate.id, cur); show(cur);
+        if (approved(cur)) el.querySelector('.exp-pick').checked = true;
+      } catch (e) { el.querySelector('.appr-msg').innerHTML = errorBar(e) + (e.detail ? qaList(e.detail) : ''); show(items.get(x.candidate.id)); }
+      updateButton();
+    });
+    el.querySelector('.exp-pick').addEventListener('change', updateButton);
+    el.querySelector('.exp-text').addEventListener('click', async (ev) => {
+      const cancel = ev.target.closest?.('.exp-cancel'); if (!cancel) return;
+      cancel.disabled = true;
+      try { await api(`/api/renders/${encodeURIComponent(cancel.dataset.render)}/cancel`, { method: 'POST' }); }
+      catch (err) { el.querySelector('.appr-msg').innerHTML = errorBar(err); }
+      await refresh().catch(() => { });
+    });
+  }
+  $('#pickAll').addEventListener('click', () => {
+    for (const x of items.values()) { const p = block(x.candidate.id)?.querySelector('.exp-pick'); if (p && !p.disabled) p.checked = true; }
+    updateButton();
+  });
+  $('#batchExport').addEventListener('click', async () => {
+    const ids = picked().map(x => x.candidate.id);
+    if (!ids.length) return;
+    const b = $('#batchExport'); b.disabled = true; $('#batchMsg').innerHTML = '';
+    try {
+      const r = await api(`/api/jobs/${j.id}/exports`, { method: 'POST', body: { candidate_ids: ids } });
+      batch = r.exports.map(e => e.render_id);
+      sessionStorage.setItem(key, JSON.stringify(batch));
+      for (const x of items.values()) { const p = block(x.candidate.id)?.querySelector('.exp-pick'); if (p) p.checked = false; }
+      $('#batchMsg').innerHTML = info(`${batch.length} 本の書き出しを始めました。この画面で進み具合を確認できます（ほかの画面に移っても書き出しは続きます）。`, 'success');
+      await refresh();
+    } catch (e) {
+      const reasons = Array.isArray(e.detail) ? `<ul class="notes">${e.detail.map(d => `<li>${esc(d.name)}: ${esc(d.reason)}</li>`).join('')}</ul>` : '';
+      $('#batchMsg').innerHTML = errorBar(e) + reasons;
+      await refresh().catch(() => { });
+    }
+  });
+  updateButton(); showBatch();
+  if ([...items.values()].some(active) || batch.length) refresh().catch(() => { });
+  { const prev = cleanup; cleanup = () => { clearInterval(timer); prev?.(); }; }
 }
 
 // ---------------- review & edit ----------------
@@ -849,9 +1116,19 @@ async function review(epId) {
     $('#sfxSw')?.addEventListener('change', (e) => { patch([{ op: 'set_sfx', enabled: e.target.checked }]); stale = true; });
     $$('[data-adj]').forEach(b => b.addEventListener('click', () => { const [edge, delta] = b.dataset.adj.split(':'); patch([{ op: 'adjust', edge, delta: Number(delta) }]); }));
     $('#repreview').addEventListener('click', async () => {
-      $('#repreview').setAttribute('disabled', ''); $('#msg').innerHTML = '<fluent-spinner size="small"></fluent-spinner> プレビューを作成しています…';
-      try { const r = await api(`/api/editplans/${epId}/preview`, { method: 'POST' }); previewUrl = r.preview_url; stale = false; qa = r.render.qa; draw(); }
-      catch (e) { $('#msg').innerHTML = errorBar(e); $('#repreview').removeAttribute('disabled'); }
+      $('#repreview').setAttribute('disabled', '');
+      $('#msg').innerHTML = `<div class="progress-row"><span class="caption">プレビューを作成しています</span><fluent-progress-bar id="rpBar" max="100" value="0" aria-label="プレビュー作成の進み具合"></fluent-progress-bar><span id="rpPct" class="caption pct">0%</span></div><p class="caption" id="rpStep"></p>`;
+      const tick = setInterval(async () => {
+        try {
+          const p = await api(`/api/editplans/${epId}/preview/progress`);
+          if (!p.running || !$('#rpBar')) return;
+          $('#rpBar').setAttribute('value', String(Math.round(p.progress * 100)));
+          $('#rpPct').textContent = `${Math.round(p.progress * 100)}%`;
+          $('#rpStep').textContent = p.step ?? '';
+        } catch { }
+      }, 700);
+      try { const r = await api(`/api/editplans/${epId}/preview`, { method: 'POST' }); clearInterval(tick); previewUrl = r.preview_url; stale = false; qa = r.render.qa; draw(); }
+      catch (e) { clearInterval(tick); $('#msg').innerHTML = errorBar(e); $('#repreview').removeAttribute('disabled'); }
     });
     $('#export').addEventListener('click', async () => {
       try { const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`; }
@@ -891,17 +1168,30 @@ async function exportView(renderId) {
         </div>`;
       wireSafeToggle();
       $('#open').addEventListener('click', () => api(`/api/renders/${renderId}/open-folder`, { method: 'POST' }).catch(() => { }));
+    } else if (s.state === 'cancelled') {
+      clearInterval(timer);
+      main.innerHTML = `<h1>書き出しを取り消しました</h1>${info(s.message ?? '書き出しを取り消しました')}
+        <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}" style="margin-top:12px">確認・修正に戻る</fluent-anchor-button>`;
     } else if (s.state === 'failed') {
       clearInterval(timer);
       main.innerHTML = `<h1>書き出しできませんでした</h1>${errorBar({ message: s.message, code: s.error_code })}${s.failures ? `<section class="card">${qaList(s.failures)}</section>` : ''}
         <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}" style="margin-top:12px">確認・修正に戻る</fluent-anchor-button>`;
     } else {
-      main.innerHTML = `<h1>書き出しています</h1><section class="card"><p aria-live="polite">${esc(s.message)}</p><fluent-progress-bar aria-label="書き出し中"></fluent-progress-bar>
-        <p class="caption">1080×1920 / H.264 / AAC 48kHz。音量は 2 パスで −14 LUFS に合わせ、書き出し後に自動チェックを行います。</p></section>`;
+      if (!$('#expBar')) {
+        main.innerHTML = `<h1>書き出しています</h1><section class="card"><p id="expMsg" aria-live="polite"></p>
+          <div class="progress-row"><span class="caption">全体</span><fluent-progress-bar id="expBar" max="100" aria-label="書き出しの進み具合"></fluent-progress-bar><span id="expPct" class="caption pct"></span></div>
+          <p class="caption" id="expStep"></p>
+          <p class="caption">1080×1920 / H.264 / AAC 48kHz。音量は 2 パスで −14 LUFS に合わせ、書き出し後に自動チェックを行います。</p></section>`;
+      }
+      if ($('#expMsg').textContent !== (s.message ?? '')) $('#expMsg').textContent = s.message ?? '';
+      const bar = $('#expBar');
+      if (typeof s.progress === 'number') { bar.setAttribute('value', String(Math.round(s.progress * 100))); $('#expPct').textContent = `${Math.round(s.progress * 100)}%`; }
+      else { bar.removeAttribute('value'); $('#expPct').textContent = ''; }
+      $('#expStep').textContent = s.step ? `実行中: ${s.step}` : '';
     }
   };
   await poll();
-  timer = setInterval(() => poll().catch(() => { }), 1500);
+  timer = setInterval(() => poll().catch(() => { }), 1000);
   cleanup = () => clearInterval(timer);
 }
 

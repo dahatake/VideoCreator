@@ -153,6 +153,10 @@ table.list tr.off td { opacity: .45; }
 .stage .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--colorNeutralStroke1); margin: 0 auto; }
 .stage.done .dot { background: var(--colorPaletteGreenBackground3, #107c10); border-color: transparent; }
 .stage.active .dot { border-color: var(--colorBrandStroke1); animation: pulse 1.2s infinite; }
+.progress-row { display: grid; grid-template-columns: minmax(4em, 40%) 1fr 3.5em; gap: var(--s8); align-items: center; margin: var(--s8) 0; }
+.progress-row[hidden] { display: none; }
+.progress-row fluent-progress-bar { width: 100%; }
+.progress-row .pct { text-align: right; font-variant-numeric: tabular-nums; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px var(--colorBrandBackground2, #ebf3fc); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 .chips { display: flex; gap: var(--s8); flex-wrap: wrap; }

@@ -17,6 +17,7 @@
     <!-- WinForms is used only for the folder dialog; keep its types out of the global namespace. -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+    <InternalsVisibleTo Include="VideoCreator.Tests" />
   </ItemGroup>
 
 </Project>

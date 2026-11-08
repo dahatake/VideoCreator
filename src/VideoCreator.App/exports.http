@@ -1,0 +1,42 @@
+@baseUrl = http://127.0.0.1:8765
+@jobId = replace-with-job-id
+@candidateId = replace-with-candidate-id
+@renderId = replace-with-render-id
+
+### Candidates with approval ({at, by, stale}), the latest export status and the last finished export.
+GET {{baseUrl}}/api/jobs/{{jobId}}/candidates
+
+### Approve a candidate as its edit plan is now (422 E-QA-HARDFAIL when a hard QA check fails).
+PUT {{baseUrl}}/api/jobs/{{jobId}}/candidates/{{candidateId}}/approval
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"approved":true}
+
+### Withdraw the approval.
+PUT {{baseUrl}}/api/jobs/{{jobId}}/candidates/{{candidateId}}/approval
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"approved":false}
+
+### Export one or more approved candidates: 202 with a render id each; 409 E-NOT-APPROVED (nothing started) lists the reasons.
+POST {{baseUrl}}/api/jobs/{{jobId}}/exports
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"candidate_ids":["{{candidateId}}"]}
+
+### Validation error: nothing selected.
+POST {{baseUrl}}/api/jobs/{{jobId}}/exports
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"candidate_ids":[]}
+
+### Progress of one export (queued / rendering / done / failed / cancelled).
+GET {{baseUrl}}/api/renders/{{renderId}}
+
+### Withdraw a queued export (409 once it has started).
+POST {{baseUrl}}/api/renders/{{renderId}}/cancel
+X-VideoCreator: 1

@@ -147,9 +147,21 @@ public sealed record Candidate
     public List<string> Notes { get; init; } = [];     // validator adjustments, warnings
     public string? EditPlanId { get; init; }
     public string? PreviewRenderId { get; init; }
+    /// <summary>The user's approval, bound to the edit plan as it was when approved; any later edit makes it stale.</summary>
+    public CandidateApproval? Approval { get; init; }
     /// <summary>Set when this candidate is one part of a 前編/後編 series (JobOptions.PartMinutes).</summary>
     public SeriesInfo? Series { get; init; }
     public double TotalDuration => Segments.Sum(s => s.Length);
+}
+
+/// <summary>Who approved a candidate, when, and the <see cref="EditPlanFingerprint"/> of the plan they saw.</summary>
+public sealed record CandidateApproval(DateTimeOffset At, string By, string PlanHash);
+
+public static class EditPlanFingerprint
+{
+    /// <summary>SHA-256 of the plan's canonical JSON: every edit (telops, cuts, BGM, inserts…) changes it.</summary>
+    public static string Of(EditPlan plan) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Serialize(plan))));
 }
 
 // ---- Series (前編/後編): a long source edited into consecutive parts of a user-chosen length ----

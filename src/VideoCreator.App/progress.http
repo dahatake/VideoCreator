@@ -1,0 +1,11 @@
+@baseUrl = http://127.0.0.1:8765
+@editplanId = replace-with-editplan-id
+@renderId = replace-with-render-id
+
+### Re-preview progress (measured from ffmpeg -progress). Returns {"running":false,"progress":0} when no preview is rendering.
+GET {{baseUrl}}/api/editplans/{{editplanId}}/preview/progress
+X-VideoCreator: 1
+
+### Export status: progress (0..1, never decreases) and step while rendering.
+GET {{baseUrl}}/api/renders/{{renderId}}
+X-VideoCreator: 1

@@ -23,6 +23,10 @@ public static class ProjectDeletion
     static readonly string[] ProjectChildren = [Kinds.Asset, Kinds.Rights, Kinds.Job, Kinds.Bgm, Kinds.EditPlan];
 
     public static ProjectDeletionResult Delete(Store store, Project p, string projectsRoot, string dataDir, RemoveFolder removeFolder, out List<string> jobIds, out List<string> renderIds)
+        => Delete(store, p, [projectsRoot], dataDir, removeFolder, out jobIds, out renderIds);
+
+    /// <param name="projectsRoots">The current projects folder and earlier ones: a project folder created in any of them is the app's to remove.</param>
+    public static ProjectDeletionResult Delete(Store store, Project p, IReadOnlyList<string> projectsRoots, string dataDir, RemoveFolder removeFolder, out List<string> jobIds, out List<string> renderIds)
     {
         jobIds = store.Ids(Kinds.Job, p.Id);
         var planIds = store.Ids(Kinds.EditPlan, p.Id);
@@ -35,7 +39,7 @@ public static class ProjectDeletion
         var shas = store.List<SourceAsset>(Kinds.Asset, p.Id).Select(a => CacheKey(a.Sha256)).Where(s => s != null).ToHashSet();
 
         string folder; string? folderPath = null;
-        if (!OwnsFolder(p, projectsRoot)) { folder = "kept"; folderPath = p.Directory; }
+        if (!projectsRoots.Any(r => OwnsFolder(p, r))) { folder = "kept"; folderPath = p.Directory; }
         else if (!Directory.Exists(p.Directory)) folder = "missing";
         else
         {

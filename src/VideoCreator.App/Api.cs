@@ -32,6 +32,24 @@ public static class Api
     public sealed record GenerateSceneCardsRequest(string? AssetId, int Count = 4, string? BrandPath = null);
     /// <summary>作る (true) / 作らない (false) for this project's video-extracted scene-card images.</summary>
     public sealed record SceneCardSettingsRequest(bool Make);
+    /// <summary>Approve (true) or withdraw the approval of (false) a candidate as it is now.</summary>
+    public sealed record ApproveCandidateRequest(bool Approved);
+    /// <summary>New projects folder and whether to move everything in the current one there (true) or leave it (false).</summary>
+    public sealed record ChangeProjectsDirRequest(string? Path, bool Move);
+    /// <summary>Current projects folder; <c>source</c> = default | config | app (chosen in the settings screen).</summary>
+    public sealed record ProjectsDirResponse(string Path, string Source, string ConfiguredPath, int Projects, MoveProgress Progress);
+    /// <summary>Approved candidates of one job to export, in any order (exported in rank / part order).</summary>
+    public sealed record BatchExportRequest(List<string>? CandidateIds);
+    /// <summary>One started export of a batch: poll <c>/api/renders/{render_id}</c>.</summary>
+    public sealed record BatchExportItem(string CandidateId, string RenderId);
+    /// <summary>The exports started by a batch request.</summary>
+    public sealed record BatchExportResponse(List<BatchExportItem> Exports);
+
+    /// <summary>Approval as shown in the UI: <c>stale</c> = approved, but the plan was edited afterwards.</summary>
+    static object? ApprovalView(Candidate c, EditPlan? plan) => c.Approval is not { } a ? null : new
+    {
+        a.At, a.By, Stale = plan == null || EditPlanFingerprint.Of(plan) != a.PlanHash,
+    };
 
     /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
@@ -89,15 +107,33 @@ public static class Api
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return Error(400, "E-SETTINGS", ex.Message); }
         });
 
+        // ---- projects folder: where projects are saved; changing it can move everything in the current folder ----
+        api.MapGet("/settings/projects-dir", (Runtime rt, ProjectsLocation loc) => Results.Json(new ProjectsDirResponse(
+            loc.Root, loc.Source, rt.Options.ResolvedProjectsDir, rt.Store.List<Project>(Kinds.Project).Count, loc.Progress), Json.Options))
+            .WithSummary("Current projects folder, where it comes from (default / config / app) and the progress of a move in flight");
+        api.MapPost("/settings/projects-dir/plan", (ProjectsLocation loc, ChangeProjectsDirRequest req) => Results.Json(loc.Plan(req.Path, req.Move), Json.Options))
+            .WithSummary("Preview a change of the projects folder (what would move, size, free space, problems); changes nothing");
+        api.MapPut("/settings/projects-dir", async (ProjectsLocation loc, ChangeProjectsDirRequest req, CancellationToken ct) =>
+        {
+            try { return Results.Json(await loc.ChangeAsync(req.Path, req.Move, ct), Json.Options); }
+            catch (ProjectsBusyException ex) { return Error(409, "E-PROJECTS-BUSY", ex.Message); }
+            catch (ArgumentException ex) { return Error(422, "E-VALIDATION", ex.Message); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                app.Logger.LogWarning(ex, "Changing the projects folder failed");
+                return Error(500, "E-PROJECTS-DIR", "保存先を変更できませんでした。フォルダーの権限と空き容量を確認してください");
+            }
+        }).WithSummary("Change the projects folder; move=true carries every item of the current folder over and re-roots the stored paths");
+
         api.MapGet("/presets", (Runtime rt) => Results.Json(rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])), Json.Options));
 
         // ---- projects ----
-        api.MapPost("/projects", (Runtime rt, CreateProject req) =>
+        api.MapPost("/projects", (Runtime rt, ProjectsLocation loc, CreateProject req) =>
         {
             var name = string.IsNullOrWhiteSpace(req.Name) ? "新しいプロジェクト" : req.Name;
             if (ValidateProjectName(name, out name) is string err) return Error(422, "E-VALIDATION", err);
             var id = "p_" + Guid.NewGuid().ToString("N")[..10];
-            var dir = Path.Combine(rt.Options.ResolvedProjectsDir, $"{SafeName(name)}_{id[2..8]}");
+            var dir = Path.Combine(loc.Root, $"{SafeName(name)}_{id[2..8]}");
             Directory.CreateDirectory(dir);
             var p = new Project { Id = id, Name = name, Directory = dir };
             rt.Store.Put(Kinds.Project, id, null, p);
@@ -133,14 +169,14 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
-        api.MapDelete("/projects/{id}", (Runtime rt, JobQueue q, SceneCardService cards, RemoveFolder remove, string id) =>
+        api.MapDelete("/projects/{id}", (Runtime rt, JobQueue q, SceneCardService cards, ProjectsLocation loc, RemoveFolder remove, string id) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             if (q.IsBusy(id) || cards.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "このプロジェクトは生成または書き出しの途中です。終わるか、キャンセルしてから削除してください");
             try
             {
-                var r = ProjectDeletion.Delete(rt.Store, p, rt.Options.ResolvedProjectsDir, rt.Options.ResolvedDataDir, remove, out var jobs, out var renders);
+                var r = ProjectDeletion.Delete(rt.Store, p, loc.KnownRoots, rt.Options.ResolvedDataDir, remove, out var jobs, out var renders);
                 q.Forget(jobs, renders);
                 return Results.Json(r, Json.Options);
             }
@@ -363,16 +399,73 @@ public static class Api
             catch (OperationCanceledException) { }
             finally { ev.Unsubscribe(jobId, sid); }
         });
-        api.MapGet("/jobs/{jobId}/candidates", (Runtime rt, string jobId) =>
+        api.MapGet("/jobs/{jobId}/candidates", (Runtime rt, JobQueue q, string jobId) =>
         {
-            var cands = rt.Store.List<Candidate>(Kinds.Candidate, jobId).OrderBy(c => c.Rank).Select(c => new
+            var cands = rt.Store.List<Candidate>(Kinds.Candidate, jobId).OrderBy(c => c.Rank).Select(c =>
             {
-                candidate = c,
-                preview = c.PreviewRenderId is string r ? rt.Store.Get<Render>(Kinds.Render, r) : null,
-                preview_url = c.PreviewRenderId is string r2 ? $"/api/media/{r2}" : null,
+                var plan = c.EditPlanId is string ep ? rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) : null;
+                return new
+                {
+                    candidate = c,
+                    preview = c.PreviewRenderId is string r ? rt.Store.Get<Render>(Kinds.Render, r) : null,
+                    preview_url = c.PreviewRenderId is string r2 ? $"/api/media/{r2}" : null,
+                    approval = ApprovalView(c, plan),
+                    // newest export of this plan in this session (queued / rendering / failed / cancelled / done)
+                    export = plan == null ? null : q.LatestExport(plan.EditplanId),
+                    final_render_id = plan == null ? null : rt.Store.List<Render>(Kinds.Render, plan.EditplanId).FirstOrDefault(x => x.Kind == "final")?.Id,
+                };
             });
             return Results.Json(cands, Json.Options);
         });
+        api.MapPut("/jobs/{jobId}/candidates/{id}/approval", (Runtime rt, string jobId, string id, ApproveCandidateRequest req) =>
+        {
+            var c = rt.Store.Get<Candidate>(Kinds.Candidate, id);
+            if (c == null || !rt.Store.Ids(Kinds.Candidate, jobId).Contains(id)) return Error(404, "E-NOT-FOUND", "候補がありません");
+            var plan = c.EditPlanId is string ep ? rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) : null;
+            if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            if (req.Approved)
+            {
+                var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
+                if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動チェックで不合格の項目があるため承認できません。「確認・修正」で直してください", hard);
+            }
+            c = c with { Approval = req.Approved ? new CandidateApproval(DateTimeOffset.Now, Environment.UserName, EditPlanFingerprint.Of(plan)) : null };
+            rt.Store.Put(Kinds.Candidate, c.Id, jobId, c);
+            return Results.Json(new { candidate_id = c.Id, approval = ApprovalView(c, plan) }, Json.Options);
+        }).WithSummary("Approve (bound to the current edit plan) or withdraw the approval of a candidate");
+        api.MapPost("/jobs/{jobId}/exports", (Runtime rt, JobQueue q, HttpContext ctx, string jobId, BatchExportRequest req) =>
+        {
+            if (rt.Store.Get<Job>(Kinds.Job, jobId) == null) return Error(404, "E-NOT-FOUND", "ジョブがありません");
+            var ids = (req.CandidateIds ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+            if (ids.Count == 0) return Error(422, "E-VALIDATION", "書き出す候補を1つ以上選んでください");
+            var all = rt.Store.List<Candidate>(Kinds.Candidate, jobId).ToDictionary(c => c.Id);
+            var runner = rt.CreateRunner();
+            var picked = new List<(Candidate C, EditPlan Plan)>();
+            var problems = new List<object>();
+            // all-or-nothing: every selected candidate is checked before any export starts
+            foreach (var id in ids)
+            {
+                if (!all.TryGetValue(id, out var c)) return Error(404, "E-NOT-FOUND", "この候補一覧にない候補が含まれています");
+                var plan = c.EditPlanId is string ep ? rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) : null;
+                string name = c.Series?.Label ?? $"#{c.Rank}";
+                if (plan == null) { problems.Add(new { candidate_id = id, name, reason = "編集計画がありません" }); continue; }
+                if (c.Approval == null) problems.Add(new { candidate_id = id, name, reason = "承認されていません" });
+                else if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) problems.Add(new { candidate_id = id, name, reason = "承認後に修正されています。もう一度確認して承認してください" });
+                else if (q.ActiveExport(plan.EditplanId) != null) problems.Add(new { candidate_id = id, name, reason = "書き出し中です" });
+                else if (QaEngine.PlanChecks(runner.QaContextFor(plan)).Any(x => x.Hard && x.Status == QaStatus.Fail)) problems.Add(new { candidate_id = id, name, reason = "自動チェックで不合格の項目があります" });
+                else picked.Add((c, plan));
+            }
+            if (problems.Count > 0) return Error(409, "E-NOT-APPROVED", "書き出せない候補があるため、どれも書き出していません", problems);
+            var started = new List<BatchExportItem>();
+            foreach (var (c, plan) in picked.OrderBy(x => x.C.Series?.Part ?? x.C.Rank))
+            {
+                var renderId = "r_" + Guid.NewGuid().ToString("N")[..12];
+                // the approved snapshot is what gets rendered, even if it is edited while waiting in the queue
+                q.EnqueueExport(renderId, plan, c.Rank);
+                started.Add(new(c.Id, renderId));
+            }
+            ctx.Response.Headers.Location = $"/api/jobs/{Uri.EscapeDataString(jobId)}/candidates";
+            return Results.Json(new BatchExportResponse(started), Json.Options, statusCode: 202);
+        }).WithSummary("Export one or more approved candidates (validated together; none starts if any is not exportable)");
         api.MapPost("/jobs/{jobId}/regenerate", (Runtime rt, JobQueue q, string jobId, Regenerate req) =>
         {
             var prev = rt.Store.Get<Job>(Kinds.Job, jobId);
@@ -419,21 +512,31 @@ public static class Api
             }
             catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { return Error(422, "E-VALIDATION", ex.Message); }
         });
-        api.MapPost("/editplans/{id}/preview", async (Runtime rt, string id, CancellationToken ct) =>
+        api.MapPost("/editplans/{id}/preview", async (Runtime rt, JobQueue q, string id, CancellationToken ct) =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
-            var render = await rt.CreateRunner().RenderAsync(plan, preview: true, ct);
+            q.Previews[id] = new PreviewProgress(true, 0, "準備しています");
+            Render render;
+            try
+            {
+                render = await rt.CreateRunner().RenderAsync(plan, preview: true, ct,
+                    progress: new Media.SyncProgress<(double Progress, string Step)>(p => q.Previews[id] = new PreviewProgress(true, Math.Round(p.Progress, 4), p.Step)));
+            }
+            finally { q.Previews.TryRemove(id, out _); }
             if (plan.Provenance.CandidateId is string cid && rt.Store.Get<Candidate>(Kinds.Candidate, cid) is Candidate c)
                 rt.Store.Put(Kinds.Candidate, cid, plan.Provenance.JobId, c with { PreviewRenderId = render.Id });
             return Results.Json(new { render, preview_url = $"/api/media/{render.Id}" }, Json.Options);
         });
+        api.MapGet("/editplans/{id}/preview/progress", (JobQueue q, string id) =>
+            Results.Json(q.Previews.TryGetValue(id, out var p) ? p : new PreviewProgress(false, 0, null), Json.Options));
         api.MapPost("/editplans/{id}/render", (Runtime rt, JobQueue q, string id) =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
             var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
             if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動QAのハード制約に違反しています", hard);
+            if (q.ActiveExport(id) is { } active) return Error(409, "E-EXPORT-BUSY", "この動画は書き出し中です。完了を待ってください", new { render_id = active.RenderId });
             var rank = plan.Provenance.CandidateId is string cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid)?.Rank ?? 1 : 1;
             var renderId = "r_" + Guid.NewGuid().ToString("N")[..12];
             q.EnqueueExport(renderId, plan, rank);
@@ -444,6 +547,10 @@ public static class Api
             if (rt.Store.Get<Render>(Kinds.Render, id) is Render r) return Results.Json(new { state = "done", render = r }, Json.Options);
             return q.Exports.TryGetValue(id, out var s) ? Results.Json(s, Json.Options) : Error(404, "E-NOT-FOUND", "書き出しがありません");
         });
+        api.MapPost("/renders/{id}/cancel", (JobQueue q, string id) =>
+            q.CancelExport(id) ? Results.Json(q.Exports[id], Json.Options)
+            : q.Exports.ContainsKey(id) ? Error(409, "E-NOT-QUEUED", "書き出しが始まっているため取り消せません") : Error(404, "E-NOT-FOUND", "書き出しがありません"))
+            .WithSummary("Withdraw a queued export (a running export finishes)");
         api.MapGet("/renders/{id}/files/{key}", (Runtime rt, string id, string key) =>
         {
             var r = rt.Store.Get<Render>(Kinds.Render, id);

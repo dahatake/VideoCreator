@@ -21,6 +21,7 @@ builder.Services.AddSingleton<JobEvents>();
 builder.Services.AddSingleton<BrandKitWorker>();
 builder.Services.AddSingleton<IFolderPicker, FolderPicker>();
 builder.Services.AddSingleton<SceneCardService>();
+builder.Services.AddSingleton<ProjectsLocation>();
 builder.Services.AddSingleton<RemoveFolder>(ProjectDeletion.SendToRecycleBin);
 builder.Services.AddSingleton(sp => new JobQueue(sp.GetRequiredService<Runtime>().Store, () => sp.GetRequiredService<Runtime>().CreateRunner(), sp.GetRequiredService<JobEvents>(), sp.GetRequiredService<ILogger<JobQueue>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueue>());
@@ -47,6 +48,14 @@ app.Use(async (ctx, next) =>
     {
         ctx.Response.StatusCode = 403; await ctx.Response.WriteAsync("missing X-VideoCreator header"); return;
     }
+    // while the projects folder is being moved, nothing else may write into it (the move itself already holds the lock)
+    if (ctx.Request.Path.StartsWithSegments("/api") && !HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method)
+        && !ctx.Request.Path.StartsWithSegments("/api/settings/projects-dir") && ctx.RequestServices.GetRequiredService<ProjectsLocation>().IsMoving)
+    {
+        ctx.Response.StatusCode = 409;
+        await ctx.Response.WriteAsJsonAsync(new { error = new { code = "E-PROJECTS-MOVING", message = "プロジェクトの保存先を移動しています。完了してからもう一度お試しください" } });
+        return;
+    }
     ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
     ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
     ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
@@ -61,6 +70,7 @@ _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg
     var rt = app.Services.GetRequiredService<Runtime>();
     var n = RenderMaintenance.RemoveDuplicateFinals(rt.Store, rt.Options.ResolvedDataDir);
     if (n > 0) app.Logger.LogInformation("removed {Count} duplicate export records", n);
+    app.Services.GetRequiredService<ProjectsLocation>().Recover();
 }
 app.Lifetime.ApplicationStarted.Register(() =>
 {

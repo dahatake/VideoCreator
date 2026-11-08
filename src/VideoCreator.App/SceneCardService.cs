@@ -10,6 +10,7 @@ public sealed class SceneCardService(Runtime rt, ILogger<SceneCardService> log)
     readonly SemaphoreSlim _gate = new(1);
     volatile string? _projectId;
     public bool IsBusy(string projectId) => _projectId == projectId;
+    public bool AnyBusy => _projectId != null;
 
     /// <summary>Extracts from a project source (<paramref name="assetId"/>) or a registered opening / closing video (<paramref name="brandPath"/>).</summary>
     public async Task<List<SceneCardImage>> GenerateAsync(Project project, string? assetId, string? brandPath, int count, CancellationToken ct)
