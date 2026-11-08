@@ -24,9 +24,9 @@ public sealed class QaEngine(FFmpeg ff)
     {
         var res = new List<QaResult>();
         var p = ctx.Preset; var plan = ctx.Plan; var tr = ctx.Transcript;
-        double dur = plan.Duration;
+        double dur = plan.Duration, fileDur = plan.TotalDuration;
         var (minD, maxD, cap) = DurationRange(plan, p);
-        res.Add(new("H-01", dur >= minD - 0.05 && dur <= maxD + 0.05 && dur <= cap ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s", RangeText(minD, maxD, cap), "尺"));
+        res.Add(new("H-01", DurationOk(dur, fileDur, minD, maxD, cap, 0.05) ? QaStatus.Pass : QaStatus.Fail, DurationText(dur, fileDur), RangeText(minD, maxD, cap), "尺"));
 
         // H-06: an edge must not fall inside a word by more than the ASR timing tolerance on both sides
         var bad = new List<string>();
@@ -50,13 +50,15 @@ public sealed class QaEngine(FFmpeg ff)
             ? tr.FullText + string.Concat(se.Labels)
             : string.Concat(tr.Sentences.Where(s => plan.Timeline.Any(c => s.T1 > c.MasterIn && s.T0 < c.MasterOut)).Select(s => s.Text));
         var ungrounded = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
-            .SelectMany(t => JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary).Select(x => $"{t.Id}:{x}")).ToList();
+            .SelectMany(t => JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary).Select(x => $"{t.Id}:{x}"))
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).SelectMany(i => JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary).Select(x => $"{i.Id}:{x}"))).ToList();
         res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの忠実性"));
 
-        var unapproved = plan.Telops.Count(t => t.Enabled && !t.Approved);
-        res.Add(new("H-08", unapproved == 0 ? QaStatus.Pass : QaStatus.Fail, unapproved.ToString(IC), "0", "未承認テロップ"));
+        var unapproved = plan.Telops.Count(t => t.Enabled && !t.Approved) + plan.Inserts.Count(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved);
+        res.Add(new("H-08", unapproved == 0 ? QaStatus.Pass : QaStatus.Fail, unapproved.ToString(IC), "0", "未承認テロップ（ツッコミ・場面転換カード）"));
 
-        var missing = plan.Timeline.Select(c => c.AssetId).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a)).ToList();
+        var missing = plan.Timeline.Select(c => c.AssetId).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Path != null && !i.RightsConfirmed).Select(i => Path.GetFileName(i.Path!))).ToList();
         res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認"));
 
         var caps = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).ToList();
@@ -67,7 +69,12 @@ public sealed class QaEngine(FFmpeg ff)
 
         var mapped = TelopBuilder.MapWords(plan.Timeline, tr);
         bool hookOk = mapped.Any(m => m.Start <= p.Hook.MaxSec) || plan.Timeline.FirstOrDefault()?.Role == "teaser" || tr.Words.Count == 0;
-        res.Add(new("S-03", hookOk ? QaStatus.Pass : QaStatus.Warn, hookOk ? "speech/teaser in opening" : "no speech in opening", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック"));
+        // an opening video before the first words delays the hook (a Shorts viewer decides in the first seconds); series parts are long-form
+        var lead = InsertMap.Active(plan).FirstOrDefault(i => i.Kind == "opening" && i.At < 0.01);
+        if (lead != null && plan.Series == null)
+            res.Add(new("S-03", QaStatus.Warn, $"オープニング {lead.Duration:F1}s が先頭", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック（オープニングの前に見どころを先出しすると離脱を防げます）"));
+        else
+            res.Add(new("S-03", hookOk ? QaStatus.Pass : QaStatus.Warn, hookOk ? "speech/teaser in opening" : "no speech in opening", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック"));
 
         var shortShots = plan.Timeline.Where(c => c.Role == "body" && c.Length < p.Cut.MinShotSec - 0.01).ToList();
         res.Add(new("S-04", shortShots.Count == 0 ? QaStatus.Pass : QaStatus.Warn, shortShots.Count == 0 ? "ok" : string.Join(",", shortShots.Select(c => $"{c.ClipId} {c.Length:F2}s")), $"≥{p.Cut.MinShotSec}s", "最短ショット"));
@@ -95,19 +102,39 @@ public sealed class QaEngine(FFmpeg ff)
         if (plan.Series is { } series)
         {
             // S-10: YouTube chapter rules (YouTube Help "Video chapters"); S-11: TikTok accepts uploads up to 60 minutes
-            var yt = Planning.SeriesPlanner.YouTubeChapters(series.Chapters, dur);
+            var yt = Planning.SeriesPlanner.YouTubeChapters(FinalChapters(plan), fileDur);
             res.Add(new("S-10", yt != null ? QaStatus.Pass : QaStatus.Warn, yt != null ? $"{yt.Count} チャプター" : "条件を満たさない", "00:00 から・3つ以上・各10秒以上", "YouTube のチャプター"));
-            res.Add(new("S-11", dur <= 3600 ? QaStatus.Pass : QaStatus.Warn, $"{dur / 60:F1}分", "≤ 60分（TikTok のアップロード上限）", "投稿先の長さの上限"));
+            res.Add(new("S-11", fileDur <= 3600 ? QaStatus.Pass : QaStatus.Warn, $"{fileDur / 60:F1}分", "≤ 60分（TikTok のアップロード上限）", "投稿先の長さの上限"));
+        }
+        // S-12: bumpers / card images are scaled to the canvas; upscaling softens them (e.g. a 720x1280 opening in a 1080x1920 output)
+        var soft = plan.Inserts.Where(i => i.Enabled && i.Path != null && i.Width > 0)
+            .Select(i => (i, s: BrandKitService.Upscale(i.Width, i.Height, plan.Canvas))).Where(x => x.s > 1.05 && x.i.Kind != "card").ToList();
+        if (plan.Inserts.Any(i => i.Enabled && i.Path != null && i.Kind != "card"))
+        {
+            var enhanced = plan.Inserts.Where(i => i.Enabled && i.Kind != "card" && i.Enhanced != null && soft.All(x => x.i.Id != i.Id)).Select(i => $"{Path.GetFileName(i.OriginalPath)} {i.OriginalWidth}x{i.OriginalHeight} → {i.Width}x{i.Height} 高画質化済み").ToList();
+            res.Add(new("S-12", soft.Count == 0 ? QaStatus.Pass : QaStatus.Warn,
+                soft.Count == 0 ? (enhanced.Count > 0 ? string.Join(", ", enhanced) : "等倍以下") : string.Join(", ", soft.Select(x => $"{Path.GetFileName(x.i.Path)} {x.i.Width}x{x.i.Height} を {x.s:0.##} 倍に拡大")),
+                $"{plan.Canvas.Width}x{plan.Canvas.Height} 以上の素材（小さい素材は登録時に高画質化）", "オープニング・クロージングの解像度"));
         }
         return res;
     }
+
+    /// <summary>Series chapters on the rendered file's timeline (shifted past the opening and cards).</summary>
+    public static List<SeriesChapter> FinalChapters(EditPlan plan)
+    {
+        var ins = InsertMap.Active(plan);
+        return plan.Series?.Chapters.Select(c => c with { Start = Math.Round(InsertMap.ToFinal(ins, c.Start), 3) }).ToList() ?? [];
+    }
+
+    static bool DurationOk(double body, double total, double min, double max, double cap, double tol) => body >= min - tol && body <= max + tol && total <= cap + tol;
+    static string DurationText(double body, double total, string suffix = "") => Math.Abs(total - body) < 0.01 ? $"{body:F2}s{suffix}" : $"本編 {body:F2}s / 全体 {total:F2}s{suffix}";
 
     /// <summary>Shorts: the preset's range and the 180 s cap (C-1). Series parts: the part's own range around the requested length.</summary>
     public static (double Min, double Max, double Cap) DurationRange(EditPlan plan, Preset p) =>
         plan.Series is { } s ? (s.MinSec, s.MaxSec, double.PositiveInfinity) : (p.Target.Min, p.Target.Max, 180);
 
     static string RangeText(double min, double max, double cap) =>
-        double.IsInfinity(cap) ? $"{min / 60:F1}–{max / 60:F1}分（{min:F0}–{max:F0}s）" : $"{min}–{max}s, ≤{cap}s";
+        double.IsInfinity(cap) ? $"{min / 60:F1}–{max / 60:F1}分（{min:F0}–{max:F0}s）" : $"本編 {min}–{max}s, 全体 ≤{cap}s";
 
     /// <summary>Full QA on a rendered file. Preview renders skip loudness and black/freeze detection.</summary>
     public async Task<List<QaResult>> RunAsync(QaContext ctx, string rendered, bool preview, string workDir, CancellationToken ct)
@@ -122,8 +149,11 @@ public sealed class QaEngine(FFmpeg ff)
             int w = v.GetProperty("width").GetInt32(), h = v.GetProperty("height").GetInt32();
             var p = ctx.Preset;
             var (minD, maxD, cap) = DurationRange(ctx.Plan, p);
+            // the preset range is for the edited body; the platform cap is for the whole file. The file must also match the planned length.
+            double inserts = ctx.Plan.TotalDuration - ctx.Plan.Duration, body = dur - inserts;
+            bool match = Math.Abs(dur - ctx.Plan.TotalDuration) <= Math.Max(0.25, 0.002 * ctx.Plan.TotalDuration);
             res.RemoveAll(r => r.CheckId == "H-01");
-            res.Insert(0, new("H-01", dur >= minD - 0.1 && dur <= maxD + 0.1 && dur <= cap ? QaStatus.Pass : QaStatus.Fail, $"{dur:F2}s (ffprobe)", RangeText(minD, maxD, cap), "尺"));
+            res.Insert(0, new("H-01", DurationOk(body, dur, minD, maxD, cap, 0.1) && match ? QaStatus.Pass : QaStatus.Fail, DurationText(body, dur, " (ffprobe)") + (match ? "" : $"・計画 {ctx.Plan.TotalDuration:F2}s と不一致"), RangeText(minD, maxD, cap), "尺"));
             int ew = preview ? ctx.Plan.Canvas.Width / 2 : ctx.Plan.Canvas.Width, eh = preview ? ctx.Plan.Canvas.Height / 2 : ctx.Plan.Canvas.Height;
             res.Insert(1, new("H-02", w == ew && h == eh ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ew}x{eh}", "解像度・比率 9:16"));
         }
@@ -136,7 +166,7 @@ public sealed class QaEngine(FFmpeg ff)
         }
         res.Add(await SafeZoneAsync(ctx, workDir, ct));
         if (!preview && Faces is { Available: true }) res.Add(await FaceOverlapAsync(ctx, rendered, ct));
-        if (!preview) res.Add(await BlackFreezeAsync(rendered, ctx.Preset.Id == "P9", ct));
+        if (!preview) res.Add(await BlackFreezeAsync(rendered, ctx.Preset.Id == "P9", ct, InsertMap.InsertSpans(InsertMap.Active(ctx.Plan)).Select(x => (x.Start, x.End)).ToList()));
         return res.OrderBy(r => r.Hard ? 0 : 1).ThenBy(r => r.CheckId, StringComparer.Ordinal).ToList();
     }
 
@@ -161,9 +191,10 @@ public sealed class QaEngine(FFmpeg ff)
         var cand = ctx.Plan.Telops.Where(t => t.Enabled && Band(t) != null).OrderBy(t => t.Start).ToList();
         if (cand.Count == 0) return new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
         int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>();
+        var ins = InsertMap.Active(ctx.Plan);
         for (int i = 0; i < cand.Count; i += step)
         {
-            var t = cand[i]; var mid = (t.Start + t.End) / 2; var (top, bottom) = Band(t)!.Value;
+            var t = cand[i]; var mid = InsertMap.ToFinal(ins, (t.Start + t.End) / 2); var (top, bottom) = Band(t)!.Value;
             var faces = await Faces!.DetectAtAsync(rendered, mid, ct); checkedN++;
             foreach (var f in faces)
             {
@@ -186,25 +217,33 @@ public sealed class QaEngine(FFmpeg ff)
         return widest.Concat(spread).Concat(telops.Where(t => t.Type != TelopType.Caption).Take(MaxSafeZoneSamples / 4)).Distinct().OrderBy(t => t.Start).ToList();
     }
 
-    /// <summary>H-05 measured: render the telop layer alone (half resolution, 10 fps) and compute glyph bounding boxes from raw pixels.</summary>
+    /// <summary>H-05 measured: render the telop layer alone (half resolution, 10 fps) and compute glyph bounding boxes from raw pixels. Scene-card text is measured at its place on the final timeline.</summary>
     public async Task<QaResult> SafeZoneAsync(QaContext ctx, string workDir, CancellationToken ct)
     {
         var telops = SafeZoneSample(ctx.Plan.Telops.Where(t => t.Enabled && t.End - t.Start > 0.15).ToList());
-        if (telops.Count == 0) return new("H-05", QaStatus.Pass, "no telops", "safe zone", "テロップの安全領域");
+        var ins = InsertMap.Active(ctx.Plan);
+        var cards = InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0).ToList();
+        if (telops.Count == 0 && cards.Count == 0) return new("H-05", QaStatus.Pass, "no telops", "safe zone", "テロップの安全領域");
         Directory.CreateDirectory(workDir);
         var violations = new List<string>();
-        foreach (var group in new[] { telops.Where(t => t.Type is not (TelopType.Hook or TelopType.Headline)).ToList(), telops.Where(t => t.Type is TelopType.Hook or TelopType.Headline).ToList() })
+        var groups = new List<(string Name, bool Top, EditPlan Plan, List<double> Times, double Dur)>();
+        foreach (var g in new[] { telops.Where(t => t.Type is not (TelopType.Hook or TelopType.Headline)).ToList(), telops.Where(t => t.Type is TelopType.Hook or TelopType.Headline).ToList() })
         {
-            if (group.Count == 0) continue;
-            bool top = group[0].Type is TelopType.Hook or TelopType.Headline;
-            var plan = ctx.Plan with { Telops = group };
-            var ass = Path.Combine(workDir, top ? "qa_top.ass" : "qa_body.ass");
+            if (g.Count == 0) continue;
+            bool top = g[0].Type is TelopType.Hook or TelopType.Headline;
+            groups.Add((top ? "qa_top" : "qa_body", top, ctx.Plan with { Telops = g, Inserts = [] }, g.Select(t => t.Start + Math.Min(0.6, (t.End - t.Start) / 2)).ToList(), ctx.Plan.Duration));
+        }
+        if (cards.Count > 0)
+            groups.Add(("qa_cards", false, ctx.Plan with { Telops = [] }, cards.Select(x => x.Start + Math.Min(0.6, (x.End - x.Start) / 2)).ToList(), ctx.Plan.TotalDuration));
+        foreach (var (name, top, plan, times, total) in groups)
+        {
+            var ass = Path.Combine(workDir, name + ".ass");
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset), new UTF8Encoding(false), ct);
             const int W = 540, H = 960; const double fps = 10;
-            var frames = group.Select(t => (int)Math.Round((t.Start + Math.Min(0.6, (t.End - t.Start) / 2)) * fps)).Distinct().OrderBy(x => x).ToList();
+            var frames = times.Select(t => (int)Math.Round(t * fps)).Distinct().OrderBy(x => x).ToList();
             var select = string.Join("+", frames.Select(f => $"eq(n,{f})"));
             using var ms = new MemoryStream();
-            var dur = (ctx.Plan.Duration + 1).ToString("0.##", IC);
+            var dur = (total + 1).ToString("0.##", IC);
             await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", $"color=black:s={W}x{H}:r={fps.ToString(IC)}:d={dur}",
                 "-vf", $"subtitles={FFmpeg.FilterPath(ass)}:fontsdir={FFmpeg.FilterPath(ff.FontsDir)},select='{select}'", "-fps_mode", "passthrough", "-pix_fmt", "gray", "-f", "rawvideo", "-"], ct, stdout: ms);
             var buf = ms.GetBuffer(); int n = (int)(ms.Length / (W * H));
@@ -228,11 +267,13 @@ public sealed class QaEngine(FFmpeg ff)
             $"x {SafeZone.Left}–{1080 - SafeZone.Right}, y {SafeZone.Top}–{1920 - SafeZone.Bottom}", "テロップの安全領域（実測）");
     }
 
-    public async Task<QaResult> BlackFreezeAsync(string file, bool allowFreeze, CancellationToken ct)
+    /// <summary>S-06. Inserts are excluded: a scene card is a deliberate 1 s still, and bumpers may hold a title or fade to a solid colour.</summary>
+    public async Task<QaResult> BlackFreezeAsync(string file, bool allowFreeze, CancellationToken ct, IReadOnlyList<(double Start, double End)>? exclude = null)
     {
         var r = await ff.RunFfmpegAsync(["-hide_banner", "-i", file, "-an", "-vf", "scale=270:-2,blackdetect=d=0.5:pix_th=0.1,freezedetect=n=0.003:d=0.5", "-f", "null", "-"], ct);
-        int black = System.Text.RegularExpressions.Regex.Matches(r.StdErr, "black_start").Count;
-        int freeze = allowFreeze ? 0 : System.Text.RegularExpressions.Regex.Matches(r.StdErr, "freeze_start").Count;
-        return new("S-06", black + freeze == 0 ? QaStatus.Pass : QaStatus.Warn, $"black={black} freeze={freeze}", "0 (≥0.5s)", "黒画面・フリーズ");
+        bool Inside(System.Text.RegularExpressions.Match m) => exclude != null && double.TryParse(m.Groups[1].Value, NumberStyles.Float, IC, out var t) && exclude.Any(x => t >= x.Start - 0.1 && t <= x.End + 0.1);
+        int black = System.Text.RegularExpressions.Regex.Matches(r.StdErr, @"black_start:\s*([\d.]+)").Count(m => !Inside(m));
+        int freeze = allowFreeze ? 0 : System.Text.RegularExpressions.Regex.Matches(r.StdErr, @"freeze_start:\s*([\d.]+)").Count(m => !Inside(m));
+        return new("S-06", black + freeze == 0 ? QaStatus.Pass : QaStatus.Warn, $"black={black} freeze={freeze}" + (exclude is { Count: > 0 } ? "（オープニング・カード・クロージングを除く）" : ""), "0 (≥0.5s)", "黒画面・フリーズ");
     }
 }

@@ -22,6 +22,26 @@ public static class Api
     public sealed record Settings(string LlmProvider);
     public sealed record WordEdit(string WordId, string Text);
     public sealed record PatchTranscript(List<WordEdit> Edits);
+    public sealed record PutBrandKit(List<string>? Paths, bool RightsConfirmed, double? CardSec, bool? Upscale = null);
+
+    /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
+    static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
+    {
+        var canvas = new Canvas();
+        object? Pick(string kind) => kit == null ? null : Planning.BrandKitService.Pick(kit.Files, kind, canvas) is { } f
+            ? new
+            {
+                f.Path, f.Width, f.Height, f.Duration, f.HasAudio, Lufs = double.IsNaN(f.Lufs) ? (double?)null : Math.Round(f.Lufs, 1),
+                Upscale = Math.Round(Planning.BrandKitService.Upscale(f.Width, f.Height, canvas), 2), f.Enhancement,
+                Needs = Planning.BrandKitEnhancer.Needs(f, canvas),
+            } : null;
+        return new
+        {
+            Registered = kit != null, Kit = kit, Problems = problems,
+            Opening = Pick("opening"), Closing = Pick("closing"), CardImages = kit?.Files.Count(f => f.Kind == "card") ?? 0,
+            Enhance = worker.Current,
+        };
+    }
 
     static IResult Error(int status, string code, string message, object? detail = null) =>
         Results.Json(new { error = new { code, message, detail } }, Json.Options, statusCode: status);
@@ -132,7 +152,8 @@ public static class Api
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>()!.MaxRequestBodySize = null;
             if (!request.HasFormContentType) return Error(422, "E-VALIDATION", "multipart/form-data で送信してください");
-            var form = await request.ReadFormAsync(ct);
+            // Match the unlimited HTTP body policy for source videos, without lifting limits on other endpoints.
+            var form = await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = long.MaxValue }, ct);
             var file = form.Files.FirstOrDefault();
             if (file == null) return Error(422, "E-VALIDATION", "ファイルがありません");
             var dir = Path.Combine(p.Directory, "assets"); Directory.CreateDirectory(dir);
@@ -230,6 +251,36 @@ public static class Api
             rt.Store.Put(Kinds.Bgm, track.Id, id, track);
             return Results.Json(track, Json.Options, statusCode: 201);
         }).DisableAntiforgery();
+
+        // ---- brand kit: opening / closing videos and scene-card images (one per installation, rights confirmed at registration) ----
+        api.MapGet("/brandkit", (Runtime rt, BrandKitWorker w) => Results.Json(BrandKitView(rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId), [], w), Json.Options));
+        api.MapPut("/brandkit", async (Runtime rt, BrandKitWorker w, PutBrandKit req, CancellationToken ct) =>
+        {
+            if (!req.RightsConfirmed) return Error(422, "E-RIGHTS-REQUIRED", "オープニング・クロージング・カード画像を使う権利（著作権・ロゴ・肖像の利用許諾）の確認にチェックしてください");
+            var paths = (req.Paths ?? []).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+            if (paths.Count == 0) return Error(422, "E-VALIDATION", "フォルダーかファイルのフルパスを指定してください");
+            var (kit, problems) = await Planning.BrandKitService.ScanAsync(rt.Ff, paths, true, req.CardSec ?? 1.0, ct);
+            if (kit.Files.Count == 0) return Error(422, "E-BRANDKIT", "使えるファイルが見つかりませんでした" + (problems.Count > 0 ? ": " + string.Join(" / ", problems) : "（ファイル名に Opening / Closing を含む動画か、PNG/JPG 画像を置いてください）"));
+            kit = kit with { Upscale = req.Upscale ?? true };
+            rt.Store.Put(Kinds.BrandKit, PipelineRunner.BrandKitId, null, kit);
+            // small openings / closings are upscaled in the background (cached per file, so re-registering is instant)
+            if (kit.Upscale) w.Start(); else w.Cancel();
+            return Results.Json(BrandKitView(kit, problems, w), Json.Options);
+        });
+        api.MapPost("/brandkit/enhance", (Runtime rt, BrandKitWorker w) =>
+        {
+            var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
+            if (kit == null) return Error(404, "E-NOT-FOUND", "オープニング・クロージングが登録されていません");
+            if (!kit.Upscale) rt.Store.Put(Kinds.BrandKit, PipelineRunner.BrandKitId, null, kit = kit with { Upscale = true });
+            w.Start();
+            return Results.Json(BrandKitView(kit, [], w), Json.Options, statusCode: 202);
+        });
+        api.MapDelete("/brandkit", (Runtime rt, BrandKitWorker w) =>
+        {
+            w.Cancel();
+            rt.Store.Delete([(Kinds.BrandKit, PipelineRunner.BrandKitId)]);
+            return Results.Json(BrandKitView(null, [], w), Json.Options);
+        });
 
         // ---- jobs (FR-SEL, SSE) ----
         api.MapPost("/projects/{id}/jobs", (Runtime rt, JobQueue q, string id, StartJob req) => StartGeneration(rt, q, id, req.PresetIds, req.Instruction, [], req.Options));
@@ -367,6 +418,12 @@ public static class Api
         options ??= new JobOptions();
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
         if (options.Bgm is not ("auto" or "none") && rt.Audio.Find(options.Bgm) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
+        if (options.Opening || options.Closing)
+        {
+            var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
+            if (options.Opening && kit?.Files.Any(f => f.Kind == "opening") != true) return Error(422, "E-BRANDKIT", "オープニング動画が登録されていません。「オープニング・クロージング」で登録してください");
+            if (options.Closing && kit?.Files.Any(f => f.Kind == "closing") != true) return Error(422, "E-BRANDKIT", "クロージング動画が登録されていません。「オープニング・クロージング」で登録してください");
+        }
         if (rt.Store.Get<Project>(Kinds.Project, projectId) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
         if (presetIds is not { Count: > 0 } || presetIds.Any(id => !rt.Presets.ContainsKey(id))) return Error(422, "E-VALIDATION", "パターンを選んでください");
         var main = rt.Presets[presetIds[0]];

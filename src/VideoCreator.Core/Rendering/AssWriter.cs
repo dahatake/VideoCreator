@@ -46,9 +46,12 @@ public static class AssWriter
         string[] outlines = ["&H00D47800", "&H003C3CD4", "&H0050A030"];
         for (int i = 0; i < outlines.Length; i++)
             sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H80000000,0,0,0,0,100,100,0,0,1,9,2,2,60,{c.MarginR},{c.MarginV},1");
+        // scene-change card (tsukkomi): big yellow text, thick black outline, drop shadow; positioned explicitly
+        sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,60,{c.MarginR},0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
+        var ins = Planning.InsertMap.Active(plan);
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Start))
         {
             var layer = t.Type is TelopType.Hook or TelopType.Headline ? 2 : t.Type is TelopType.Emphasis or TelopType.Counter or TelopType.Sfx or TelopType.Tsukkomi ? 1 : 0;
@@ -63,10 +66,21 @@ public static class AssWriter
             var fs = fit < size ? $@"\fs{fit}" : "";
             var pos = style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{SfxY})\frz-8" : "";
             var fx = t.Animation == "pop" ? $@"{{{pos}\fad(60,0){fs}\fscx70\fscy70\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}}" : (fs.Length > 0 || pos.Length > 0) ? $"{{{pos}{fs}}}" : "";
-            sb.AppendLine($"Dialogue: {layer},{Time(t.Start)},{Time(t.End)},{style},,0,0,0,,{fx}{Escape(t.Text)}");
+            // body time → file time; a telop running across a card or bumper is split around it
+            foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
+                sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{Escape(t.Text)}");
+        }
+        foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
+        {
+            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width, c.MarginR);
+            int x = (MarginL + plan.Canvas.Width - c.MarginR) / 2, y = (int)(plan.Canvas.Height * (card.Path != null ? 0.62 : 0.42));
+            var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
+            sb.AppendLine($@"Dialogue: 3,{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
         }
         return sb.ToString();
     }
+
+    public const int CardFontPx = 120, CardOutline = 12;
 
     public static string Time(double s)
     {
@@ -82,13 +96,15 @@ public static class AssWriter
     public static string Srt(EditPlan plan)
     {
         var sb = new StringBuilder(); int i = 0;
+        var ins = Planning.InsertMap.Active(plan);
         foreach (var t in plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).OrderBy(t => t.Start))
-        {
-            sb.AppendLine((++i).ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine($"{SrtTime(t.Start)} --> {SrtTime(t.End)}");
-            sb.AppendLine(t.Text);
-            sb.AppendLine();
-        }
+            foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
+            {
+                sb.AppendLine((++i).ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine($"{SrtTime(s)} --> {SrtTime(e)}");
+                sb.AppendLine(t.Text);
+                sb.AppendLine();
+            }
         return sb.ToString();
     }
 

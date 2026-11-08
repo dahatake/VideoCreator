@@ -13,6 +13,8 @@ public sealed class AppOptions
     /// <summary>US-11 / NFR-SEC-04 (v1.1): no LLM calls. Speech-to-text (Azure AI Speech) is still used because captions are mandatory.</summary>
     public bool LocalOnly { get; set; }
     public string? FaceModel { get; set; }
+    /// <summary>Real-ESRGAN animevideov3 ONNX used to upscale small opening/closing videos (default tools/models/realesr-animevideov3.onnx).</summary>
+    public string? UpscaleModel { get; set; }
     public AsrOptions Asr { get; set; } = new();
     public LlmOptions Llm { get; set; } = new();
     public List<string> Dictionary { get; set; } = [];

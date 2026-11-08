@@ -5,6 +5,7 @@ using VideoCreator.Audio;
 using VideoCreator.Faces;
 using VideoCreator.Media;
 using VideoCreator.Models;
+using VideoCreator.Planning;
 using VideoCreator.Presets;
 
 namespace VideoCreator.Rendering;
@@ -85,33 +86,90 @@ public sealed partial class Renderer(FFmpeg ff)
             idx["bgm"] = args.Count; args.Add(["-stream_loop", "-1", "-i", path]);
         }
         if (plan.Audio.SfxEnabled)
-            foreach (var kind in plan.Audio.Sfx.Select(s => s.Kind).Distinct())
+            foreach (var kind in FinalAudio(plan).Sfx.Select(s => s.Kind).Distinct())
             {
                 var path = SfxResolver?.Invoke(kind);
                 if (path == null || !File.Exists(path)) continue;
                 idx["sfx:" + kind] = args.Count; args.Add(["-i", path]);
             }
+        foreach (var ins in InsertMap.Active(plan).Where(i => i.Path != null))
+        {
+            // an upscaled cache that has been deleted falls back to the registered file (the scale chain fits any size)
+            var path = File.Exists(ins.Path) ? ins.Path! : ins.OriginalPath is { } o && File.Exists(o) ? o : throw new FFmpegException($"{KindName(ins)}のファイルがありません: {ins.Path}");
+            idx["ins:" + ins.Id] = args.Count;
+            // a card image becomes a still stream of the card's length
+            args.Add(ins.Kind == "card" ? ["-loop", "1", "-framerate", plan.Canvas.Fps.ToString(IC), "-t", F(ins.Duration), "-i", path] : ["-i", path]);
+        }
         return new Inputs(args, idx, media) { Video = video, Audio = audio };
     }
 
-    static string DialogueClip(EditPlan plan, Inputs inp, int i, string label)
+    static string KindName(Insert i) => i.Kind switch { "opening" => "オープニング", "closing" => "クロージング", _ => "場面転換カード" };
+
+    /// <summary>The plan's audio on the FINAL timeline: SFX and BGM mutes shifted past inserts, a hit on every card, BGM silent under the bumpers (they bring their own music).</summary>
+    public static AudioSpec FinalAudio(EditPlan plan)
     {
-        var c = plan.Timeline[i]; var m = inp.Media[plan.Audio.Master]; var (k, off) = inp.Audio[i];
-        if (m.AudioChannels > 0 && c.Speed <= 2.001)
-            return $"[{k}:a]atrim=start={F(c.MasterIn - off)}:end={F(c.MasterOut - off)},asetpts=PTS-STARTPTS{(Math.Abs(c.Speed - 1) > 0.001 ? $",atempo={F(c.Speed)}" : "")},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[{label}];";
-        return $"anullsrc=r=48000:cl=stereo,atrim=duration={F(c.Length)},asetpts=PTS-STARTPTS[{label}];";
+        var ins = InsertMap.Active(plan);
+        if (ins.Count == 0) return plan.Audio;
+        var sfx = plan.Audio.Sfx.Select(s => s with { T = Math.Round(InsertMap.ToFinal(ins, s.T), 3) }).ToList();
+        var spans = InsertMap.InsertSpans(ins);
+        sfx.AddRange(spans.Where(x => x.Insert.Kind == "card" && x.Insert.Sfx != null).Select(x => new SfxEvent(x.Insert.Sfx!, Math.Round(x.Start, 3), -3)));
+        var mutes = plan.Audio.BgmMutes.SelectMany(m => InsertMap.Span(ins, m.T0, m.T1)).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList();
+        mutes.AddRange(spans.Where(x => x.Insert.Kind != "card").Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))));
+        return plan.Audio with { Sfx = sfx.OrderBy(s => s.T).ToList(), BgmMutes = mutes.OrderBy(m => m.T0).ToList() };
     }
 
-    /// <summary>Dialogue → (gain) → BGM bed (loop, phase, fades, mutes, sidechain duck) → SFX bed → [outLabel]. Verified recipes: spike 08.</summary>
-    static string MixChain(EditPlan plan, Inputs inp, string inLabel, string outLabel)
+    /// <summary>Playback order: each insert goes before the first clip that starts at (or after) its position.</summary>
+    public static List<(int Clip, Insert? Insert)> Sequence(EditPlan plan)
     {
-        var a = plan.Audio; double total = plan.Duration; var g = new StringBuilder();
+        var ins = InsertMap.Active(plan); var res = new List<(int, Insert?)>(); double off = 0; int j = 0;
+        for (int i = 0; i < plan.Timeline.Count; i++)
+        {
+            while (j < ins.Count && ins[j].At <= off + 0.01) res.Add((-1, ins[j++]));
+            res.Add((i, null)); off += plan.Timeline[i].Length;
+        }
+        while (j < ins.Count) res.Add((-1, ins[j++]));
+        return res;
+    }
+
+    /// <summary>
+    /// Frames per playback item, rounded on the CUMULATIVE planned timeline. Clips are cut at arbitrary times, so each one is a fractional number of frames;
+    /// rounding each one by itself (and concat taking the longer of video and audio) used to add ~17 ms per clip — seconds over a long series part —
+    /// which would put telops, SFX and inserts out of step with the picture. With these counts every item ends within half a frame of its planned time.
+    /// </summary>
+    public static int[] FrameCounts(EditPlan plan, List<(int Clip, Insert? Insert)> seq)
+    {
+        var res = new int[seq.Count]; double acc = 0; int done = 0;
+        for (int s = 0; s < seq.Count; s++)
+        {
+            acc += seq[s].Insert?.Duration ?? plan.Timeline[seq[s].Clip].Length;
+            res[s] = Math.Max(1, (int)Math.Round(acc * plan.Canvas.Fps) - done);
+            done += res[s];
+        }
+        return res;
+    }
+
+    static long Samples(int frames, int fps) => (long)Math.Round(frames * 48000.0 / fps);
+
+    static string DialogueClip(EditPlan plan, Inputs inp, int i, string label, long? samples = null)
+    {
+        var c = plan.Timeline[i]; var m = inp.Media[plan.Audio.Master]; var (k, off) = inp.Audio[i];
+        var fit = samples is long n ? $",asetpts=N/SR/TB,apad=whole_len={n},atrim=end_sample={n}" : "";
+        if (m.AudioChannels > 0 && c.Speed <= 2.001)
+            return $"[{k}:a]atrim=start={F(c.MasterIn - off)}:end={F(c.MasterOut - off)},asetpts=PTS-STARTPTS{(Math.Abs(c.Speed - 1) > 0.001 ? $",atempo={F(c.Speed)}" : "")},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{fit}[{label}];";
+        return $"anullsrc=r=48000:cl=stereo,{(samples is long s ? $"atrim=end_sample={s}" : $"atrim=duration={F(c.Length)}")},asetpts=PTS-STARTPTS[{label}];";
+    }
+
+    /// <summary>Dialogue → (gain) → BGM bed (loop, phase, fades, mutes, sidechain duck) → SFX bed → [outLabel]. Verified recipes: spike 08.
+    /// <paramref name="a"/> is on the final timeline (<see cref="FinalAudio"/>); the BGM ends with a fade at <paramref name="bgmEnd"/> (the closing's start).</summary>
+    static string MixChain(AudioSpec a, double bgmEnd, Inputs inp, string inLabel, string outLabel)
+    {
+        var g = new StringBuilder();
         string cur = inLabel;
         if (Math.Abs(a.DialogueGainDb) > 0.01) { g.Append($"[{cur}]volume={F(a.DialogueGainDb)}dB[dg];"); cur = "dg"; }
         if (inp.Index.TryGetValue("bgm", out var bk))
         {
-            g.Append($"[{bk}:a]atrim=start={F(a.BgmPhase)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={F(a.BgmGainDb)}dB,atrim=duration={F(total)},asetpts=PTS-STARTPTS," +
-                     $"afade=t=in:d=0.4,afade=t=out:st={F(Math.Max(0, total - 1.0))}:d=1.0");
+            g.Append($"[{bk}:a]atrim=start={F(a.BgmPhase)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={F(a.BgmGainDb)}dB,atrim=duration={F(bgmEnd)},asetpts=PTS-STARTPTS," +
+                     $"afade=t=in:d=0.4,afade=t=out:st={F(Math.Max(0, bgmEnd - 1.0))}:d=1.0");
             foreach (var mu in a.BgmMutes) g.Append($",volume=enable='between(t,{F(mu.T0)},{F(mu.T1)})':volume=0");
             g.Append("[bgm];");
             if (a.Duck) { g.Append($"[{cur}]asplit=2[dk][dm];[bgm][dk]{DuckFilter}[bd];[bd][dm]amix=inputs=2:normalize=0:duration=longest[bm];"); }
@@ -133,56 +191,163 @@ public sealed partial class Renderer(FFmpeg ff)
         return g.ToString();
     }
 
-    /// <summary>Video+audio filtergraph. Each clip is reframed to the canvas individually so mixed sources concat cleanly.</summary>
+    /// <summary>One clip (or a one-frame freeze of it) reframed to the canvas: face crop, punch-in, fit or blurred background. <paramref name="post"/> runs before the output label.</summary>
+    static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "")
+    {
+        g.Append(head);
+        bool zoom = c.Zoom > 1.001;
+        if (c.Reframe.Mode == "face" && c.Reframe.Track is { Count: > 0 } track)
+        {
+            g.Append($",crop={c.Reframe.CropW}:{c.Reframe.CropH}:x='{FaceTrack.XExpression(track)}':y={c.Reframe.CropY},scale={W}:{H}:flags=lanczos,setsar=1");
+            if (zoom) g.Append($",scale=iw*{F(c.Zoom)}:ih*{F(c.Zoom)},crop={W}:{H}");
+            g.Append($"{post}[{label}];");
+        }
+        else
+        {
+            if (zoom) g.Append($",scale=iw*{F(c.Zoom)}:ih*{F(c.Zoom)},crop=iw/{F(c.Zoom)}:ih/{F(c.Zoom)}");
+            if (c.Reframe.Mode == "fit")
+                g.Append($",scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1{post}[{label}];");
+            else
+                g.Append($",split[f{id}][b{id}];[b{id}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{id}];" +
+                         $"[f{id}]scale={W}:-2[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");
+        }
+    }
+
+    /// <summary>Exactly <paramref name="frames"/> frames: a short stream is held on its last frame, a long one is cut.</summary>
+    static string Frames(int frames) => $",tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},setpts=PTS-STARTPTS";
+
+    /// <summary>
+    /// Insert video [iv{j}]: a bumper scaled to the canvas (blurred background when its shape differs, e.g. a 16:9 opening in a 9:16 output),
+    /// or a card = the last frame of the previous scene frozen and dimmed, with the card image on top (the card text is drawn by libass).
+    /// </summary>
+    static void AppendInsertVideo(StringBuilder g, EditPlan plan, Inputs inp, List<(int Clip, Insert? Insert)> seq, int s, int j, int frames, int W, int H, int fps, bool half)
+    {
+        var ins = seq[s].Insert!; string D = F(ins.Duration);
+        string fix = Frames(frames);
+        if (ins.Kind != "card")
+        {
+            int k = inp.Index["ins:" + ins.Id];
+            g.Append($"[{k}:v]trim=duration={D},setpts=PTS-STARTPTS,fps={fps}");
+            double target = (double)W / H, aspect = ins.Height > 0 ? (double)ins.Width / ins.Height : target;
+            if (Math.Abs(Math.Log(aspect / target)) < 0.02) g.Append($",scale={W}:{H}:flags=lanczos,setsar=1{fix}[iv{j}];");
+            else g.Append($",split[if{j}][ib{j}];[ib{j}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[ibb{j}];" +
+                          $"[if{j}]scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[iff{j}];[ibb{j}][iff{j}]overlay=(W-w)/2:(H-h)/2,setsar=1{fix}[iv{j}];");
+            return;
+        }
+        // freeze source: the clip just before the card (or the first frame of the next one when the card opens the video)
+        int prev = seq.Take(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).Last();
+        int ci = prev >= 0 ? prev : seq.Skip(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).First();
+        string bg = ins.Path != null ? $"cb{j}" : $"iv{j}";
+        if (ci < 0) g.Append($"color=c=0x202020:s={W}x{H}:r={fps}:d={D},setsar=1{fix}[{bg}];");
+        else
+        {
+            var c = plan.Timeline[ci]; var (k, off) = inp.Video[ci];
+            double at = prev >= 0 ? Math.Max(c.SrcIn, c.SrcOut - 0.1) : c.SrcIn;
+            var still = c with { Reframe = c.Reframe.Track is { Count: > 0 } tr ? c.Reframe with { Track = [new TrackPoint(0, prev >= 0 ? tr[^1].X : tr[0].X)] } : c.Reframe };
+            AppendVideo(g, $"[{k}:v]trim=start={F(at - off)}:end={F(at + 0.1 - off)},setpts=PTS-STARTPTS,fps={fps},trim=end_frame=1", still, W, H, half, $"z{j}", bg,
+                $",eq=saturation=0.55:brightness=-0.06,tpad=stop_mode=clone:stop_duration={D}{fix}");
+        }
+        if (ins.Path != null)
+        {
+            int k = inp.Index["ins:" + ins.Id];
+            g.Append($"[{k}:v]scale=w={W * 4 / 5}:h={H / 2}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=rgba[ci{j}];" +
+                     $"[{bg}][ci{j}]overlay=(W-w)/2:(H-h)/2-{H / 12}:eof_action=repeat,setsar=1{fix}[iv{j}];");
+        }
+    }
+
+    static string Silence(long samples, string label) => $"anullsrc=r=48000:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[{label}];";
+
+    /// <summary>
+    /// An insert's segment on the dialogue track: a bumper's own music (brought to the loudness target, compensating the dialogue gain applied later),
+    /// otherwise silence. Carrying it inside the concat keeps it locked to the bumper's video. Timestamps are rebuilt after resampling:
+    /// AAC files start slightly before 0 (encoder priming), and the offset would make concat start the next segment ~0.1 s late.
+    /// </summary>
+    static string InsertAudio(EditPlan plan, Inputs inp, Insert ins, string label, long samples)
+    {
+        if (ins.Kind == "card" || !ins.HasAudio || !inp.Index.TryGetValue("ins:" + ins.Id, out var k)) return Silence(samples, label);
+        return $"[{k}:a]atrim=duration={F(ins.Duration)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={F(ins.GainDb - plan.Audio.DialogueGainDb)}dB," +
+               $"asetpts=N/SR/TB,apad=whole_len={samples},atrim=end_sample={samples}[{label}];";
+    }
+
+    /// <summary>Audio of one playback item, exactly as long as its video.</summary>
+    static string ItemAudio(EditPlan plan, Inputs inp, (int Clip, Insert? Insert) item, int j, int frames) => item.Insert == null
+        ? DialogueClip(plan, inp, item.Clip, $"a{item.Clip}", Samples(frames, plan.Canvas.Fps))
+        : InsertAudio(plan, inp, item.Insert, $"ia{j}", Samples(frames, plan.Canvas.Fps));
+
+    /// <summary>Dialogue in playback order (inserts' own audio or silence between clips) → [ca0].</summary>
+    static void AppendDialogue(StringBuilder g, EditPlan plan, Inputs inp, List<(int Clip, Insert? Insert)> seq)
+    {
+        var frames = FrameCounts(plan, seq);
+        var labels = new StringBuilder(); int j = 0;
+        for (int s = 0; s < seq.Count; s++)
+        {
+            g.Append(ItemAudio(plan, inp, seq[s], j, frames[s]));
+            labels.Append(seq[s].Insert == null ? $"[a{seq[s].Clip}]" : $"[ia{j++}]");
+        }
+        g.Append($"{labels}concat=n={seq.Count}:v=0:a=1[ca0];");
+    }
+
+    /// <summary>[ca0] → BGM/SFX mix → [outLabel]. The BGM is muted under the bumpers and fades out where the closing starts.</summary>
+    static void AppendMix(StringBuilder g, EditPlan plan, Inputs inp, string outLabel)
+    {
+        var ins = InsertMap.Active(plan);
+        double bgmEnd = ins.FirstOrDefault(i => i.Kind == "closing") is { } cl ? InsertMap.StartOf(ins, cl) : plan.TotalDuration;
+        g.Append(MixChain(FinalAudio(plan), bgmEnd, inp, "ca0", outLabel));
+    }
+
+    /// <summary>Video+audio filtergraph. Each clip is reframed to the canvas individually so mixed sources concat cleanly; inserts play between clips.</summary>
     public static string BuildGraph(EditPlan plan, Inputs inp, string? assFile, string fontsDir, bool preview, string? loudnorm)
     {
         int W = plan.Canvas.Width, H = plan.Canvas.Height, fps = plan.Canvas.Fps;
         // long series previews are composed directly at half size (4x fewer pixels to blur); ASS PlayRes keeps the 1080x1920 layout and libass scales it
         bool half = preview && plan.Series != null;
         if (half) { W /= 2; H /= 2; }
+        var seq = Sequence(plan);
+        var frames = FrameCounts(plan, seq);
         var g = new StringBuilder(); var labels = new StringBuilder();
-        for (int i = 0; i < plan.Timeline.Count; i++)
+        int j = 0;
+        var vlabel = new List<string>(); var fadeFrames = new List<int>();
+        for (int s = 0; s < seq.Count; s++)
         {
+            var (i, ins) = seq[s];
+            if (ins != null)
+            {
+                AppendInsertVideo(g, plan, inp, seq, s, j, frames[s], W, H, fps, half);
+                vlabel.Add($"iv{j}"); fadeFrames.Add(0);
+                labels.Append($"[iv{j}][ia{j}]");
+                j++;
+                continue;
+            }
             var c = plan.Timeline[i]; var (k, off) = inp.Video[i];
-            double ext = i + 1 < plan.Timeline.Count ? plan.Timeline[i + 1].TransitionSec : 0;   // cross-fade overlap taken from this clip's tail
-            g.Append($"[{k}:v]trim=start={F(c.SrcIn - off)}:end={F(c.SrcOut + ext * c.Speed - off)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}");
-            bool zoom = c.Zoom > 1.001;
-            if (c.Reframe.Mode == "face" && c.Reframe.Track is { Count: > 0 } track)
-            {
-                g.Append($",crop={c.Reframe.CropW}:{c.Reframe.CropH}:x='{FaceTrack.XExpression(track)}':y={c.Reframe.CropY},scale={W}:{H}:flags=lanczos,setsar=1");
-                if (zoom) g.Append($",scale=iw*{F(c.Zoom)}:ih*{F(c.Zoom)},crop={W}:{H}");
-                g.Append($"[v{i}];");
-            }
-            else
-            {
-                if (zoom) g.Append($",scale=iw*{F(c.Zoom)}:ih*{F(c.Zoom)},crop=iw/{F(c.Zoom)}:ih/{F(c.Zoom)}");
-                if (c.Reframe.Mode == "fit")
-                    g.Append($",scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}];");
-                else
-                    g.Append($",split[f{i}][b{i}];[b{i}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{i}];" +
-                             $"[f{i}]scale={W}:-2[ff{i}];[bb{i}][ff{i}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1[v{i}];");
-            }
-            g.Append(DialogueClip(plan, inp, i, $"a{i}"));
+            // cross-fade overlap taken from this clip's tail (only when the next thing played is a clip that fades in)
+            double ext = s + 1 < seq.Count && seq[s + 1].Insert == null ? plan.Timeline[seq[s + 1].Clip].TransitionSec : 0;
+            int extFrames = (int)Math.Round(ext * fps);
+            AppendVideo(g, $"[{k}:v]trim=start={F(c.SrcIn - off)}:end={F(c.SrcOut + ext * c.Speed - off)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}", c, W, H, half, i.ToString(IC), $"v{i}",
+                Frames(frames[s] + extFrames));
+            vlabel.Add($"v{i}"); fadeFrames.Add(s > 0 && seq[s - 1].Insert == null ? (int)Math.Round(c.TransitionSec * fps) : 0);
             labels.Append($"[v{i}][a{i}]");
         }
-        if (plan.Timeline.Any(c => c.TransitionSec > 0))
+        if (fadeFrames.Any(f => f > 0))
         {
             // video chain with xfade at scene changes; audio is concatenated separately (hard cuts)
-            var al = string.Concat(Enumerable.Range(0, plan.Timeline.Count).Select(i => $"[a{i}]"));
-            g.Append($"{al}concat=n={plan.Timeline.Count}:v=0:a=1[ca0];");
-            for (int i = 0; i < plan.Timeline.Count; i++) g.Append($"[v{i}]settb=AVTB,format=yuv420p[w{i}];");
-            string cur = "w0"; double run = plan.Timeline[0].Length;
-            for (int i = 1; i < plan.Timeline.Count; i++)
+            AppendDialogue(g, plan, inp, seq);
+            for (int n = 0; n < vlabel.Count; n++) g.Append($"[{vlabel[n]}]settb=AVTB,format=yuv420p[w{n}];");
+            string cur = "w0"; int run = frames[0];
+            for (int n = 1; n < vlabel.Count; n++)
             {
-                var c = plan.Timeline[i];
-                if (c.TransitionSec > 0) g.Append($"[{cur}][w{i}]xfade=transition=fade:duration={F(c.TransitionSec)}:offset={F(run)}[x{i}];");
-                else g.Append($"[{cur}][w{i}]concat=n=2:v=1:a=0[x{i}];");
-                cur = $"x{i}"; run += c.Length;
+                if (fadeFrames[n] > 0) g.Append($"[{cur}][w{n}]xfade=transition=fade:duration={F((double)fadeFrames[n] / fps)}:offset={F((double)run / fps)}[x{n}];");
+                else g.Append($"[{cur}][w{n}]concat=n=2:v=1:a=0[x{n}];");
+                cur = $"x{n}"; run += frames[n];
             }
             g.Append($"[{cur}]null[cv];");
         }
-        else g.Append($"{labels}concat=n={plan.Timeline.Count}:v=1:a=1[cv][ca0];");
-        g.Append(MixChain(plan, inp, "ca0", "ca"));
+        else
+        {
+            j = 0;
+            for (int s = 0; s < seq.Count; s++) g.Append(ItemAudio(plan, inp, seq[s], seq[s].Insert == null ? j : j++, frames[s]));
+            g.Append($"{labels}concat=n={seq.Count}:v=1:a=1[cv][ca0];");
+        }
+        AppendMix(g, plan, inp, "ca");
         g.Append("[cv]");
         if (assFile != null) g.Append($"subtitles={FFmpeg.FilterPath(assFile)}:fontsdir={FFmpeg.FilterPath(fontsDir)},");
         if (preview && !half) g.Append($"scale={W / 2}:{H / 2},");
@@ -217,10 +382,9 @@ public sealed partial class Renderer(FFmpeg ff)
 
     public static string BuildAudioOnlyGraph(EditPlan plan, Inputs inp, string tail)
     {
-        var g = new StringBuilder(); var labels = new StringBuilder();
-        for (int i = 0; i < plan.Timeline.Count; i++) { g.Append(DialogueClip(plan, inp, i, $"a{i}")); labels.Append($"[a{i}]"); }
-        g.Append($"{labels}concat=n={plan.Timeline.Count}:v=0:a=1[ca0];");
-        g.Append(MixChain(plan, inp, "ca0", "ca"));
+        var g = new StringBuilder();
+        AppendDialogue(g, plan, inp, Sequence(plan));
+        AppendMix(g, plan, inp, "ca");
         g.Append($"[ca]{tail}[m]");
         return plan.Series != null ? ShareInputs(g.ToString()) : g.ToString();
     }
@@ -236,7 +400,7 @@ public sealed partial class Renderer(FFmpeg ff)
         var inp = ResolveInputs(plan, assets);
         var cmds = new List<string>();
         string? ass = null;
-        if (plan.Telops.Any(t => t.Enabled))
+        if (plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0))
         {
             ass = Path.ChangeExtension(outFile, ".ass");
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, preset), new UTF8Encoding(false), ct);
@@ -246,6 +410,16 @@ public sealed partial class Renderer(FFmpeg ff)
         string? ln = null;
         try
         {
+            // bumpers play at the loudness the body actually has, so the final whole-file normalisation keeps them level with the speech
+            if (InsertMap.Active(plan).Any(i => i.Kind != "card" && i.HasAudio))
+            {
+                var body = plan with { Inserts = [] };
+                var bm = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(body, inp, "ebur128"), outFile + ".bgraph.txt", scratch), "-map", "[m]", "-f", "null", "-"], ct);
+                cmds.Add(bm.CommandLine);
+                var mi = IntegratedEbuRe().Matches(bm.StdErr);
+                if (mi.Count > 0 && double.TryParse(mi[^1].Groups[1].Value, NumberStyles.Float, IC, out var bodyI) && bodyI > -70)
+                    plan = plan with { Inserts = plan.Inserts.Select(i => i.Kind != "card" && i.HasAudio ? i with { GainDb = Math.Round(Math.Clamp(i.GainDb + bodyI - plan.Audio.TargetLufs, -40, 20), 2) } : i).ToList() };
+            }
             if (!preview)
             {
                 // pass 1: measure the edited audio only (fast)
@@ -300,10 +474,11 @@ public sealed partial class Renderer(FFmpeg ff)
 
     static double Num(Match m) => m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, IC, out var d) ? d : double.NaN;
 
-    public async Task<List<string>> ThumbnailsAsync(string video, double duration, string prefix, CancellationToken ct)
+    /// <summary>Three candidate stills from the BODY (<paramref name="toFinal"/> skips the opening, cards and closing).</summary>
+    public async Task<List<string>> ThumbnailsAsync(string video, double duration, string prefix, CancellationToken ct, Func<double, double>? toFinal = null)
     {
         var list = new List<string>();
-        foreach (var (t, i) in new[] { Math.Min(1.0, duration * 0.1), duration * 0.5, Math.Max(0, duration - 2.0) }.Select((t, i) => (t, i)))
+        foreach (var (t, i) in new[] { Math.Min(1.0, duration * 0.1), duration * 0.5, Math.Max(0, duration - 2.0) }.Select((t, i) => (toFinal?.Invoke(t) ?? t, i)))
         {
             var f = $"{prefix}_thumb{i + 1}.png";
             var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", "-ss", F(t), "-i", video, "-frames:v", "1", f], ct);
@@ -314,6 +489,8 @@ public sealed partial class Renderer(FFmpeg ff)
 
     [GeneratedRegex(@"Input Integrated:\s*(-?[\d.]+|-inf)")]
     private static partial Regex IntegratedRe();
+    [GeneratedRegex(@"I:\s+(-?[\d.]+) LUFS")]
+    private static partial Regex IntegratedEbuRe();
     [GeneratedRegex(@"Input True Peak:\s*([-+]?[\d.]+|-inf)")]
     private static partial Regex TruePeakRe();
 }

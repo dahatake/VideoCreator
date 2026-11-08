@@ -34,10 +34,40 @@ public static class PlanEditor
                     Audio = plan.Audio with { SfxEnabled = op.Enabled ?? true },
                     Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "set_sfx", "audio", plan.Audio.SfxEnabled.ToString(), (op.Enabled ?? true).ToString())] },
                 },
+                "set_insert_enabled" => UpdateInsert(plan, op.Target ?? throw new ArgumentException("target required"), i => i with { Enabled = op.Enabled ?? true }, "set_insert_enabled", null, (op.Enabled ?? true).ToString()),
+                "replace_card_text" => ReplaceCardText(plan, op.Target ?? throw new ArgumentException("target required"), op.Text ?? ""),
+                "approve_card" => UpdateInsert(plan, op.Target ?? throw new ArgumentException("target required"), i => i with { Approved = true }, "approve_card", null, "true"),
+                "approve_all_cards" => plan with
+                {
+                    Inserts = plan.Inserts.Select(i => i.Kind == "card" ? i with { Approved = true } : i).ToList(),
+                    Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "approve_all_cards", "cards", null, "true")] },
+                },
                 _ => throw new ArgumentException($"unknown op {op.Op}"),
             };
         }
         return plan;
+    }
+
+    public const int MaxCardTextLength = 20;
+
+    static EditPlan ReplaceCardText(EditPlan plan, string target, string text)
+    {
+        text = text.Replace("\r", "").Replace("\n", " ").Trim();
+        if (text.Length > MaxCardTextLength) throw new ArgumentException($"カードの文字は{MaxCardTextLength}文字以内にしてください（1秒で読める長さ）");
+        var old = plan.Inserts.FirstOrDefault(i => i.Id == target);
+        if (old?.Kind != "card") throw new KeyNotFoundException($"card {target} not found");
+        // text the user typed is the user's own words: no AI approval needed (an emptied text leaves an image-only / silent still)
+        return UpdateInsert(plan, target, i => i with { Text = text, TextSource = "user", Approved = true }, "replace_card_text", old.Text, text);
+    }
+
+    static EditPlan UpdateInsert(EditPlan plan, string target, Func<Insert, Insert> f, string op, string? from, string? to)
+    {
+        if (plan.Inserts.All(i => i.Id != target)) throw new KeyNotFoundException($"insert {target} not found");
+        return plan with
+        {
+            Inserts = plan.Inserts.Select(i => i.Id == target ? f(i) : i).ToList(),
+            Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, op, target, from, to)] },
+        };
     }
 
     static EditPlan ReplaceText(EditPlan plan, string target, string text)
@@ -79,9 +109,21 @@ public static class PlanEditor
             // after a transcript correction the caption text must come from the corrected words; other edits stay
             return t with { Text = refreshCaptions && t.Type == TelopType.Caption ? t.Text : old.Text, Enabled = old.Enabled, Approved = refreshCaptions && t.Type == TelopType.Caption ? t.Approved : old.Approved };
         }).ToList();
+        // bumpers keep their on/off; a card keeps its text/approval/on-off when it still covers the same cut (matched by source time)
+        var inserts = rebuilt.Inserts.Select(i =>
+        {
+            var old = i.Kind == "card"
+                ? previous.Inserts.FirstOrDefault(o => o.Kind == "card" && o.SourceT is double a && i.SourceT is double b && Math.Abs(a - b) < 0.5)
+                : previous.Inserts.FirstOrDefault(o => o.Id == i.Id);
+            if (old == null) return i;
+            return i.Kind == "card" && (old.TextSource == "user" || old.TextSource == "ai" && old.Approved)
+                ? i with { Text = old.Text, TextSource = old.TextSource, Approved = old.Approved, Enabled = old.Enabled }
+                : i with { Enabled = old.Enabled };
+        }).ToList();
         return rebuilt with
         {
             Telops = telops,
+            Inserts = inserts,
             Audio = rebuilt.Audio with { Bgm = previous.Audio.Bgm, SfxEnabled = previous.Audio.SfxEnabled, BgmMutes = previous.Audio.Bgm == null ? [] : rebuilt.Audio.BgmMutes },
             Provenance = previous.Provenance with { Edits = [.. previous.Provenance.Edits] },
         };

@@ -91,8 +91,14 @@ public static class TsukkomiService
     /// <summary>Null when acceptable, else the reason it is rejected.</summary>
     public static string? Validate(string text, string captionId, IReadOnlyList<Telop> captions, string sourceText)
     {
-        if (text.Length == 0 || text.Length > 14) return "length";
         if (captions.All(c => c.Id != captionId)) return "caption id";
+        return ValidateText(text, sourceText);
+    }
+
+    /// <summary>Length, blocklist and grounding rules shared by tsukkomi telops and scene-change cards.</summary>
+    public static string? ValidateText(string text, string sourceText)
+    {
+        if (text.Length == 0 || text.Length > 14) return "length";
         if (Blocklist.Any(text.Contains)) return "blocklist";
         if (JapaneseText.UngroundedClaims(text, sourceText).Count > 0) return "ungrounded";
         if (Regex.Matches(text, @"[ァ-ヴー]{4,}").Any(m => !sourceText.Contains(m.Value))) return "invented name";

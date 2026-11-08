@@ -264,7 +264,94 @@ public sealed record EditPlan
     public required AudioSpec Audio { get; init; }
     public Provenance Provenance { get; init; } = new();
     public SeriesInfo? Series { get; init; }
+    /// <summary>Opening / closing videos and scene-change cards placed between timeline clips. Telops, SFX and chapters stay on the BODY timeline; see Planning.InsertMap.</summary>
+    public List<Insert> Inserts { get; init; } = [];
+    /// <summary>Length of the edited body (the timeline) — what the preset's duration range applies to.</summary>
     public double Duration => Timeline.Sum(c => c.Length);
+    /// <summary>Length of the rendered file: body + enabled inserts.</summary>
+    public double TotalDuration => Duration + Inserts.Where(i => i.Enabled).Sum(i => i.Duration);
+}
+
+/// <summary>Something played between timeline clips: an opening / closing video (bumper) or a ~1 s scene-change card.</summary>
+public sealed record Insert
+{
+    public required string Id { get; init; }
+    public required string Kind { get; init; }       // opening | closing | card
+    /// <summary>Body-timeline time (a clip boundary) where the insert plays; body content from this time on starts after it.</summary>
+    public double At { get; init; }
+    public double Duration { get; init; }
+    /// <summary>Bumper video, or the card's image (null = text card over the frozen last frame of the previous scene).</summary>
+    public string? Path { get; init; }
+    /// <summary>The registered file when <see cref="Path"/> is its upscaled copy (also the fallback if the cached copy has been deleted).</summary>
+    public string? OriginalPath { get; init; }
+    public int OriginalWidth { get; init; }
+    public int OriginalHeight { get; init; }
+    /// <summary>How <see cref="Path"/> was made from <see cref="OriginalPath"/> (null = used as registered).</summary>
+    public string? Enhanced { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public bool HasAudio { get; init; }
+    /// <summary>Gain that brings the bumper's own audio to the plan's loudness target (from the loudness measured at registration).
+    /// At render time it is re-based on the body's measured loudness, so the bumper ends up exactly as loud as the speech after the whole-file normalisation.</summary>
+    public double GainDb { get; init; }
+    public bool RightsConfirmed { get; init; }
+    /// <summary>Card text (tsukkomi). Empty for bumpers and for image cards without text.</summary>
+    public string Text { get; init; } = "";
+    public string TextSource { get; init; } = "";    // ai | fixed | user
+    public bool Approved { get; init; } = true;
+    public bool Enabled { get; init; } = true;
+    /// <summary>Card: master time of the cut it covers (used to keep user edits when the plan is rebuilt).</summary>
+    public double? SourceT { get; init; }
+    public string? Sfx { get; init; }
+}
+
+// ---- Brand kit: the channel's opening / closing videos and card images (registered once, used by every project) ----
+public sealed record BrandFile
+{
+    public required string Path { get; init; }
+    public required string Kind { get; init; }       // opening | closing | card
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public double Duration { get; init; }
+    public bool HasAudio { get; init; }
+    /// <summary>Integrated loudness of the file's audio (EBU R128, measured at registration). NaN when silent / no audio.</summary>
+    public double Lufs { get; init; } = double.NaN;
+    public double Aspect => Height == 0 ? 0 : (double)Width / Height;
+    /// <summary>Set when a smaller-than-canvas video was upscaled at registration and the per-file quality check accepted it; renders use this file.</summary>
+    public BrandEnhancement? Enhancement { get; init; }
+}
+
+/// <summary>
+/// Result of the registration-time upscale. <see cref="Gain"/> is measured on THIS file (its own downscaled copy upscaled back and compared with it):
+/// the enhanced file is only used when it is at least as faithful as the render-time lanczos.
+/// </summary>
+public sealed record BrandEnhancement
+{
+    public string? Path { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public required string Method { get; init; }
+    public string Device { get; init; } = "";
+    public double Seconds { get; init; }
+    public QualityGain? Gain { get; init; }
+    public bool Adopted => Path != null;
+    public string Note { get; init; } = "";
+}
+
+/// <summary>Enhanced minus lanczos on the same test (FFmpeg libvmaf NEG model, XPSNR luma, SSIM).</summary>
+public sealed record QualityGain(double Vmaf, double Xpsnr, double Ssim);
+
+public sealed record BrandKit
+{
+    public List<string> Sources { get; init; } = [];
+    public List<BrandFile> Files { get; init; } = [];
+    public bool RightsConfirmed { get; init; }
+    public string ConfirmedBy { get; init; } = Environment.UserName;
+    public DateTimeOffset ConfirmedAt { get; init; } = DateTimeOffset.UtcNow;
+    /// <summary>Scene-change card length (seconds).</summary>
+    public double CardSec { get; init; } = 1.0;
+    /// <summary>Upscale opening / closing videos smaller than the output once, at registration (kept only where it measurably helps).</summary>
+    public bool Upscale { get; init; } = true;
 }
 
 // ---- Jobs / renders / QA ----
@@ -286,6 +373,12 @@ public sealed record JobOptions
     /// <summary>Series mode by count: exactly this many parts of balanced length. Mutually exclusive with <see cref="PartMinutes"/>.</summary>
     public int? Parts { get; init; }
     public bool IsSeries => PartMinutes != null || Parts != null;
+    /// <summary>Play the registered opening video (after the cold open when there is one).</summary>
+    public bool Opening { get; init; }
+    /// <summary>Play the registered closing video at the end.</summary>
+    public bool Closing { get; init; }
+    /// <summary>~1 s tsukkomi cards at scene changes.</summary>
+    public bool SceneCards { get; init; }
 }
 
 public sealed record Job

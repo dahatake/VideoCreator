@@ -283,7 +283,11 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public async Task<(EditPlan plan, List<string> notes)> BuildPlanAsync(Candidate c, Transcript tr, SignalSet sig, Preset p, SourceAsset main, IReadOnlyList<SourceAsset> assets, string projectId, Job job,
         IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null)
-        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part), ct);
+        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKit), ct);
+
+    public const string BrandKitId = "default";
+    /// <summary>The channel's registered opening / closing / card files (one per installation).</summary>
+    public BrandKit? BrandKit => s.Store.Get<BrandKit>(Kinds.BrandKit, BrandKitId);
 
     /// <summary>FR-SWT-01: cameras without a user-set speaker get one from their own microphone, when the evidence is clear.</summary>
     async Task AutoAssignSpeakersAsync(List<SourceAsset> used, SourceAsset main, Transcript tr, List<string> warnings, CancellationToken ct)
@@ -411,13 +415,13 @@ public sealed class PipelineRunner(PipelineServices s)
             }
             var srt = Path.ChangeExtension(file, ".srt"); await File.WriteAllTextAsync(srt, AssWriter.Srt(plan), new UTF8Encoding(false), ct); outputs["srt"] = srt;
             var epj = Path.ChangeExtension(file, ".editplan.json"); await File.WriteAllTextAsync(epj, Json.Serialize(plan, true), ct); outputs["editplan"] = epj;
-            var thumbs = await s.Renderer.ThumbnailsAsync(file, plan.Duration, Path.ChangeExtension(file, null), ct);
+            var thumbs = await s.Renderer.ThumbnailsAsync(file, plan.Duration, Path.ChangeExtension(file, null), ct, t => InsertMap.ToFinal(plan, t));
             for (int i = 0; i < thumbs.Count; i++) outputs[$"thumb{i + 1}"] = thumbs[i];
             var ass = Path.ChangeExtension(file, ".ass"); if (File.Exists(ass)) outputs["ass"] = ass;
         }
         var render = new Render
         {
-            Id = renderId, EditplanId = plan.EditplanId, Kind = preview ? "preview" : "final", Path = file, Duration = plan.Duration,
+            Id = renderId, EditplanId = plan.EditplanId, Kind = preview ? "preview" : "final", Path = file, Duration = plan.TotalDuration,
             FfmpegVersion = await s.Ff.VersionAsync(), Commands = outp.Commands, Qa = qa, Outputs = outputs,
         };
         if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
@@ -491,13 +495,14 @@ YouTube の「AI use」は通常「いいえ」で問題ありません（YouTub
             return m.Success && !m.Groups[2].Value.Contains(se.Label, StringComparison.Ordinal) ? $"{m.Groups[1].Value}{label}{m.Groups[2].Value}" : l;
         }));
         if (se.SeriesTitle.Length > 0) prefixed += $"\n{titles.Split('\n').Length + 1}. {label}{se.SeriesTitle}";
-        var chapters = SeriesPlanner.YouTubeChapters(se.Chapters, plan.Duration);
+        double total = plan.TotalDuration;
+        var chapters = SeriesPlanner.YouTubeChapters(QaEngine.FinalChapters(plan), total);
         var chapterText = chapters != null ? string.Join("\n", chapters)
             : "（チャプターが3つ未満、または10秒未満のため、YouTube のチャプター条件を満たしません。チャプターは付けずに投稿してください）";
         var links = string.Join("\n", se.Labels.Select((l, i) => i + 1 == se.Part ? $"{l}: この動画" : $"{l}: （ここに{l}の URL を記入）"));
-        var length = plan.Duration > 180
-            ? $"長さ {SeriesPlanner.Stamp(plan.Duration, plan.Duration)}。縦型でも3分を超えるため、YouTube ではショートではなく通常の動画として扱われます（YouTube ヘルプ「Understand three-minute YouTube Shorts」）。TikTok のアップロードは60分まで"
-            : $"長さ {SeriesPlanner.Stamp(plan.Duration, plan.Duration)}。3分以内の縦型動画は YouTube でショートとして扱われます";
+        var length = total > 180
+            ? $"長さ {SeriesPlanner.Stamp(total, total)}。縦型でも3分を超えるため、YouTube ではショートではなく通常の動画として扱われます（YouTube ヘルプ「Understand three-minute YouTube Shorts」）。TikTok のアップロードは60分まで"
+            : $"長さ {SeriesPlanner.Stamp(total, total)}。3分以内の縦型動画は YouTube でショートとして扱われます";
         return $"""
 # 投稿用メタデータ案 {label}（{se.Part}/{se.Parts}。AI による提案。投稿前に内容を確認してください）
 

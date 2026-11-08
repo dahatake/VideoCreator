@@ -28,6 +28,7 @@ public sealed class Runtime
 
     public AudioLibrary Audio { get; }
     public FaceService Faces { get; }
+    public string UpscaleModel { get; }
 
     public Runtime(AppOptions o, ILogger<Runtime> log)
     {
@@ -37,6 +38,7 @@ public sealed class Runtime
         Ff.Log = s => _log.LogDebug("{Cmd}", s);
         Audio = new AudioLibrary(Ff, Path.Combine(o.ResolvedDataDir, "audio"));
         Faces = new FaceService(Ff, o.FaceModel ?? Path.Combine(FindUp(Path.Combine("tools", "models")) ?? "", "ultraface.onnx"));
+        UpscaleModel = o.UpscaleModel ?? Path.Combine(FindUp(Path.Combine("tools", "models")) ?? "", SuperResolution.ModelFile);
         Store = new Store(Path.Combine(o.ResolvedDataDir, "videocreator.db"));
         var presetsDir = o.PresetsDir ?? FindUp("presets") ?? throw new DirectoryNotFoundException("presets folder not found");
         Presets = PresetStore.LoadDirectory(presetsDir).ToDictionary(p => p.Id);

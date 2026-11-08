@@ -4,6 +4,7 @@
   - FFmpeg (BtbN static GPL build, includes libass/libx264) for the current architecture
   - M PLUS 1p (SIL Open Font License) for Japanese telops
   - UltraFace RFB-320 ONNX face detector (MIT) for face-following vertical crops
+  - Real-ESRGAN realesr-animevideov3 ONNX (BSD-3-Clause) for upscaling low-resolution opening/closing videos
 #>
 param([switch]$Force)
 $ErrorActionPreference = 'Stop'
@@ -46,6 +47,13 @@ if ($Force -or -not (Test-Path $model)) {
     Write-Host 'Downloading ultraface.onnx (face detector, MIT)...'
     Invoke-WebRequest 'https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx' -OutFile $model -UseBasicParsing
     if ((Get-FileHash $model).Hash -ne '34CD7E60AEFF28744C657DE7A3DC64E872D506741DE66987F3426F2B79F88017') { Remove-Item $model; throw 'ultraface.onnx hash mismatch' }
+}
+# Learned 4x upscaler for low-resolution opening/closing videos: Real-ESRGAN realesr-animevideov3 (BSD-3-Clause, Xintao Wang), ONNX export
+$sr = Join-Path $modelDir 'realesr-animevideov3.onnx'
+if ($Force -or -not (Test-Path $sr)) {
+    Write-Host 'Downloading realesr-animevideov3.onnx (upscaler, BSD-3-Clause)...'
+    Invoke-WebRequest 'https://huggingface.co/skillsafe-ai/realesr-animevideov3/resolve/main/model.onnx' -OutFile $sr -UseBasicParsing
+    if ((Get-FileHash $sr).Hash -ne '78BAA685A1A92CAC6E14AB2AF2A8AD0EF56FA48629563B1414E3A7ACC54D86E2') { Remove-Item $sr; throw 'realesr-animevideov3.onnx hash mismatch' }
 }
 
 & (Join-Path $ffDir 'bin/ffmpeg.exe') -hide_banner -version | Select-Object -First 1

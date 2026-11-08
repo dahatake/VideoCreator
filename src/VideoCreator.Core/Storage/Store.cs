@@ -84,5 +84,5 @@ public sealed class Store : IDisposable
 
 public static class Kinds
 {
-    public const string Project = "project", Asset = "asset", Rights = "rights", Job = "job", Candidate = "candidate", EditPlan = "editplan", Render = "render", Bgm = "bgm";
+    public const string Project = "project", Asset = "asset", Rights = "rights", Job = "job", Candidate = "candidate", EditPlan = "editplan", Render = "render", Bgm = "bgm", BrandKit = "brandkit";
 }

@@ -220,14 +220,15 @@ function confirmDelete(p, opener) {
 
 // ---------------- project: assets + rights + pattern + generate ----------------
 async function project(id) {
-  const [d, presets, bgmList] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`)]);
+  const [d, presets, bgmList, kitView] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit')]);
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
   const notReady = !assets.length ? '素材を追加してください' : !allRights ? '権利確認にチェックしてください' : '';
   let selected = sessionStorage.getItem(`preset:${id}`) ?? 'P4';
   const saved = JSON.parse(sessionStorage.getItem(`opts:${id}`) ?? '{}');
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15 };
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+    opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
   if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
@@ -332,6 +333,34 @@ async function project(id) {
               <div><fluent-button type="submit" size="small">BGM を追加</fluent-button></div><div id="bgmMsg"></div>
             </form></details>
         </div>
+        <div class="stack" id="packBox">
+          <h3>オープニング・クロージング・場面転換</h3>
+          ${(() => {
+            const sign = (v, d) => v == null || Number.isNaN(v) ? '—' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(d)}`;
+            const enh = (x) => {
+              const e = x?.enhancement; if (!e) return '';
+              const g = e.gain ? `この動画での実測: VMAF ${sign(e.gain.vmaf, 1)}・XPSNR ${sign(e.gain.xpsnr, 2)} dB` : '';
+              return e.path ? `<br><span class="caption pass">→ ${e.width}×${e.height} に高画質化済み（${esc(e.device)}・${Math.round(e.seconds)}秒。${esc(g)}）</span>` : `<br><span class="caption">→ ${esc(e.note)}（${esc(g)}）</span>`;
+            };
+            const f = (x) => x ? `${esc(x.path.split(/[\\/]/).pop())}（${x.width}×${x.height}・${Number(x.duration).toFixed(1)}秒${x.upscale > 1.05 && !x.enhancement?.path ? `・${x.upscale}倍に拡大` : ''}）${enh(x)}` : '未登録';
+            const pending = [kitView.opening, kitView.closing].filter(x => x?.needs && !x.enhancement?.path);
+            return `<p class="caption" id="kitInfo">オープニング: ${f(kitView.opening)}<br>クロージング: ${f(kitView.closing)}<br>カード画像: ${kitView.card_images ? `${kitView.card_images} 枚` : 'なし（ツッコミの文字カード）'}</p>
+              <div id="enhStatus" aria-live="polite"></div>
+              ${pending.length && kitView.enhance?.state !== 'running' && !pending.every(x => x.enhancement) ? `<p class="caption warnc">1080×1920 より小さい動画は書き出し時に拡大されて少しぼやけます。<fluent-button size="small" id="enhanceBtn">いま高画質化する</fluent-button></p>` : ''}`;
+          })()}
+          ${field('オープニングを入れる（先出しの見どころのあと）', `<fluent-switch slot="input" id="openingSw" ${opts.opening ? 'checked' : ''} ${kitView.opening ? '' : 'disabled'}></fluent-switch>`)}
+          ${field('クロージングを入れる（最後）', `<fluent-switch slot="input" id="closingSw" ${opts.closing ? 'checked' : ''} ${kitView.closing ? '' : 'disabled'}></fluent-switch>`)}
+          ${field('場面が変わる所に約1秒の「ツッコミ」カードを入れる（AI の文は承認するまで書き出せません）', `<fluent-switch slot="input" id="cardsSw" ${opts.scene_cards ? 'checked' : ''}></fluent-switch>`)}
+          <details ${kitView.registered ? '' : 'open'}><summary class="caption">${kitView.registered ? '登録し直す・解除する' : 'オープニング・クロージングを登録する'}</summary>
+            <form id="kitForm" class="stack" style="margin-top:8px">
+              <p class="caption">フォルダーのフルパスを指定すると、ファイル名に Opening / Closing を含む動画と、PNG / JPG 画像（カード用）を読み込みます。縦型（9:16）と横型（16:9）の両方があれば、出力に合う方を自動で使います。登録はすべてのプロジェクトで共通です。</p>
+              <fluent-text-input id="kitPath" placeholder="C:\\Work\\HubRadio\\OpeningClosing" value="${esc(kitView.kit?.sources?.[0] ?? '')}" aria-label="オープニング・クロージングのフォルダー"></fluent-text-input>
+              <label class="caption">カードの長さ（秒） <input class="native" type="number" id="kitCardSec" min="0.5" max="3" step="0.1" value="${esc(kitView.kit?.card_sec ?? 1)}" style="width:72px"></label>
+              ${field('1080×1920 より小さい動画を高画質化する（登録時に一度だけ。AI の超解像で細部を補い、この動画で実測して元に忠実になる場合だけ使います。GPU で 1 本 1〜2 分）', `<fluent-checkbox slot="input" id="kitUpscale" ${kitView.kit?.upscale === false ? '' : 'checked'}></fluent-checkbox>`)}
+              ${field('これらの動画・画像（ロゴ・音楽・イラストを含む）を使う権利を自分が持っている、または許諾を得ています', '<fluent-checkbox slot="input" id="kitRights"></fluent-checkbox>')}
+              <div class="row"><fluent-button type="submit" size="small">登録</fluent-button>${kitView.registered ? '<fluent-button size="small" id="kitClear" type="button">登録を解除</fluent-button>' : ''}</div><div id="kitMsg"></div>
+            </form></details>
+        </div>
         </div>
         <div class="col-foot">
           ${estimate ? `<p class="caption" id="costLine"></p>` : ''}
@@ -415,6 +444,41 @@ async function project(id) {
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; saveOpts(); });
+  $('#openingSw').addEventListener('change', (e) => { opts.opening = e.target.checked; saveOpts(); });
+  $('#closingSw').addEventListener('change', (e) => { opts.closing = e.target.checked; saveOpts(); });
+  $('#cardsSw').addEventListener('change', (e) => { opts.scene_cards = e.target.checked; saveOpts(); });
+  $('#kitForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!$('#kitRights').checked) { $('#kitMsg').innerHTML = info('使う権利の確認にチェックしてください', 'warning'); $('#kitRights').focus(); return; }
+    $('#kitMsg').innerHTML = '<fluent-spinner size="small"></fluent-spinner> 読み込んで音量を測っています…';
+    try {
+      const r = await api('/api/brandkit', { method: 'PUT', body: { paths: [$('#kitPath').value ?? ''], rights_confirmed: true, card_sec: Number($('#kitCardSec').value) || 1, upscale: !!$('#kitUpscale').checked } });
+      opts.opening = !!r.opening; opts.closing = !!r.closing; saveOpts();
+      sessionStorage.setItem('kitProblems', JSON.stringify(r.problems ?? []));
+      router();
+    } catch (e) { $('#kitMsg').innerHTML = errorBar(e); }
+  });
+  $('#kitClear')?.addEventListener('click', async () => {
+    try { await api('/api/brandkit', { method: 'DELETE' }); opts.opening = false; opts.closing = false; saveOpts(); router(); } catch (e) { $('#kitMsg').innerHTML = errorBar(e); }
+  });
+  { const probs = JSON.parse(sessionStorage.getItem('kitProblems') ?? '[]'); sessionStorage.removeItem('kitProblems'); if (probs.length) { $('#kitForm').closest('details').open = true; $('#kitMsg').innerHTML = probs.map(p => info(p, 'warning')).join(''); } }
+  $('#enhanceBtn')?.addEventListener('click', async () => { try { await api('/api/brandkit/enhance', { method: 'POST' }); router(); } catch (e) { $('#kitMsg').innerHTML = errorBar(e); } });
+  // registration-time upscale runs in the background: show its progress, then redraw with the measured result
+  const showEnh = (s) => {
+    const el = $('#enhStatus'); if (!el || !s) return;
+    if (s.state === 'running') el.innerHTML = `<p class="caption">高画質化しています: ${esc(s.message)}</p><fluent-progress-bar max="100" value="${Math.round((s.progress ?? 0) * 100)}" aria-label="高画質化の進み具合"></fluent-progress-bar>`;
+    else if (s.state === 'failed') el.innerHTML = info(s.message, 'warning');
+    else el.innerHTML = '';
+  };
+  showEnh(kitView.enhance);
+  if (kitView.enhance?.state === 'running') {
+    const t = setInterval(async () => {
+      let v; try { v = await api('/api/brandkit'); } catch { return; }
+      if (!document.body.contains($('#enhStatus'))) { clearInterval(t); return; }
+      if (v.enhance?.state === 'running') showEnh(v.enhance); else { clearInterval(t); router(); }
+    }, 2000);
+    const prev = cleanup; cleanup = () => { clearInterval(t); prev?.(); };
+  }
   $('#bgmForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const f = $('#bgmFile').files[0];
@@ -615,6 +679,12 @@ async function review(epId) {
   let previewUrl = me?.preview_url, stale = false;
   const typeLabel = { caption: '字幕', emphasis: '強調', hook: 'フック', headline: '見出し', tsukkomi: 'ツッコミ', sfx: '擬音', counter: 'カウンター' };
   const width = (s) => [...s].reduce((a, c) => a + (c.charCodeAt(0) < 0x2e80 || (c.charCodeAt(0) >= 0xff61 && c.charCodeAt(0) <= 0xffdc) ? 0.5 : 1), 0);
+  // body time → time in the rendered video (mirrors Planning.InsertMap: inserts push later content back)
+  const kindOrder = { opening: 0, card: 1, closing: 2 };
+  const active = () => (plan.inserts ?? []).filter(i => i.enabled && i.duration > 0).sort((a, b) => a.at - b.at || kindOrder[a.kind] - kindOrder[b.kind]);
+  const finalT = (t, end = false) => t + active().filter(i => i.at < t - 1e-3 || (!end && i.at <= t + 1e-3)).reduce((a, i) => a + i.duration, 0);
+  const insertStart = (ins) => { let off = 0; for (const i of active()) { if (i.id === ins.id) break; off += i.duration; } return ins.at + off; };
+  const insertName = { opening: 'オープニング', closing: 'クロージング', card: '場面転換カード' };
 
   const draw = () => {
     const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail');
@@ -625,9 +695,20 @@ async function review(epId) {
       <div class="grid cols-review" style="align-items:start">
         <section class="card stack">
           ${previewUrl ? phone(previewUrl + (stale ? '' : `?v=${Date.now()}`), 'pv') : ''}
-          ${stale ? info('区間を変えたため、プレビューが古くなっています。', 'warning') : ''}
+          ${stale ? info('変更があったため、プレビューが古くなっています。', 'warning') : ''}
           <fluent-button id="repreview" ${stale ? 'appearance="primary"' : ''}>プレビューを更新</fluent-button>
-          <p class="caption">${plan.series ? `${esc(plan.series.label)}（${plan.series.part}/${plan.series.parts}）· ` : ''}長さ ${(() => { const d = plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0); return d >= 180 ? fmt(d) : `${d.toFixed(1)} 秒`; })()} · カット ${plan.timeline.length} · テロップ ${plan.telops.filter(t => t.enabled).length}</p>
+          <p class="caption">${plan.series ? `${esc(plan.series.label)}（${plan.series.part}/${plan.series.parts}）· ` : ''}長さ ${(() => { const d = plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0); const all = d + active().reduce((a, i) => a + i.duration, 0); const f = (x) => x >= 180 ? fmt(x) : `${x.toFixed(1)} 秒`; return all - d > 0.01 ? `本編 ${f(d)}・全体 ${f(all)}` : f(d); })()} · カット ${plan.timeline.length} · テロップ ${plan.telops.filter(t => t.enabled).length}</p>
+          ${(plan.inserts ?? []).length ? `<h3>オープニング・場面転換</h3>
+          <p class="caption">カードの文字は 1 秒で読める短さに（20 字まで）。AI が考えた文は「承認」するまで書き出せません。変更後は「プレビューを更新」で確かめられます。</p>
+          ${(plan.inserts ?? []).map(i => `<div class="row insert-row" style="align-items:center;gap:8px">
+            <fluent-badge appearance="tint" color="${i.kind === 'card' ? 'warning' : 'brand'}">${esc(insertName[i.kind] ?? i.kind)}</fluent-badge>
+            <span class="caption">${i.enabled ? `${insertStart(i).toFixed(1)}秒から` : '（使わない）'} ${Number(i.duration).toFixed(1)}秒</span>
+            ${i.kind === 'card'
+              ? `${i.path ? `<span class="caption">画像 ${esc(i.path.split(/[\\/]/).pop())}</span>` : ''}<input class="native card-text" data-id="${esc(i.id)}" value="${esc(i.text)}" maxlength="20" size="14" aria-label="${esc(insertName[i.kind])} ${esc(i.id)} の文字" placeholder="${i.path ? '（文字なし）' : ''}">
+                 ${i.text_source === 'ai' ? '<span class="caption">AI</span>' : ''}${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">承認</fluent-button>`}`
+              : `<span class="caption">${esc((i.path ?? '').split(/[\\/]/).pop())}</span>`}
+            <fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${esc(insertName[i.kind] ?? i.kind)} ${esc(i.id)} を使う"></fluent-switch></div>`).join('')}
+          ${(plan.inserts ?? []).some(i => i.kind === 'card' && i.text && !i.approved) ? '<fluent-button size="small" id="approveCards">カードをすべて承認</fluent-button>' : ''}` : ''}
           ${plan.series?.chapters?.length ? `<details><summary class="caption">構成・チャプター（${plan.series.chapters.length}）</summary><ul class="notes">${plan.series.chapters.map(ch => `<li>${fmt(ch.start)} ${esc(ch.title)}</li>`).join('')}</ul></details>` : ''}
           <details><summary class="caption">カット一覧（映像・速度）</summary>
             <ul class="notes">${plan.timeline.map(c => `<li>${esc(c.clip_id)} ${esc(assetName(c.asset_id))}${c.role !== 'body' ? `（${esc(roleName[c.role] ?? c.role)}）` : ''} ${((c.src_out - c.src_in) / (c.speed || 1)).toFixed(1)}秒${c.speed && c.speed !== 1 ? ` ×${c.speed}倍速` : ''}${c.reframe?.mode === 'face' ? ' · 顔を追う' : ''}</li>`).join('')}</ul></details>
@@ -657,7 +738,7 @@ async function review(epId) {
             ${plan.telops.map(t => {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
               return `<tr class="${t.enabled ? '' : 'off'}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
-                <td class="caption">${t.start.toFixed(1)}–${t.end.toFixed(1)}</td>
+                <td class="caption">${finalT(t.start).toFixed(1)}–${finalT(t.end, true).toFixed(1)}</td>
                 <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}"></td>
                 <td class="${w > maxW && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
                 <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td>
@@ -680,6 +761,10 @@ async function review(epId) {
     $$('fluent-switch[data-type]').forEach(sw => sw.addEventListener('change', () => patch([{ op: 'set_type_enabled', type: sw.dataset.type, enabled: sw.checked }])));
     $$('[data-approve]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve', target: b.dataset.approve }])));
     $('#approveAll')?.addEventListener('click', () => patch([{ op: 'approve_all_tsukkomi' }]));
+    $$('input.card-text').forEach(inp => inp.addEventListener('change', () => { stale = true; patch([{ op: 'replace_card_text', target: inp.dataset.id, text: inp.value }]); }));
+    $$('fluent-switch.ins-en').forEach(sw => sw.addEventListener('change', () => { stale = true; patch([{ op: 'set_insert_enabled', target: sw.dataset.id, enabled: sw.checked }]); }));
+    $$('[data-approve-card]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve_card', target: b.dataset.approveCard }])));
+    $('#approveCards')?.addEventListener('click', () => patch([{ op: 'approve_all_cards' }]));
     $('#bgmSel')?.addEventListener('change', (e) => { patch([{ op: 'set_bgm', target: e.target.value }]); stale = true; });
     $('#sfxSw')?.addEventListener('change', (e) => { patch([{ op: 'set_sfx', enabled: e.target.checked }]); stale = true; });
     $$('[data-adj]').forEach(b => b.addEventListener('click', () => { const [edge, delta] = b.dataset.adj.split(':'); patch([{ op: 'adjust', edge, delta: Number(delta) }]); }));

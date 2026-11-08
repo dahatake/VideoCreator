@@ -115,7 +115,7 @@ if ($sdk) {
 
 # ---------------------------------------------------------------- 2. FFmpeg / fonts / face model
 Step 'FFmpeg, fonts, face model (tools\)'
-$needed = 'ffmpeg\bin\ffmpeg.exe', 'ffmpeg\bin\ffprobe.exe', 'fonts\MPLUS1p-Bold.ttf', 'fonts\MPLUS1p-ExtraBold.ttf', 'models\ultraface.onnx'
+$needed = 'ffmpeg\bin\ffmpeg.exe', 'ffmpeg\bin\ffprobe.exe', 'fonts\MPLUS1p-Bold.ttf', 'fonts\MPLUS1p-ExtraBold.ttf', 'models\ultraface.onnx', 'models\realesr-animevideov3.onnx'
 $missing = @($needed | Where-Object { -not (Test-Path (Join-Path $tools $_)) })
 if ($missing.Count -and -not $CheckOnly) {
     try { & (Join-Path $PSScriptRoot 'get-tools.ps1') | Out-Host } catch { Write-Host "  get-tools.ps1 failed: $_" -ForegroundColor Red }
@@ -132,7 +132,7 @@ else {
     $ffv = $ffOut | Select-Object -First 1
     if ($ffCode -ne 0 -or -not $ffv) { Add-Result 'FFmpeg' FAIL "ffmpeg.exe does not run (exit $ffCode)" }
     else { Add-Result 'FFmpeg' $(if ($fresh) { 'INSTALLED' } else { 'OK' }) ($ffv -replace '^ffmpeg version (\S+).*', '$1') }
-    Add-Result 'Fonts + face model' $(if ($fresh) { 'INSTALLED' } else { 'OK' }) 'M PLUS 1p, ultraface.onnx'
+    Add-Result 'Fonts + face model' $(if ($fresh) { 'INSTALLED' } else { 'OK' }) 'M PLUS 1p, ultraface.onnx, realesr-animevideov3.onnx'
 }
 
 # ---------------------------------------------------------------- 3/4. Azure

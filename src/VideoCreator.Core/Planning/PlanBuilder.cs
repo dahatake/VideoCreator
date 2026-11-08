@@ -9,7 +9,7 @@ public sealed record PlanRequest(
     Candidate Candidate, Transcript Transcript, SignalSet Signals, Preset Preset,
     IReadOnlyList<SourceAsset> Assets, SourceAsset Master, string ProjectId, Job Job,
     IReadOnlyDictionary<string, List<FaceSample>> Faces, BgmTrack? Bgm, IHighlightSelector? Llm,
-    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null);
+    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null, BrandKit? Kit = null);
 
 /// <summary>Candidate → EditPlan. Dispatches on preset.Planner, then reframes, adds telops, BGM and SFX (PRD FR-SOL, FR-SWT, FR-SPD, FR-BGM, FR-AUD).</summary>
 public static class PlanBuilder
@@ -139,11 +139,23 @@ public static class PlanBuilder
             BgmPhase = p.Planner == "beat" ? r.Bgm?.Phase ?? 0 : 0,
             SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = bgmId == null ? [] : mutes,
         };
+        var canvas = new Canvas();
+        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
+        if (r.Llm != null && inserts.Any(i => i.Kind == "card" && i.Path == null))
+        {
+            try
+            {
+                var src = CandidateValidator.TextOf(tr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
+                int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct);
+                if (ai > 0) notes.Add($"場面転換カード {ai} 枚のツッコミを AI が提案しました（承認するまで書き出せません）");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("場面転換カードのツッコミの生成に失敗しました（定型の文を使います）: " + ex.Message); }
+        }
         var plan = new EditPlan
         {
-            EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Timeline = clips, Telops = telops, Audio = audio,
+            EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
-            Series = series,
+            Series = series, Inserts = inserts,
         };
         return (plan, notes);
     }
