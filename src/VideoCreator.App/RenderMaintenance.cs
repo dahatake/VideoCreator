@@ -5,6 +5,20 @@ namespace VideoCreator.App;
 
 public static class RenderMaintenance
 {
+    public static int MarkLegacyPreviewChecksPending(Store store)
+    {
+        int changed = 0;
+        foreach (var render in store.List<Render>(Kinds.Render).Where(r => r.Kind == "preview"))
+        {
+            var checks = render.Qa.Select(q => q.Stage == null && q.CheckId is "H-02" or "H-03" or "H-04"
+                ? q with { Status = QaStatus.NotRun, Stage = "final", Measured = "未実施（書き出し時に検査）" } : q).ToList();
+            if (checks.SequenceEqual(render.Qa)) continue;
+            store.Put(Kinds.Render, render.Id, render.EditplanId, render with { Qa = checks });
+            changed++;
+        }
+        return changed;
+    }
+
     /// <summary>
     /// Older builds stored every final export twice (the runner's internal id + the export id the UI polls).
     /// Keeps the most recently written doc per (edit plan, output file) — the export id, which also carries the metadata output —

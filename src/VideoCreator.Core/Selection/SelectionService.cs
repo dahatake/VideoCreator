@@ -153,6 +153,7 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
         var anchors = sig.Events.OrderByDescending(e => e.Strength).Select(e => e.T).ToList();
         if (anchors.Count < PresentCount)
             for (double t = half; t < duration - half; t += half) anchors.Add(t);   // evenly spaced as last resort
+        if (anchors.Count == 0 && duration >= p.Target.Min) anchors.Add(duration / 2 + 2);
         var list = new List<Candidate>(); int n = 0;
         foreach (var a in anchors)
         {

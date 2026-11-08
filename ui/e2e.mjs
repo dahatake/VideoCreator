@@ -51,7 +51,12 @@ try {
   const jobId = page.url().split('/').pop();
   const cands = (await api(`/api/jobs/${jobId}/candidates`)).body;
   check(cands.every(c => c.candidate.reason && c.candidate.scores), 'every candidate has a reason and 4-axis scores (FR-SEL-04, US-02)');
-  check(cands.every(c => (c.preview?.qa ?? []).filter(q => q.check_id.startsWith('H-')).every(q => q.status === 'pass')), 'every preview passes hard QA');
+  check(cands.every(c => {
+    const qa = c.preview?.qa ?? [];
+    const plan = qa.filter(q => q.check_id.startsWith('H-') && q.stage === 'plan');
+    return plan.length >= 6 && plan.every(q => q.status === 'pass')
+      && ['H-02', 'H-03', 'H-04'].every(id => qa.some(q => q.check_id === id && q.stage === 'final' && q.status === 'not_run'));
+  }), 'plan hard QA passes; final-only preview checks are explicitly not_run');
 
   await click(page.locator('article.card').first().locator('fluent-anchor-button'));
   check(clicks <= 5, `UX-01: ${clicks} clicks from file selection to a candidate (≤5)`);

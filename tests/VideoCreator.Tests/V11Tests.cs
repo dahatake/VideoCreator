@@ -174,7 +174,7 @@ public class V11Tests : IAsyncLifetime
         Assert.All(plan.Timeline.Where(c => c.Role == "body"), c => Assert.True(c.Length >= p.Cut.MinShotSec - 0.01, $"{c.ClipId} {c.Length:F2}s; timeline: " + string.Join(" ", plan.Timeline.Select(x => $"{x.ClipId}[{x.AssetId} {x.Role} m{x.MasterIn:F1}-{x.MasterOut:F1}]"))));
         var ctx = new QaContext(plan, p, Tr, ["a1", "a2", "a3"], [], assets);
         var qa = QaEngine.PlanChecks(ctx);
-        Assert.Equal(QaStatus.Pass, qa.First(q => q.CheckId == "S-09").Status);
+        Assert.Equal(QaStatus.Pass, qa.First(q => q.CheckId == "S-13").Status);
         Assert.All(qa.Where(q => q.Hard), q => Assert.True(q.Status == QaStatus.Pass, $"{q.CheckId} {q.Measured}"));
 
         var outp = await new Renderer(Ff).RenderAsync(plan, p, assets.ToDictionary(a => a.Id), Path.Combine(_dir, "p7.mp4"), preview: true, Ct);

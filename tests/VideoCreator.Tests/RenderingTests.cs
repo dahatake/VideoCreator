@@ -36,7 +36,7 @@ public class RenderingTests : IAsyncLifetime
         var plan = new EditPlan
         {
             EditplanId = "ep", ProjectId = "p", Preset = p.Ref, Timeline = res.Clips,
-            Telops = TelopBuilder.Build(res.Clips, Tr, p, "あと2個で失敗", "100円足りない", ["300円の商品"], []),
+            Telops = TelopBuilder.Build(res.Clips, Tr, p, "あと2個", "300円の商品", ["300円の商品"], []),
             Audio = new AudioSpec { Master = "a1" },
         };
         var assets = new Dictionary<string, SourceAsset> { ["a1"] = new() { Id = "a1", ProjectId = "p", Path = file, Sha256 = "x", Media = media } };
@@ -58,17 +58,47 @@ public class RenderingTests : IAsyncLifetime
         Assert.Contains("aac,48000,2", probe.StdOut);
     }
 
-    [Fact] // AT-03: same EditPlan twice -> identical video stream
+    [Fact] // AT-03: compare decoded frames, not encoded packets
     public async Task Rendering_is_deterministic()
     {
         var (plan, assets, ctx) = Build(_landscape, 1280, 720);
         var r = new Renderer(Ff);
         var a = await r.RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "det_a.mp4"), false, TestContext.Current.CancellationToken);
         var b = await r.RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "det_b.mp4"), false, TestContext.Current.CancellationToken);
-        async Task<string> Hash(string f) => (await Ff.RunFfmpegAsync(["-v", "error", "-i", f, "-map", "0:v", "-c", "copy", "-f", "hash", "-hash", "sha256", "-"], TestContext.Current.CancellationToken)).StdOut.Trim();
+        async Task<string> Hash(string f) => (await Ff.RunFfmpegCheckedAsync(["-v", "error", "-i", f, "-map", "0:v", "-f", "framemd5", "-"], TestContext.Current.CancellationToken)).StdOut.Trim();
         var ha = await Hash(a.Path);
-        Assert.StartsWith("SHA256=", ha);
+        Assert.Contains("#hash: MD5", ha);
+        Assert.Contains("\n0,", ha);
         Assert.Equal(ha, await Hash(b.Path));
+        var pa = await RenderProvenance.CaptureAsync(Ff, plan, ctx.Preset, [_landscape], Path.ChangeExtension(a.Path, ".ass"), TestContext.Current.CancellationToken);
+        var pb = await RenderProvenance.CaptureAsync(Ff, plan, ctx.Preset, [_landscape], Path.ChangeExtension(b.Path, ".ass"), TestContext.Current.CancellationToken);
+        Assert.Equal(VideoCreator.Json.Serialize(pa), VideoCreator.Json.Serialize(pb));
+        Assert.Equal(EditPlanFingerprint.Of(plan), pa.PlanHash);
+        Assert.Equal(await RenderProvenance.HashFileAsync(_landscape, TestContext.Current.CancellationToken), Assert.Single(pa.SourceSha256, f => f.Path == _landscape).Sha256);
+        Assert.Equal(64, pa.FfmpegSha256.Length);
+        Assert.Equal(64, pa.BuildconfSha256.Length);
+        Assert.Equal(64, pa.PresetSha256.Length);
+        Assert.NotEmpty(pa.FontSha256);
+        Assert.Contains("libass API version:", pa.TextLibraryInfo);
+        Assert.Contains("HarfBuzz", pa.TextLibraryInfo);
+        Assert.Equal(Ff.Threads, pa.EncoderThreads);
+    }
+
+    [Fact]
+    public async Task Preview_marks_final_only_checks_as_not_run_and_binds_plan_checks_to_the_plan()
+    {
+        var (plan, assets, ctx) = Build(_landscape, 1280, 720);
+        var output = await new Renderer(Ff).RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "preview.mp4"), true, TestContext.Current.CancellationToken);
+        var qa = await new QaEngine(Ff).RunAsync(ctx, output.Path, true, Path.Combine(_dir, "qa_preview"), TestContext.Current.CancellationToken);
+        Assert.All(qa, q => Assert.Equal(EditPlanFingerprint.Of(plan), q.PlanHash));
+        Assert.All(qa.Where(q => q.Hard && q.Stage == "plan"), q => Assert.Equal(QaStatus.Pass, q.Status));
+        foreach (var id in new[] { "H-02", "H-03", "H-04" })
+        {
+            var check = Assert.Single(qa, q => q.CheckId == id);
+            Assert.Equal(QaStatus.NotRun, check.Status);
+            Assert.Equal("final", check.Stage);
+        }
+        Assert.Contains("\"not_run\"", VideoCreator.Json.Serialize(qa));
     }
 
     [Fact] // AT-11: vertical source is not blurred/letterboxed

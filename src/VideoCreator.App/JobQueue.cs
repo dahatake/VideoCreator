@@ -34,7 +34,7 @@ public sealed class JobEvents
 
 /// <param name="Progress">Measured 0..1 of the whole export (null while queued).</param>
 /// <param name="Step">What is running right now, e.g. the ffmpeg pass or QA.</param>
-public sealed record ExportStatus(string RenderId, string EditplanId, string State, string? Message = null, List<QaResult>? Failures = null, string? ErrorCode = null, double? Progress = null, string? Step = null, DateTimeOffset? QueuedAt = null);
+public sealed record ExportStatus(string RenderId, string EditplanId, string State, string? Message = null, List<QaResult>? Failures = null, string? ErrorCode = null, double? Progress = null, string? Step = null, DateTimeOffset? QueuedAt = null, string? PlanHash = null);
 
 /// <summary>Progress of an on-demand preview re-render (review screen); <paramref name="Running"/> is false when none is in flight.</summary>
 public sealed record PreviewProgress(bool Running, double Progress, string? Step);
@@ -79,7 +79,7 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
 
     public void EnqueueExport(string renderId, EditPlan plan, int rank)
     {
-        Exports[renderId] = new ExportStatus(renderId, plan.EditplanId, "queued", "待機中", QueuedAt: DateTimeOffset.UtcNow);
+        Exports[renderId] = new ExportStatus(renderId, plan.EditplanId, "queued", "待機中", QueuedAt: DateTimeOffset.UtcNow, PlanHash: EditPlanFingerprint.Of(plan));
         _work.Writer.TryWrite(async ct =>
         {
             // queued → rendering only if nobody cancelled it meanwhile (CancelExport makes the opposite transition atomically)
@@ -101,7 +101,16 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
                     await File.WriteAllTextAsync(mdFile, md, ct);
                     render = render with { Outputs = new Dictionary<string, string>(render.Outputs) { ["metadata"] = mdFile } };
                 }
-                store.Put(Kinds.Render, renderId, plan.EditplanId, render);
+                try
+                {
+                    store.Atomic(() =>
+                    {
+                        runner.EnsureCurrentPlan(plan);
+                        store.Put(Kinds.Render, renderId, plan.EditplanId, render);
+                        return true;
+                    });
+                }
+                catch (PipelineException ex) when (ex.Code == "E-PLAN-STALE") { runner.Quarantine(render); throw; }
                 Exports[renderId] = Exports[renderId] with { State = "done", Message = "書き出しが完了しました", Progress = 1, Step = null };
             }
             catch (QaBlockedException qa) { Exports[renderId] = Exports[renderId] with { State = "failed", Message = qa.Message, Failures = qa.Failures, ErrorCode = "E-QA-HARDFAIL" }; }

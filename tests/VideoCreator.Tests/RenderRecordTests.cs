@@ -40,7 +40,7 @@ public sealed class RenderRecordTests : IDisposable
         var plan = new EditPlan
         {
             EditplanId = "ep_rr", ProjectId = project.Id, Preset = p.Ref, Timeline = res.Clips,
-            Telops = TelopBuilder.Build(res.Clips, tr, p, "あと2個で失敗", "100円足りない", ["300円の商品"], []),
+            Telops = TelopBuilder.Build(res.Clips, tr, p, "あと2個", "300円の商品", ["300円の商品"], []),
             Audio = new AudioSpec { Master = "a1" },
         };
         store.Put(Kinds.EditPlan, plan.EditplanId, project.Id, plan);
@@ -62,8 +62,35 @@ public sealed class RenderRecordTests : IDisposable
         var r = store.Get<Render>(Kinds.Render, "r_export00001")!;
         Assert.Equal("final", r.Kind);
         Assert.True(File.Exists(r.Path));
+        Assert.NotNull(r.Reproducibility);
+        Assert.Equal(EditPlanFingerprint.Of(plan), r.Reproducibility.PlanHash);
+        Assert.Equal(p.Ref, r.Reproducibility.Preset);
+        Assert.Equal(64, Assert.Single(r.Reproducibility.SourceSha256, f => f.Path == src).Sha256.Length);
+        Assert.All(r.Qa, check => Assert.Equal(r.Reproducibility.PlanHash, check.PlanHash));
         // QA scratch is keyed by the same id, so deleting the render can find it
         Assert.Equal(["r_export00001"], Directory.GetDirectories(Path.Combine(Data, "qa")).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void Legacy_preview_does_not_certify_final_only_checks()
+    {
+        using var store = new Store(Path.Combine(Data, "db.sqlite"));
+        var preview = new Render
+        {
+            Id = "r_old", EditplanId = "ep_old", Kind = "preview", Path = Path.Combine(_dir, "old.mp4"),
+            Qa = [new("H-02", QaStatus.Pass, "540x960", "540x960", "resolution"), new("H-05", QaStatus.Pass, "safe", "safe", "safe zone")],
+        };
+        store.Put(Kinds.Render, preview.Id, preview.EditplanId, preview);
+        var final = preview with { Id = "r_final", Kind = "final" };
+        store.Put(Kinds.Render, final.Id, final.EditplanId, final);
+        Assert.Equal(1, RenderMaintenance.MarkLegacyPreviewChecksPending(store));
+        var changed = store.Get<Render>(Kinds.Render, preview.Id)!;
+        Assert.Equal(QaStatus.NotRun, changed.Qa[0].Status);
+        Assert.Equal("final", changed.Qa[0].Stage);
+        Assert.Null(changed.Qa[0].PlanHash);
+        Assert.Equal(QaStatus.Pass, changed.Qa[1].Status);
+        Assert.Equal(QaStatus.Pass, store.Get<Render>(Kinds.Render, final.Id)!.Qa[0].Status);
+        Assert.Equal(0, RenderMaintenance.MarkLegacyPreviewChecksPending(store));
     }
 
     [Fact]

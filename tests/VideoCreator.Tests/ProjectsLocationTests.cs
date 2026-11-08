@@ -117,7 +117,8 @@ public sealed class ProjectsLocationTests : IAsyncLifetime
     {
         var p = Rt.Store.Get<Project>(Kinds.Project, _p.Id)!;
         using (var r = await _http.GetAsync("/api/media/r_prev", Ct)) { Assert.Equal(HttpStatusCode.OK, r.StatusCode); Assert.Equal(9_000, (await r.Content.ReadAsByteArrayAsync(Ct)).Length); }
-        using (var r = await _http.GetAsync("/api/renders/r_final/files/srt", Ct)) Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        // Legacy unbound exports remain on disk after a folder move, but cannot certify the current plan.
+        using (var r = await _http.GetAsync("/api/renders/r_final/files/srt", Ct)) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
         using (var r = await _http.GetAsync($"/api/projects/{p.Id}/scene-cards/0", Ct)) { Assert.Equal(HttpStatusCode.OK, r.StatusCode); Assert.Equal(2_000, (await r.Content.ReadAsByteArrayAsync(Ct)).Length); }
         Assert.True(File.Exists(Rt.Store.Get<SourceAsset>(Kinds.Asset, "a_up")!.Path));
         Assert.True(File.Exists(Rt.Store.Get<BgmTrack>(Kinds.Bgm, "bgm_u")!.Path));

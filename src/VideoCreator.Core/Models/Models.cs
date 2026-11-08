@@ -469,11 +469,13 @@ public sealed record Job
     public List<string> Warnings { get; init; } = [];
 }
 
-public enum QaStatus { Pass, Warn, Fail }
+public enum QaStatus { Pass, Warn, Fail, NotRun }
 
 public sealed record QaResult(string CheckId, QaStatus Status, string Measured, string Threshold, string Message)
 {
     public bool Hard => CheckId.StartsWith("H-", StringComparison.Ordinal);
+    public string? Stage { get; init; }
+    public string? PlanHash { get; init; }
 }
 
 public sealed record Render
@@ -482,10 +484,38 @@ public sealed record Render
     public required string EditplanId { get; init; }
     public required string Kind { get; init; }   // preview | final
     public required string Path { get; init; }
+    public string? PlanHash { get; init; }
     public string FfmpegVersion { get; init; } = "";
+    public RenderReproducibility? Reproducibility { get; init; }
     public List<string> Commands { get; init; } = [];
     public double Duration { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public List<QaResult> Qa { get; init; } = [];
     public Dictionary<string, string> Outputs { get; init; } = [];
 }
+
+public static class RenderValidity
+{
+    public static bool IsStale(Render render, EditPlan? plan)
+    {
+        var hash = render.PlanHash ?? render.Reproducibility?.PlanHash ?? render.Qa.FirstOrDefault(q => q.PlanHash != null)?.PlanHash;
+        return plan == null || hash == null || hash != EditPlanFingerprint.Of(plan)
+            || !render.Qa.Any(q => q.CheckId == "H-11" && q.Status == QaStatus.Pass && q.PlanHash == hash)
+            || render.Kind == "final" && render.Qa.Any(q => q.Hard && (q.Status is QaStatus.Fail or QaStatus.NotRun || q.PlanHash != hash));
+    }
+}
+
+public sealed record RenderReproducibility
+{
+    public required string PlanHash { get; init; }
+    public required string FfmpegSha256 { get; init; }
+    public required string BuildconfSha256 { get; init; }
+    public required string TextLibraryInfo { get; init; }
+    public required List<HashedFile> FontSha256 { get; init; }
+    public required PresetRef Preset { get; init; }
+    public required string PresetSha256 { get; init; }
+    public required List<HashedFile> SourceSha256 { get; init; }
+    public required string EncoderThreads { get; init; }
+}
+
+public sealed record HashedFile(string Path, string Sha256);

@@ -136,6 +136,8 @@ public sealed class PipelineRunner(PipelineServices s)
         }
         else if (preset.Planner == "screen") used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
+        if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
+            throw new PipelineException("E-SOL-INFEASIBLE", $"素材が{preset.Id}の尺の下限（{preset.Target.Min:0.#}秒）より短い");
         if (preset.HasTelop("caption") && main.Media.AudioChannels > 0 && s.Asr == null)
             throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure AI Speech）が設定されていません。設定を確認してください。");
 
@@ -199,7 +201,8 @@ public sealed class PipelineRunner(PipelineServices s)
         const string sigMsg = "ショット・音量・無音を解析しています";
         Stage(JobStatus.Analyzing, 0.35, sigMsg);
         var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct, Sub(JobStatus.Analyzing, 0.35, 0.43, sigMsg, "ショットの切り替わり検出"));
-        var laughs = await LaughsAsync(main, tr, sig, audio, ct);
+        // laughter is only needed when planning; an external detector (minutes) runs while the AI selects
+        var laughsTask = LaughsAsync(main, tr, sig, audio, ct);
         if (preset.Planner == "switch") await AutoAssignSpeakersAsync(used, main, tr, warnings, ct);
         ScreenContext? screen = null;
         if (preset.Planner == "screen")
@@ -256,6 +259,8 @@ public sealed class PipelineRunner(PipelineServices s)
             Mark("faces");
         }
 
+        var laughs = await laughsTask;
+
         Stage(JobStatus.Planning, 0.6, "編集計画を作成しています");
         var candidates = new List<Candidate>();
         foreach (var c0 in outcome.Candidates)
@@ -265,13 +270,21 @@ public sealed class PipelineRunner(PipelineServices s)
             try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id), screen); }
             catch (PlanException ex) { warnings.Add($"{c0.Id}: {ex.Message}"); continue; }
             var (plan, notes) = built;
+            var segments = CandidateValidator.MergeOverlaps(plan.Timeline.Select(c => new Interval(c.MasterIn, c.MasterOut)).ToList(), 0);
+            if (candidates.Any(c => CandidateValidator.IoU(c.Segments, segments) > 0.5))
+            {
+                warnings.Add($"{c0.Id}: 編集後の区間が他の候補と重なるため除外しました");
+                continue;
+            }
             s.Store.Put(Kinds.EditPlan, plan.EditplanId, project.Id, plan);
-            var cand = c0 with { Id = cid, EditPlanId = plan.EditplanId, Notes = [.. c0.Notes, .. notes], Series = plan.Series };
+            var cand = c0 with { Id = cid, Rank = candidates.Count + 1, Segments = segments, EditPlanId = plan.EditplanId, Notes = [.. c0.Notes, .. notes], Series = plan.Series };
             candidates.Add(cand);
             s.Store.Put(Kinds.Candidate, cid, job.Id, cand);
         }
         if (candidates.Count == 0) throw new PipelineException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした。別のパターンを試してください。");
         if (seriesParts.Count > 0 && candidates.Count != seriesParts.Count) throw new PipelineException("E-SOL-INFEASIBLE", "一部のパートの編集計画を作れませんでした: " + string.Join(" / ", warnings.TakeLast(seriesParts.Count - candidates.Count)));
+        if (!job.Options.IsSeries && candidates.Count < SelectionService.PresentCount)
+            warnings.Add($"条件を満たす重複しない区間が{candidates.Count}件だけのため、候補は{candidates.Count}本です（最大{SelectionService.PresentCount}本）。重複する区間や条件外の区間は追加しません");
         Mark("plan");
 
         for (int i = 0; i < candidates.Count; i++)
@@ -289,7 +302,8 @@ public sealed class PipelineRunner(PipelineServices s)
         Mark("preview");
 
         var cost = new CostEstimate(Math.Round(tr.Duration / 60, 1), outcome.InputTokens, outcome.OutputTokens,
-            Math.Round(tr.Duration / 3600 * s.Pricing.AsrJpyPerHour + outcome.InputTokens / 1e6 * s.Pricing.LlmInJpyPer1M + outcome.OutputTokens / 1e6 * s.Pricing.LlmOutJpyPer1M, 2), Pricing.Basis + "（実績）");
+            Math.Round(tr.Duration / 3600 * s.Pricing.AsrJpyPerHour + outcome.InputTokens / 1e6 * s.Pricing.LlmInJpyPer1M + outcome.OutputTokens / 1e6 * s.Pricing.LlmOutJpyPer1M, 2),
+            Pricing.Basis + "（実績）");
         if (outcome.FullTextChars > 0 && outcome.SentChars > 0)
             s.Log($"[{job.Id}] LLM input chars {outcome.SentChars}/{outcome.FullTextChars} ({100.0 * outcome.SentChars / outcome.FullTextChars:F0}%)");
         return job with
@@ -425,20 +439,24 @@ public sealed class PipelineRunner(PipelineServices s)
         warnings.Add("各カメラのマイク音量から話者を自動で割り当てました: " + string.Join("、", cams.Select((a, i) => $"{Path.GetFileName(a.Path)}=話者{res[i]}")));
     }
 
-    /// <summary>FR-SIG-04: laughter intervals (loud non-speech bursts that pulse like laughter), cached next to the signals.</summary>
+    /// <summary>FR-SIG-04: local non-speech laughter detection, cached per asset/transcript.</summary>
     public async Task<List<Interval>> LaughsAsync(SourceAsset a, Transcript tr, SignalSet sig, string audio, CancellationToken ct)
     {
-        var file = Path.Combine(CacheDir(a), "laughs_" + Path.GetFileNameWithoutExtension(Directory.GetFiles(CacheDir(a), "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() ?? "none") + ".json");
+        var file = LocalLaughsFile(a);
         if (File.Exists(file)) return Json.Deserialize<List<Interval>>(await File.ReadAllTextAsync(file, ct));
         var res = a.Media.AudioChannels > 0 && File.Exists(audio) ? await LaughDetector.DetectAsync(s.Ff, audio, NonSpeech.Bursts(sig, tr), ct) : [];
         await File.WriteAllTextAsync(file, Json.Serialize(res), ct);
         return res;
     }
 
+    string LocalLaughsFile(SourceAsset a) =>
+        Path.Combine(CacheDir(a), "laughs_" + Path.GetFileNameWithoutExtension(Directory.GetFiles(CacheDir(a), "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() ?? "none") + ".json");
+
     public List<Interval> LoadLaughs(SourceAsset a)
     {
         var dir = CacheDir(a);
-        var f = Directory.Exists(dir) ? Directory.GetFiles(dir, "laughs_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
+        if (!Directory.Exists(dir)) return [];
+        var f = Directory.GetFiles(dir, "laughs_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
         return f != null ? Json.Deserialize<List<Interval>>(File.ReadAllText(f)) : [];
     }
 
@@ -464,7 +482,8 @@ public sealed class PipelineRunner(PipelineServices s)
         var tr = LoadTranscript(main);
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, plan.ProjectId).Select(r => r.AssetId).ToHashSet();
         var mask = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options.MaskWords : null;
-        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, s.Dictionary, assets, mask);
+        var approval = plan.Provenance.CandidateId is { } cid ? s.Store.Get<Candidate>(Kinds.Candidate, cid)?.Approval : null;
+        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, s.Dictionary, assets, mask, approval);
     }
 
     public Transcript LoadTranscript(SourceAsset a)
@@ -511,10 +530,11 @@ public sealed class PipelineRunner(PipelineServices s)
         renderId ??= $"r_{Guid.NewGuid():N}"[..14];
         if (!preview)
         {
+            EnsureCurrentPlan(plan);
             var pre = QaEngine.PlanChecks(ctx).Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
             if (pre.Count > 0) throw new QaBlockedException(pre);
         }
-        var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "exports");
+        var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "exports", renderId);
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
         if (!preview) EnsureInside(project.Directory, file);
         var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
@@ -523,9 +543,10 @@ public sealed class PipelineRunner(PipelineServices s)
         progress?.Report((0.9, "自動チェック（QA）をしています"));
         var qa = await s.Qa.RunAsync(ctx, file, preview, Path.Combine(s.DataDir, "qa", renderId), ct);
         var outputs = new Dictionary<string, string> { ["mp4"] = file };
+        RenderReproducibility? reproducibility = null;
         if (!preview)
         {
-            var hard = qa.Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
+            var hard = qa.Where(q => q.Hard && q.Status is QaStatus.Fail or QaStatus.NotRun).ToList();
             if (hard.Count > 0)
             {
                 var rejected = Path.Combine(project.Directory, "rejected", Path.GetFileName(file));
@@ -543,15 +564,66 @@ public sealed class PipelineRunner(PipelineServices s)
             var thumbs = await s.Renderer.ThumbnailsAsync(file, times, Path.ChangeExtension(file, null), preset.Telop.IsVariety ? ThumbnailSaturation : 1.0, ct);
             for (int i = 0; i < thumbs.Count; i++) outputs[$"thumb{i + 1}"] = thumbs[i];
             var ass = Path.ChangeExtension(file, ".ass"); if (File.Exists(ass)) outputs["ass"] = ass;
+            if (!File.Exists(ass))
+                await File.WriteAllTextAsync(ass, AssWriter.Write(plan, preset), new UTF8Encoding(false), ct);
+            outputs["ass"] = ass;
+            var sourcePaths = plan.Timeline.Select(c => assets[c.AssetId].Path)
+                .Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => assets[c.Pip!.AssetId].Path))
+                .Append(assets[plan.Audio.Master].Path)
+                .Concat(InsertMap.Active(plan).Where(i => i.Path != null).Select(i => i.Path!)).ToList();
+            if (plan.Audio.Bgm is { } bgm)
+            {
+                var bgmPath = s.Audio?.Find(bgm)?.Path ?? s.Store.Get<BgmTrack>(Kinds.Bgm, bgm)?.Path;
+                if (bgmPath != null) sourcePaths.Add(bgmPath);
+            }
+            if (plan.Audio.SfxEnabled && s.Audio != null)
+                sourcePaths.AddRange(plan.Audio.Sfx.Select(e => s.Audio.SfxPath(e.Kind)).Where(path => path != null).Select(path => path!));
+            reproducibility = await RenderProvenance.CaptureAsync(s.Ff, plan, preset, sourcePaths, ass, ct);
         }
         var render = new Render
         {
             Id = renderId, EditplanId = plan.EditplanId, Kind = preview ? "preview" : "final", Path = file, Duration = plan.TotalDuration,
+            PlanHash = EditPlanFingerprint.Of(plan),
             FfmpegVersion = await s.Ff.VersionAsync(), Commands = outp.Commands, Qa = qa, Outputs = outputs,
+            Reproducibility = reproducibility,
         };
-        if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
+        if (!preview)
+        {
+            try
+            {
+                s.Store.Atomic(() =>
+                {
+                    EnsureCurrentPlan(plan);
+                    if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
+                    return true;
+                });
+            }
+            catch (PipelineException ex) when (ex.Code == "E-PLAN-STALE") { Quarantine(render); throw; }
+        }
+        else if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
         progress?.Report((1, "完了しました"));
         return render;
+    }
+
+    public void EnsureCurrentPlan(EditPlan plan)
+    {
+        var current = s.Store.Get<EditPlan>(Kinds.EditPlan, plan.EditplanId);
+        if (current == null || EditPlanFingerprint.Of(current) != EditPlanFingerprint.Of(plan))
+            throw new PipelineException("E-PLAN-STALE", "編集計画が変更されたため承認・QA・書き出し結果は失効しました。内容を確認して再承認してください");
+    }
+
+    public void Quarantine(Render render)
+    {
+        var plan = s.Store.Get<EditPlan>(Kinds.EditPlan, render.EditplanId);
+        var project = plan == null ? null : s.Store.Get<Project>(Kinds.Project, plan.ProjectId);
+        if (project == null) throw new PipelineException("E-NOT-FOUND", "失効した書き出しのプロジェクトがありません");
+        var directory = Path.Combine(project.Directory, "rejected", render.Id);
+        Directory.CreateDirectory(directory);
+        foreach (var file in render.Outputs.Values.Append(render.Path).Distinct())
+        {
+            EnsureInside(project.Directory, file);
+            if (File.Exists(file)) File.Move(file, Path.Combine(directory, Path.GetFileName(file)), true);
+        }
     }
 
     /// <summary>NFR-SEC-05: refuse to write outside the project directory.</summary>

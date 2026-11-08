@@ -8,6 +8,9 @@ public sealed class Store : IDisposable
     readonly string _cs;
     readonly object _gate = new();
 
+    /// <summary>Serialize a document check and its writes/queue reservation without an intervening edit.</summary>
+    public T Atomic<T>(Func<T> action) { lock (_gate) return action(); }
+
     public Store(string dbPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);

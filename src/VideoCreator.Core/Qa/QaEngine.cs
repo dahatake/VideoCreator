@@ -10,7 +10,7 @@ using VideoCreator.Rendering;
 namespace VideoCreator.Qa;
 
 public sealed record QaContext(EditPlan Plan, Preset Preset, Transcript Transcript, IReadOnlyCollection<string> RightsAssetIds, IReadOnlyList<string> Dictionary, IReadOnlyList<SourceAsset>? Assets = null,
-    IReadOnlyList<string>? MaskWords = null);
+    IReadOnlyList<string>? MaskWords = null, CandidateApproval? Approval = null);
 
 /// <summary>PRD §13 automatic QA. Hard (H-*) failures block export.</summary>
 public sealed class QaEngine(FFmpeg ff)
@@ -53,10 +53,20 @@ public sealed class QaEngine(FFmpeg ff)
         var ungrounded = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
             .SelectMany(t => JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary).Select(x => $"{t.Id}:{x}"))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).SelectMany(i => JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary).Select(x => $"{i.Id}:{x}"))).ToList();
-        res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの忠実性"));
+        res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの未出現語（内容の忠実性は別途確認）"));
+
+        var evidenceErrors = plan.Telops.Where(t => t.Enabled && (TelopGrounding.Applies(t) || p.Planner == "switch" && t.Speaker != null))
+            .SelectMany(t => TelopGrounding.Problems(t, plan.Timeline, tr, ctx.Dictionary, plan.Series).Select(message => $"{t.Id}: {message}")).ToList();
+        res.Add(new("H-11", evidenceErrors.Count == 0 ? QaStatus.Pass : QaStatus.Fail,
+            evidenceErrors.Count == 0 ? "0" : string.Join(", ", evidenceErrors), "区間内の根拠発話・数字/単位/対象・話者が一致", "テロップと発話の対応"));
+        var lostNegation = plan.Telops.Where(t => t.Enabled && TelopGrounding.NegationDropped(t, plan.Timeline, tr)).Select(t => t.Id).ToList();
+        res.Add(new("S-09", lostNegation.Count == 0 ? QaStatus.Pass : QaStatus.Warn,
+            lostNegation.Count == 0 ? "0" : string.Join(", ", lostNegation), "根拠発話の否定を保持", "否定の脱落"));
 
         var unapproved = plan.Telops.Count(t => t.Enabled && !t.Approved) + plan.Inserts.Count(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved);
-        res.Add(new("H-08", unapproved == 0 ? QaStatus.Pass : QaStatus.Fail, unapproved.ToString(IC), "0", "未承認テロップ（ツッコミ・場面転換カード）"));
+        bool staleApproval = ctx.Approval != null && ctx.Approval.PlanHash != EditPlanFingerprint.Of(plan);
+        res.Add(new("H-08", unapproved == 0 && !staleApproval ? QaStatus.Pass : QaStatus.Fail,
+            staleApproval ? "候補の承認は編集後に失効しています" : unapproved.ToString(IC), "0・承認ハッシュが一致", "未承認テロップ・失効した承認"));
 
         var missing = plan.Timeline.Select(c => c.AssetId).Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId)).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.ImageAssetId != null && !ctx.RightsAssetIds.Contains(i.ImageAssetId)).Select(i => i.ImageAssetId!))
@@ -109,7 +119,7 @@ public sealed class QaEngine(FFmpeg ff)
         bool demo = firstSentence != null && JapaneseText.StartsWithDemonstrative(firstSentence.Text);
         res.Add(new("S-07", demo ? QaStatus.Warn : QaStatus.Pass, demo ? firstSentence!.Text : "ok", "冒頭が指示語でない", "冒頭の指示語"));
 
-        // S-09: in multi-camera plans the camera on screen should be the speaker's (FR-SWT-02)
+        // S-13: camera alignment is distinct from S-09's utterance negation check.
         if (p.Planner == "switch" && ctx.Assets != null)
         {
             var spk = ctx.Assets.Where(a => Planning.SwitchPlanner.SpeakerOf(a) > 0).ToDictionary(a => a.Id, Planning.SwitchPlanner.SpeakerOf);
@@ -122,13 +132,13 @@ public sealed class QaEngine(FFmpeg ff)
                 total++; if (by.speaker == spk[c.AssetId]) match++;
             }
             double ratio = total == 0 ? 1 : (double)match / total;
-            res.Add(new("S-09", ratio >= 0.9 ? QaStatus.Pass : QaStatus.Warn, $"{ratio:P0} ({match}/{total})", "≥ 90% で話者とカメラが一致", "話者とカメラの一致"));
+            res.Add(new("S-13", ratio >= 0.9 ? QaStatus.Pass : QaStatus.Warn, $"{ratio:P0} ({match}/{total})", "≥ 90% で話者とカメラが一致", "話者とカメラの一致"));
         }
         if (plan.Series is { } series)
         {
-            // S-10: YouTube chapter rules (YouTube Help "Video chapters"); S-11: TikTok accepts uploads up to 60 minutes
+            // S-14: YouTube chapters; S-11: TikTok accepts uploads up to 60 minutes.
             var yt = Planning.SeriesPlanner.YouTubeChapters(FinalChapters(plan), fileDur);
-            res.Add(new("S-10", yt != null ? QaStatus.Pass : QaStatus.Warn, yt != null ? $"{yt.Count} チャプター" : "条件を満たさない", "00:00 から・3つ以上・各10秒以上", "YouTube のチャプター"));
+            res.Add(new("S-14", yt != null ? QaStatus.Pass : QaStatus.Warn, yt != null ? $"{yt.Count} チャプター" : "条件を満たさない", "00:00 から・3つ以上・各10秒以上", "YouTube のチャプター"));
             res.Add(new("S-11", fileDur <= 3600 ? QaStatus.Pass : QaStatus.Warn, $"{fileDur / 60:F1}分", "≤ 60分（TikTok のアップロード上限）", "投稿先の長さの上限"));
         }
         // S-12: bumpers / card images are scaled to the canvas; upscaling softens them (e.g. a 720x1280 opening in a 1080x1920 output)
@@ -141,7 +151,8 @@ public sealed class QaEngine(FFmpeg ff)
                 soft.Count == 0 ? (enhanced.Count > 0 ? string.Join(", ", enhanced) : "等倍以下") : string.Join(", ", soft.Select(x => $"{Path.GetFileName(x.i.Path)} {x.i.Width}x{x.i.Height} を {x.s:0.##} 倍に拡大")),
                 $"{plan.Canvas.Width}x{plan.Canvas.Height} 以上の素材（小さい素材は登録時に高画質化）", "オープニング・クロージングの解像度"));
         }
-        return res;
+        var hash = EditPlanFingerprint.Of(plan);
+        return res.Select(q => q with { Stage = "plan", PlanHash = hash }).ToList();
     }
 
     /// <summary>Series chapters on the rendered file's timeline (shifted past the opening and cards).</summary>
@@ -165,7 +176,7 @@ public sealed class QaEngine(FFmpeg ff)
     public async Task<List<QaResult>> RunAsync(QaContext ctx, string rendered, bool preview, string workDir, CancellationToken ct)
     {
         var res = PlanChecks(ctx);
-        // H-01/H-02 measured on the file (third-party measurement: ffprobe)
+        // A half-size preview cannot certify the final file's platform constraints.
         var pr = await ff.RunProbeAsync(["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", rendered], ct);
         using (var doc = JsonDocument.Parse(pr.StdOut))
         {
@@ -177,22 +188,39 @@ public sealed class QaEngine(FFmpeg ff)
             // the preset range is for the edited body; the platform cap is for the whole file. The file must also match the planned length.
             double inserts = ctx.Plan.TotalDuration - ctx.Plan.Duration, body = dur - inserts;
             bool match = Math.Abs(dur - ctx.Plan.TotalDuration) <= Math.Max(0.25, 0.002 * ctx.Plan.TotalDuration);
-            res.RemoveAll(r => r.CheckId == "H-01");
-            res.Insert(0, new("H-01", DurationOk(body, dur, minD, maxD, cap, 0.1) && match ? QaStatus.Pass : QaStatus.Fail, DurationText(body, dur, " (ffprobe)") + (match ? "" : $"・計画 {ctx.Plan.TotalDuration:F2}s と不一致"), RangeText(minD, maxD, cap), "尺"));
-            int ew = preview ? ctx.Plan.Canvas.Width / 2 : ctx.Plan.Canvas.Width, eh = preview ? ctx.Plan.Canvas.Height / 2 : ctx.Plan.Canvas.Height;
-            res.Insert(1, new("H-02", w == ew && h == eh ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ew}x{eh}", "解像度・比率 9:16"));
+            if (preview)
+            {
+                if (w != ctx.Plan.Canvas.Width / 2 || h != ctx.Plan.Canvas.Height / 2 || !match)
+                    throw new FFmpegException("プレビューの解像度または尺が編集計画と一致しません");
+                foreach (var (id, threshold, message) in new[]
+                {
+                    ("H-02", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率 9:16"),
+                    ("H-03", "−14 ±1 LUFS", "積分ラウドネス"),
+                    ("H-04", "≤ −1.0 dBTP", "True Peak"),
+                })
+                    res.Add(new(id, QaStatus.NotRun, "未実施（書き出し時に検査）", threshold, message) { Stage = "final" });
+            }
+            else
+            {
+                res.Add(new("H-01", DurationOk(body, dur, minD, maxD, cap, 0.1) && match ? QaStatus.Pass : QaStatus.Fail, DurationText(body, dur, " (ffprobe)") + (match ? "" : $"・計画 {ctx.Plan.TotalDuration:F2}s と不一致"), RangeText(minD, maxD, cap), "尺") { Stage = "final" });
+                res.Add(new("H-02", w == ctx.Plan.Canvas.Width && h == ctx.Plan.Canvas.Height ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率 9:16") { Stage = "final" });
+            }
         }
         if (!preview)
         {
             var r = await ff.RunFfmpegAsync(["-hide_banner", "-i", rendered, "-vn", "-af", "loudnorm=I=-14:TP=-1.5:print_format=summary", "-f", "null", "-"], ct);
             double I = Num(r.StdErr, @"Input Integrated:\s*(-?[\d.]+)"), TP = Num(r.StdErr, @"Input True Peak:\s*([-+]?[\d.]+)");
-            res.Insert(2, new("H-03", Math.Abs(I - ctx.Plan.Audio.TargetLufs) <= 1 ? QaStatus.Pass : QaStatus.Fail, $"{I:F1} LUFS", "−14 ±1 LUFS", "積分ラウドネス"));
-            res.Insert(3, new("H-04", TP <= -1.0 ? QaStatus.Pass : QaStatus.Fail, $"{TP:F1} dBTP", "≤ −1.0 dBTP", "True Peak"));
+            res.Add(new("H-03", Math.Abs(I - ctx.Plan.Audio.TargetLufs) <= 1 ? QaStatus.Pass : QaStatus.Fail, $"{I:F1} LUFS", "−14 ±1 LUFS", "積分ラウドネス") { Stage = "final" });
+            res.Add(new("H-04", TP <= -1.0 ? QaStatus.Pass : QaStatus.Fail, $"{TP:F1} dBTP", "≤ −1.0 dBTP", "True Peak") { Stage = "final" });
         }
-        res.Add(await SafeZoneAsync(ctx, workDir, ct));
+        var safe = await SafeZoneAsync(ctx, workDir, ct);
+        res.Add(safe with { Stage = "plan" });
+        if (!preview) res.Add(safe with { Stage = "final" });
         if (!preview && Faces is { Available: true }) res.Add(await FaceOverlapAsync(ctx, rendered, ct));
         if (!preview) res.Add(await BlackFreezeAsync(rendered, ctx.Preset.Id == "P9", ct, InsertMap.InsertSpans(InsertMap.Active(ctx.Plan)).Select(x => (x.Start, x.End)).ToList()));
-        return res.OrderBy(r => r.Hard ? 0 : 1).ThenBy(r => r.CheckId, StringComparer.Ordinal).ToList();
+        var hash = EditPlanFingerprint.Of(ctx.Plan);
+        return res.Select(q => q with { Stage = q.Stage ?? (preview ? "preview" : "final"), PlanHash = hash })
+            .OrderBy(r => r.Hard ? 0 : 1).ThenBy(r => r.CheckId, StringComparer.Ordinal).ToList();
     }
 
     static double Num(string s, string pattern)

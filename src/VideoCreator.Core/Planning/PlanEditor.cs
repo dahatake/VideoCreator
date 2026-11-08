@@ -2,7 +2,7 @@ using VideoCreator.Models;
 
 namespace VideoCreator.Planning;
 
-public sealed record PlanOp(string Op, string? Target = null, string? Text = null, bool? Enabled = null, string? Type = null, string? Edge = null, int? Delta = null);
+public sealed record PlanOp(string Op, string? Target = null, string? Text = null, bool? Enabled = null, string? Type = null, string? Edge = null, int? Delta = null, List<string>? SourceWordIds = null);
 
 /// <summary>FR-REV-02..05: pure edits on an EditPlan; every edit is recorded in provenance (AP-1).</summary>
 public static class PlanEditor
@@ -16,6 +16,9 @@ public static class PlanEditor
             plan = op.Op switch
             {
                 "replace_text" => ReplaceText(plan, op.Target ?? throw new ArgumentException("target required"), op.Text ?? ""),
+                "set_evidence" => Update(plan, op.Target ?? throw new ArgumentException("target required"),
+                    t => t with { SourceWordIds = op.SourceWordIds ?? throw new ArgumentException("source_word_ids required") },
+                    "set_evidence", null, string.Join(",", op.SourceWordIds ?? [])),
                 "set_enabled" => Update(plan, op.Target!, t => t with { Enabled = op.Enabled ?? true }, "set_enabled", null, (op.Enabled ?? true).ToString()),
                 "approve" => Update(plan, op.Target!, t => t with { Approved = true }, "approve", null, "true"),
                 "set_type_enabled" => SetType(plan, op.Type ?? throw new ArgumentException("type required"), op.Enabled ?? true),

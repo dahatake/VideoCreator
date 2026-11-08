@@ -160,8 +160,12 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         // a second request for something already exporting is refused, and so is the single-export route
         using (var r = await ExportAsync("c1")) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
         using (var r = await _http.PostAsync("/api/editplans/ep1/render", null, Ct)) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
-        // editing c2 while it waits does not change what is exported: the approved snapshot is rendered
-        using (var r = await _http.PatchAsJsonAsync("/api/editplans/ep2", new { ops = new[] { new { op = "set_sfx", enabled = true } } }, Ct)) r.EnsureSuccessStatusCode();
+        // queued plans cannot change under an approved export (AT-15).
+        using (var r = await _http.PatchAsJsonAsync("/api/editplans/ep2", new { ops = new[] { new { op = "set_sfx", enabled = true } } }, Ct))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+            Assert.Equal("E-PLAN-STALE", Code(await r.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
 
         var until = DateTime.UtcNow.AddMinutes(6);
         while (started.Take(2).Any(s => Q.Exports[s.Rid].State is "queued" or "rendering") && DateTime.UtcNow < until) await Task.Delay(200, Ct);
@@ -179,7 +183,7 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal(["ep1", "ep2"], renders.Select(r => r.EditplanId));
         var exported = Json.Deserialize<EditPlan>(await File.ReadAllTextAsync(renders[1].Outputs["editplan"], Ct));
         Assert.False(exported.Audio.SfxEnabled);
-        Assert.True(Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep2")!.Audio.SfxEnabled);
+        Assert.False(Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep2")!.Audio.SfxEnabled);
         var probe = await new MediaProbe(Rt.Ff).ProbeAsync(renders[0].Path, Ct);
         Assert.Equal((1080, 1920), (probe.Width, probe.Height));
 
@@ -188,8 +192,175 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal("done", list["c1"].GetProperty("export").GetProperty("state").GetString());
         Assert.Equal("cancelled", list["c3"].GetProperty("export").GetProperty("state").GetString());
         Assert.False(list["c3"].TryGetProperty("final_render_id", out _));
-        // c2 was edited after approval (while queued) → needs approval again for the next export
-        Assert.True(list["c2"].GetProperty("approval").GetProperty("stale").GetBoolean());
+        Assert.False(list["c2"].GetProperty("approval").GetProperty("stale").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AT15_money_edit_invalidates_approval_final_QA_and_every_download_route()
+    {
+        var cache = Path.Combine(Rt.Options.ResolvedDataDir, "cache", new string('7', 16));
+        Directory.CreateDirectory(cache);
+        var tr = new Transcript
+        {
+            Provider = "fixed-at15", Duration = 130,
+            Words = [new Word("amount", 75, 79, "A社は100万円、B社は500万円", 1)],
+            Sentences = [new Sentence(0, 75, 79, "A社は100万円、B社は500万円", 1, 0, 0)],
+        };
+        await File.WriteAllTextAsync(Path.Combine(cache, "transcript_fixed.json"), Json.Serialize(tr), Ct);
+        var original = Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep1")!;
+        original = original with
+        {
+            Timeline = [new Clip { ClipId = "amount-clip", AssetId = "a1", SrcIn = 74, SrcOut = 103 }],
+            Telops = [new Telop { Id = "amount", Type = TelopType.Emphasis, Start = 1, End = 3, Text = "A社100万円", Style = "Emph", SourceWordIds = ["amount"] }],
+        };
+        Rt.Store.Put(Kinds.EditPlan, "ep1", _project, original);
+        using (var unapproved = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, unapproved.StatusCode);
+            Assert.Equal("E-NOT-APPROVED", Code(await unapproved.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
+        using (var approved = await ApproveAsync("c1", true)) approved.EnsureSuccessStatusCode();
+        string rid;
+        using (var export = await ExportAsync("c1"))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, export.StatusCode);
+            rid = (await export.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("exports")[0].GetProperty("render_id").GetString()!;
+        }
+        var until = DateTime.UtcNow.AddMinutes(3);
+        while (Q.Exports[rid].State == "queued" && DateTime.UtcNow < until) await Task.Delay(20, Ct);
+        Assert.Equal("rendering", Q.Exports[rid].State);
+        using (var patch = await _http.PatchAsJsonAsync("/api/editplans/ep1", new { ops = new[] { new { op = "replace_text", target = "amount", text = "A社500万円" } } }, Ct))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, patch.StatusCode);
+            Assert.Equal("E-PLAN-STALE", Code(await patch.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
+        Assert.Equal(EditPlanFingerprint.Of(original), EditPlanFingerprint.Of(Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep1")!));
+        using (var transcriptPatch = await _http.PatchAsJsonAsync("/api/assets/a1/transcript",
+            new { edits = new[] { new { word_id = "w1", text = "訂正" } } }, Ct))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, transcriptPatch.StatusCode);
+            Assert.Equal("E-PLAN-STALE", Code(await transcriptPatch.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
+        while (Q.Exports[rid].State is "queued" or "rendering" && DateTime.UtcNow < until) await Task.Delay(200, Ct);
+        Assert.True(Q.Exports[rid].State == "done", Q.Exports[rid].Message);
+        var final = Rt.Store.Get<Render>(Kinds.Render, rid)!;
+        Assert.Equal(EditPlanFingerprint.Of(original), final.PlanHash);
+        Assert.All(final.Qa.Where(q => q.Hard), q => Assert.Equal(QaStatus.Pass, q.Status));
+        using (var download = await _http.GetAsync($"/api/renders/{rid}/files/mp4", Ct)) Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+
+        using (var patch = await _http.PatchAsJsonAsync("/api/editplans/ep1", new { ops = new[] { new { op = "replace_text", target = "amount", text = "A社500万円" } } }, Ct))
+        {
+            patch.EnsureSuccessStatusCode();
+            var body = await patch.Content.ReadFromJsonAsync<JsonElement>(Ct);
+            Assert.NotEqual(final.PlanHash, body.GetProperty("plan_hash").GetString());
+            Assert.True(body.GetProperty("approval").GetProperty("stale").GetBoolean());
+            Assert.True(body.GetProperty("qa_stale").GetBoolean());
+            Assert.True(body.GetProperty("final_render_stale").GetBoolean());
+            Assert.Equal("fail", body.GetProperty("qa").EnumerateArray().Single(q => q.GetProperty("check_id").GetString() == "H-11").GetProperty("status").GetString());
+        }
+        var status = await _http.GetFromJsonAsync<JsonElement>($"/api/renders/{rid}", Ct);
+        Assert.Equal("stale", status.GetProperty("state").GetString());
+        Assert.True(status.GetProperty("qa_stale").GetBoolean());
+        foreach (var path in final.Outputs.Keys.Select(k => $"/api/renders/{rid}/files/{k}").Append($"/api/media/{rid}"))
+        {
+            using var download = await _http.GetAsync(path, Ct);
+            Assert.Equal(HttpStatusCode.Conflict, download.StatusCode);
+            Assert.Equal("E-PLAN-STALE", Code(await download.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
+        using (var open = await _http.PostAsync($"/api/renders/{rid}/open-folder", null, Ct)) Assert.Equal(HttpStatusCode.Conflict, open.StatusCode);
+        using (var direct = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
+            Assert.Equal("E-PLAN-STALE", Code(await direct.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        using (var batch = await ExportAsync("c1"))
+            Assert.Equal("E-PLAN-STALE", Code(await batch.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        Assert.Single(Q.Exports);
+        var list = await ListAsync();
+        Assert.True(list["c1"].GetProperty("final_render_stale").GetBoolean());
+        Assert.False(list["c1"].TryGetProperty("final_render_id", out _));
+        Assert.True(list["c1"].GetProperty("approval").GetProperty("stale").GetBoolean());
+    }
+
+    [Fact]
+    public async Task AT15_out_of_band_plan_change_during_render_is_not_published()
+    {
+        using (var approved = await ApproveAsync("c1", true)) approved.EnsureSuccessStatusCode();
+        string rid;
+        using (var export = await ExportAsync("c1"))
+            rid = (await export.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("exports")[0].GetProperty("render_id").GetString()!;
+        var until = DateTime.UtcNow.AddMinutes(3);
+        while ((Q.Exports[rid].State == "queued" || Q.Exports[rid].Progress < 0.1) && DateTime.UtcNow < until) await Task.Delay(20, Ct);
+        Assert.Equal("rendering", Q.Exports[rid].State);
+        var plan = Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep1")!;
+        Rt.Store.Put(Kinds.EditPlan, "ep1", _project, PlanEditor.Apply(plan, [new PlanOp("set_sfx", Enabled: false)]));
+        while (Q.Exports[rid].State is "queued" or "rendering" && DateTime.UtcNow < until) await Task.Delay(200, Ct);
+        Assert.Equal("failed", Q.Exports[rid].State);
+        Assert.Equal("E-PLAN-STALE", Q.Exports[rid].ErrorCode);
+        Assert.Null(Rt.Store.Get<Render>(Kinds.Render, rid));
+        Assert.Empty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "exports"), "*.mp4", SearchOption.AllDirectories));
+        Assert.NotEmpty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "rejected"), "*.mp4", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task AT14_API_rejects_ten_seconds_before_queueing_or_ASR()
+    {
+        var asset = Rt.Store.Get<SourceAsset>(Kinds.Asset, "a1")!;
+        Rt.Store.Put(Kinds.Asset, asset.Id, _project, asset with { Media = asset.Media with { Duration = 10 } });
+        using var request = await _http.PostAsJsonAsync($"/api/projects/{_project}/jobs", new { preset_ids = new[] { "P4" }, options = new { bgm = "none" } }, Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, request.StatusCode);
+        var body = await request.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("E-SOL-INFEASIBLE", Code(body));
+        Assert.Equal("素材がP4の尺の下限（25秒）より短い", body.GetProperty("error").GetProperty("message").GetString());
+        Assert.Equal([JobId], Rt.Store.Ids(Kinds.Job, _project));
+    }
+
+    [Fact]
+    public async Task Current_final_is_not_labeled_stale_because_an_older_export_is_stale()
+    {
+        var plan = Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep1")!;
+        var hash = EditPlanFingerprint.Of(plan);
+        var old = new Render { Id = "old", EditplanId = plan.EditplanId, Kind = "final", Path = "unused.mp4", PlanHash = "old" };
+        Rt.Store.Put(Kinds.Render, old.Id, plan.EditplanId, old);
+        var current = old with
+        {
+            Id = "current", PlanHash = hash,
+            Qa = new[] { "H-01", "H-05", "H-06", "H-07", "H-08", "H-09", "H-11" }
+                .Select(id => new QaResult(id, QaStatus.Pass, "0", "0", "fixture") { PlanHash = hash, Stage = "plan" })
+                .Concat(new[] { "H-01", "H-02", "H-03", "H-04", "H-05" }
+                    .Select(id => new QaResult(id, QaStatus.Pass, "0", "0", "fixture") { PlanHash = hash, Stage = "final" })).ToList(),
+        };
+        Rt.Store.Put(Kinds.Render, current.Id, plan.EditplanId, current);
+        var list = await ListAsync();
+        Assert.False(list["c1"].GetProperty("final_render_stale").GetBoolean());
+        Assert.Equal("current", list["c1"].GetProperty("final_render_id").GetString());
+        var view = await _http.GetFromJsonAsync<JsonElement>("/api/editplans/ep1", Ct);
+        Assert.False(view.GetProperty("final_render_stale").GetBoolean());
+        using var download = await _http.GetAsync("/api/renders/old/files/mp4", Ct);
+        Assert.Equal(HttpStatusCode.Conflict, download.StatusCode);
+    }
+
+    [Fact]
+    public async Task Transcript_edits_invalidate_all_plans_sharing_the_cache_including_other_projects()
+    {
+        var asset = Rt.Store.Get<SourceAsset>(Kinds.Asset, "a1")!;
+        var shared = asset with { Id = "shared", ProjectId = "other-project" };
+        Rt.Store.Put(Kinds.Asset, shared.Id, shared.ProjectId, shared);
+        var other = Rt.Store.Get<EditPlan>(Kinds.EditPlan, "ep1")! with
+        {
+            EditplanId = "ep-other", ProjectId = shared.ProjectId, Audio = new AudioSpec { Master = shared.Id },
+        };
+        Rt.Store.Put(Kinds.EditPlan, other.EditplanId, other.ProjectId, other);
+        var dir = Path.Combine(Rt.Options.ResolvedDataDir, "cache", asset.Sha256[..16]);
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "transcript_acceptance.json"), Json.Serialize(Fixtures.Talk), Ct);
+        using (var approved = await ApproveAsync("c1", true)) approved.EnsureSuccessStatusCode();
+        var before = Rt.Store.List<EditPlan>(Kinds.EditPlan).ToDictionary(p => p.EditplanId, EditPlanFingerprint.Of);
+        using var response = await _http.PatchAsJsonAsync("/api/assets/a1/transcript",
+            new { edits = new[] { new { word_id = Fixtures.Talk.Words[0].Id, text = "訂正" } } }, Ct);
+        response.EnsureSuccessStatusCode();
+        foreach (var plan in Rt.Store.List<EditPlan>(Kinds.EditPlan))
+            Assert.NotEqual(before[plan.EditplanId], EditPlanFingerprint.Of(plan));
+        Assert.Equal("訂正", Rt.CreateRunner().LoadTranscript(shared).Words[0].Text);
+        var list = await ListAsync();
+        Assert.True(list["c1"].GetProperty("approval").GetProperty("stale").GetBoolean());
     }
 
     [Fact]

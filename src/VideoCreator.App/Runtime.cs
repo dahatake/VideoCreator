@@ -33,6 +33,8 @@ public sealed class Runtime
     public Runtime(AppOptions o, ILogger<Runtime> log)
     {
         _o = o; _log = log;
+        // AzureCliCredential inherits this process setting; token acquisition must not emit CLI telemetry.
+        Environment.SetEnvironmentVariable("AZURE_CORE_COLLECT_TELEMETRY", "false", EnvironmentVariableTarget.Process);
         Directory.CreateDirectory(o.ResolvedDataDir);
         Ff = FFmpeg.Locate(o.FfmpegBin, o.FontsDir, AppContext.BaseDirectory);
         Ff.Log = s => _log.LogDebug("{Cmd}", s);
@@ -54,7 +56,7 @@ public sealed class Runtime
 
     public void SetLlmProvider(string provider)
     {
-        if (LocalOnly && provider != "none") throw new InvalidOperationException("ローカルのみモードでは選定用の AI（LLM）を使えません。字幕のための書き起こしだけは使います");
+        if (LocalOnly && provider != "none") throw new InvalidOperationException("LLM不使用モードでは選定用の AI（LLM）を使えません。字幕のための音声は ASR に送信します");
         if (provider is not ("azure-openai" or "copilot" or "none")) throw new ArgumentException("provider must be azure-openai | copilot | none");
         if (provider == "azure-openai" && string.IsNullOrWhiteSpace(_o.Llm.Endpoint)) throw new InvalidOperationException("Azure OpenAI のエンドポイント（VideoCreator:Llm:Endpoint）が設定されていません。scripts/setup.ps1 を実行してください");
         if (provider == "copilot" && CopilotCli == null) throw new InvalidOperationException("GitHub Copilot CLI が見つかりません。winget install GitHub.Copilot でインストールしてください");
@@ -65,6 +67,24 @@ public sealed class Runtime
         ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), _cred.Value, _http, _o.Asr.Locale);
 
     public string? CopilotCli => _o.Llm.CopilotCliPath ?? CopilotSelector.FindInstalledCli();
+
+    static string Origin(Uri endpoint) => new UriBuilder(endpoint) { UserName = "", Password = "", Path = "", Query = "", Fragment = "" }
+        .Uri.GetLeftPart(UriPartial.Authority);
+
+    public object Transmission => new
+    {
+        llm_disabled = LlmProvider == "none",
+        asr_endpoint = _o.Asr.Provider == "azure" && Uri.TryCreate(_o.Asr.Endpoint, UriKind.Absolute, out var endpoint)
+            ? Origin(endpoint) : null,
+        authentication = _o.Asr.Provider == "azure" && !string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
+            ? "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）" : null,
+        llm_destination = LlmProvider switch
+        {
+            "azure-openai" when Uri.TryCreate(_o.Llm.Endpoint, UriKind.Absolute, out var llmEndpoint) => Origin(llmEndpoint),
+            "copilot" => "GitHub Copilot",
+            _ => null,
+        },
+    };
 
     public IHighlightSelector? Llm => LlmProvider switch
     {

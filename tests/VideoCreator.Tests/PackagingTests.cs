@@ -145,7 +145,7 @@ public class PackagingTests : IAsyncLifetime
     {
         var p = Fixtures.Presets["P4"];
         var res = Solver.Plan([new Interval(74, 103)], Tr, Fixtures.Signals(Tr), p, Fixtures.Landscape(), "a1");
-        var telops = TelopBuilder.Build(res.Clips, Tr, p, "あと2個で失敗", "100円足りない", [], []);
+        var telops = TelopBuilder.Build(res.Clips, Tr, p, "あと2個", "300円の商品", [], []);
         double at = res.Clips[0].Length;
         var plan = new EditPlan
         {
@@ -256,7 +256,7 @@ public class PackagingTests : IAsyncLifetime
         var plan = new EditPlan
         {
             EditplanId = "ep", ProjectId = "p", Preset = p.Ref, Timeline = packed, Inserts = ins,
-            Telops = TelopBuilder.Build(packed, Tr, p, "あと2個で失敗", "100円足りない", ["300円の商品"], []),
+            Telops = TelopBuilder.Build(packed, Tr, p, "あと2個", "300円の商品", ["300円の商品"], []),
             Audio = new AudioSpec { Master = "a1" },
         };
         Assert.Equal(3.0, plan.Inserts.Single(i => i.Id == "opening").Duration, 2);

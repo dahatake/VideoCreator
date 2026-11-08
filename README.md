@@ -2,9 +2,37 @@
 
 長尺の動画を選んで **編集パターンを選ぶだけ** で、AI が見どころを探し、字幕・強調テロップ付きの **縦型ショート（1080×1920）** を自動で作るローカル Web アプリです。
 
-![候補の比較画面](docs/screenshots/04-candidates.png)
+## 初めて使う方へ：準備 → 操作 → 成果物
 
-- 要件: [docs/PRD.md](docs/PRD.md) / 調査: [work/VideoCreator-AnalyticsReport.md](work/VideoCreator-AnalyticsReport.md)
+**自分が利用する権利を持つ動画から、投稿前に確認できる字幕付き動画を作るアプリです。** 元動画を選んだだけでは公開されません。候補を比較・修正し、書き出したファイルを自分で投稿します。
+
+| 用意するもの | アプリで行うこと | 得られるもの |
+|---|---|---|
+| Windows 10/11（x64 / ARM64）、インターネット、保存領域 | `run.cmd` で必要ツールを導入して起動 | 自分のPCのブラウザーで使うローカルWebアプリ |
+| 利用許諾を確認した MP4 / MOV / MKV / WebM（10秒〜3時間）。字幕が必要なら発話のある動画 | プロジェクトを作り、素材を追加して権利を確認 | 元動画の解析情報・時刻付き書き起こし |
+| **自分の** Azure Speech 対応リソース・エンドポイント・利用権限。AI選定を使う場合は Azure OpenAI のデプロイ、またはサインイン済み Copilot CLI | パターンを選び、費用と送信先を確認して生成 | 最大3件のショート候補と低解像度プレビュー（条件によって3件未満） |
+| 内容を確認する時間 | 字幕・音・切り出しを確認し、必要なら修正して書き出す | 縦型 MP4（1080×1920、H.264/AAC）、SRT、ASS、編集計画JSON、サムネイル3枚、投稿用メタデータ案 |
+
+![準備から成果物までの流れ](users-guide/images/overview.svg)
+
+最初は **動画1本 + P4「切り抜き（長尺→30秒）」+ 標準の絞り込み** がおすすめです。シリーズをオンにすると、見どころ候補ではなく長尺全体を前編・後編などに分割します。BGM、複数カメラ、オープニング、場面転換は、まず1本書き出せてから試してください。
+
+> **大切な注意**：ローカルWebアプリですが、通常は字幕用の音声を Azure Speech に送ります。「LLM を使わない」「LLM不使用モード」は完全オフラインではありません。画面の権利確認や自動QAも、実際の利用許諾・内容の忠実性・投稿先の規約を保証するものではありません。設定例に入っているエンドポイントは配布者のものなので、自分の値へ変更してください。セットアップはAzureリソースの作成やエンドポイントの書き換えまでは行いません。
+
+### ガイド
+
+- [クイックスタート](users-guide/quickstart.md)：準備と最初の1本
+- [画面・コンポーネントの説明](users-guide/screens.md)：実画面のSVGスクリーンショットと操作の意味
+- [困ったとき・QAの読み方](users-guide/troubleshooting.md)
+- [Software Engineer向けテクニカルリファレンス](users-guide/technical-reference.md)：構成図、データ・時間軸、拡張箇所
+- [設定・APIリファレンス](users-guide/configuration-api.md)
+- [資料の検証・スクリーンショット再作成](users-guide/verification.md)
+
+![候補の比較画面（合成動画・テスト用書き起こしを使った実画面）](users-guide/images/screen-candidates.svg)
+
+スクリーンショットは実アプリのキャプチャをSVGに埋め込んだものです。表示する字幕はテスト用であり、合成映像・音声の認識結果ではありません。画面内の費用表示は計算値で、今回の課金実績ではありません。
+
+- 要件: [docs/PRD.md](docs/PRD.md) / 調査: [docs/VideoCreator-AnalyticsReport.md](docs/VideoCreator-AnalyticsReport.md)
 - 実装と検証の記録: [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)
 
 ## 主な機能
@@ -41,7 +69,7 @@
 ## 必要なもの
 
 - Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）
-- Azure（字幕のための書き起こしに必要。選定用の AI は任意で、「ローカルのみ」にすると AI 選定を使いません）: AI Services リソース（Speech + `gpt-chat-latest` のデプロイ）と、利用者への `Cognitive Services User` / `Cognitive Services OpenAI User` ロール。キーは使わず、Azure CLI のサインインで認証します
+- Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Fast Transcription を利用できるリソースと自分のエンドポイント、利用者への `Cognitive Services User` ロール。Azure OpenAI も使う場合だけ、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](users-guide/quickstart.md#2-自分のクラウド設定を用意する)を参照してください
 - GitHub Copilot を使う場合: GitHub Copilot CLI（`run.cmd --setup --with-copilot` で導入）にサインイン済み
 
 ## セットアップと起動

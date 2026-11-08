@@ -71,13 +71,14 @@ function wireSafeToggle(root = main) {
   $$('.safe-toggle', root).forEach(sw => sw.addEventListener('change', () => root.classList.toggle('show-safe', sw.checked)));
 }
 function qaList(qa) {
-  return qa.map(q => `<div class="qa-row"><b>${esc(q.check_id)}</b><span class="${q.status === 'pass' ? 'pass' : q.status === 'fail' ? 'fail' : 'warnc'}">${q.status === 'pass' ? '合格' : q.status === 'fail' ? '不合格' : '警告'}</span><span>${esc(q.message)}: ${esc(q.measured)} <span class="muted">（基準 ${esc(q.threshold)}）</span></span></div>`).join('');
+  return qa.map(q => `<div class="qa-row"><b>${esc(q.check_id)}</b><span class="${q.status === 'pass' ? 'pass' : q.status === 'fail' ? 'fail' : q.status === 'not_run' ? 'muted' : 'warnc'}">${q.status === 'pass' ? '合格' : q.status === 'fail' ? '不合格' : q.status === 'not_run' ? '未実施' : '警告'}</span><span>${esc(q.message)}: ${esc(q.measured)} <span class="muted">（基準 ${esc(q.threshold)}${q.stage ? `・${esc(q.stage)}` : ''}）</span></span></div>`).join('');
 }
 function qaBadges(qa) {
   if (!qa?.length) return '';
   const hard = qa.filter(q => q.check_id.startsWith('H-'));
   const fails = hard.filter(q => q.status === 'fail').length, warns = qa.filter(q => q.status === 'warn').length;
-  return `<fluent-badge appearance="tint" color="${fails ? 'danger' : 'success'}">QA ${fails ? `不合格 ${fails}` : `合格 ${hard.filter(q => q.status === 'pass').length}/${hard.length}`}</fluent-badge>${warns ? `<fluent-badge appearance="tint" color="warning">警告 ${warns}</fluent-badge>` : ''}`;
+  const pending = hard.filter(q => q.status === 'not_run').length;
+  return `<fluent-badge appearance="tint" color="${fails ? 'danger' : pending ? 'warning' : 'success'}">QA ${fails ? `不合格 ${fails}` : `合格 ${hard.filter(q => q.status === 'pass').length}/${hard.length}`}</fluent-badge>${pending ? `<fluent-badge appearance="tint" color="warning">未実施 ${pending}（書き出し時に検査）</fluent-badge>` : ''}${warns ? `<fluent-badge appearance="tint" color="warning">警告 ${warns}</fluent-badge>` : ''}`;
 }
 
 // ---------------- settings / provider ----------------
@@ -86,7 +87,7 @@ async function refreshProvider() {
     const h = await api('/api/health');
     const names = { 'azure-openai': `Azure OpenAI（${h.llm_model ?? ''}）`, copilot: 'GitHub Copilot（インストール済み CLI）', none: 'AI なし（音声の盛り上がりで選定）' };
     const sel = h.llm_provider !== 'none' && !h.llm_model ? 'AI なし（設定した AI が使えません）' : names[h.llm_provider] ?? h.llm_provider;
-    $('#provider').textContent = `${h.local_only ? 'ローカルのみ · ' : ''}書き起こし: ${h.asr === 'none' ? 'なし' : 'Azure AI Speech'} · 選定: ${sel}`;
+    $('#provider').textContent = `${h.local_only ? 'LLM不使用モード · ' : ''}書き起こし: ${h.asr === 'none' ? 'なし' : 'Azure AI Speech'} · 選定: ${sel}`;
     return h;
   } catch { $('#provider').textContent = ''; }
 }
@@ -96,9 +97,15 @@ function llmChoice(value, title, lines, unavailable) {
     <fluent-radio slot="input" value="${value}" ${unavailable ? 'disabled' : ''}></fluent-radio>
   </fluent-field>`;
 }
+function transmissionNotice(s) {
+  const t = s.transmission;
+  if (!t) return info('送信先を確認できません。生成前に設定を確認してください。', 'warning');
+  return info(`${t.llm_disabled ? 'LLM不使用モード：LLMには送信しません。' : `LLMへの送信先：${t.llm_destination ?? '未設定'}（書き起こしの文章と音量の要約）。`}
+    ${t.asr_endpoint ? `字幕用の音声は ${t.asr_endpoint} に送信します。完全オフラインではありません。認証先：${t.authentication}。` : 'ASRは未設定です。キャッシュがない音声の書き起こしはできません。'}`);
+}
 $('#settings-btn').addEventListener('click', async () => {
   const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
-  const local = s.local_only ? 'ローカルのみモードで起動しています' : '';
+  const local = s.local_only ? 'LLM不使用モードで起動しています' : '';
   const choices = [
     ['azure-openai', `Azure OpenAI（${s.azure_deployment}）`, [
       'おすすめ。JSON スキーマで出力を固定するため、候補の形式が崩れにくい方式です。',
@@ -110,7 +117,7 @@ $('#settings-btn').addEventListener('click', async () => {
       '送るもの：書き起こしの文章と音量の要約を GitHub に送ります。料金は Copilot のプランに含まれます。',
       '出力形式を強制できないため、まれに形式エラーになることがあります。',
     ], local || (s.copilot_cli ? '' : 'Copilot CLI が見つかりません（winget install GitHub.Copilot）')],
-    ['none', 'AI を使わない', [
+    ['none', 'LLM を使わない', [
       '音量のピーク（盛り上がり）の周りを切り出します。選定のために外部へ送るものはなく、AI の料金もかかりません。',
       '話の内容は考慮しません。ツッコミテロップなど、AI が必要な機能は使えません。',
     ], ''],
@@ -118,7 +125,7 @@ $('#settings-btn').addEventListener('click', async () => {
   const cur = choices.find(c => c[0] === s.llm_provider);
   $('#settings-body').innerHTML = `
     <p id="llm-label">ハイライトを選ぶ AI を選んでください。字幕用の書き起こし${s.asr_configured ? '（Azure AI Speech）' : ''}はどれを選んでも同じです。</p>
-    ${s.local_only ? info('ローカルのみモードのため、ハイライト選定には AI を使いません（「AI を使わない」に固定）。字幕用の書き起こしは引き続き使います。') : ''}
+    ${transmissionNotice(s)}
     ${!s.local_only && cur?.[3] ? info(`設定されている「${cur[1]}」は使えないため、現在は AI を使わずに選んでいます。`, 'warning') : ''}
     <fluent-radio-group id="llm" orientation="vertical" aria-labelledby="llm-label" value="${esc(s.llm_provider)}">
       ${choices.map(([v, t, l, u]) => llmChoice(v, t, l, u)).join('')}
@@ -133,7 +140,7 @@ $('#settings-btn').addEventListener('click', async () => {
     const radios = $$('#llm fluent-radio');
     const value = radios.find(r => r.checked)?.value;
     if (!value || value === s.llm_provider) return;
-    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: value } }); s.llm_provider = value; $('#settings-body fluent-message-bar[intent=warning]')?.remove(); await refreshProvider(); }
+    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: value } }); s.llm_provider = value; $('#settings-body fluent-message-bar[intent=warning]')?.remove(); await refreshProvider(); const current = await api('/api/settings'); if ($('#transmission')) $('#transmission').innerHTML = transmissionNotice(current); }
     catch (e) { radios.forEach(r => { r.checked = r.value === s.llm_provider; }); $('#settings-body').insertAdjacentHTML('afterbegin', errorBar(e)); }
   });
   $('#settings-dialog').show();
@@ -307,7 +314,7 @@ function confirmDelete(p, opener) {
 
 // ---------------- project: assets + rights + pattern + generate ----------------
 async function project(id) {
-  const [d, presets, bgmList, kitView] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit')]);
+  const [d, presets, bgmList, kitView, settings] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings')]);
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
@@ -495,6 +502,7 @@ async function project(id) {
         </div>
         </div>
         <div class="col-foot">
+          <div id="transmission">${transmissionNotice(settings)}</div>
           ${estimate ? `<p class="caption" id="costLine"></p>` : ''}
           <div id="genMsg"></div>
           <fluent-button appearance="primary" id="gen" ${notReady ? 'aria-describedby="genHint"' : ''}>候補を3本つくる</fluent-button>
@@ -822,9 +830,9 @@ async function candidates(j) {
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">選定: ${esc(j.llm_model ?? '')} · プロンプト ${esc(j.prompt_version ?? '')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
     <div class="grid cols-cands">
-      ${list.map(({ candidate: c, preview_url, preview }) => `
+      ${list.map(({ candidate: c, preview_url, preview, preview_stale }) => `
         <article class="card stack" aria-label="候補 ${c.rank}">
-          <div class="card-head"><b>#${c.rank}</b><span class="badges">${qaBadges(preview?.qa)}<fluent-badge appearance="tint" color="brand">${(c.segments.reduce((a, s) => a + s.t1 - s.t0, 0)).toFixed(0)}秒 素材</fluent-badge>${c.source === 'fallback' ? '<fluent-badge appearance="tint" color="warning">信号ベース</fluent-badge>' : ''}</span></div>
+          <div class="card-head"><b>#${c.rank}</b><span class="badges">${preview_stale ? '<fluent-badge appearance="tint" color="warning">プレビュー・QAは編集前の結果</fluent-badge>' : qaBadges(preview?.qa)}<fluent-badge appearance="tint" color="brand">${(c.segments.reduce((a, s) => a + s.t1 - s.t0, 0)).toFixed(0)}秒 素材</fluent-badge>${c.source === 'fallback' ? '<fluent-badge appearance="tint" color="warning">信号ベース</fluent-badge>' : ''}</span></div>
           ${preview_url ? phone(preview_url) : '<p class="muted">プレビューなし</p>'}
           <div class="headline">${esc(c.headline || c.hook_text || '（見出しなし）')}</div>
           <div class="caption">${c.segments.map(s => `${fmt(s.t0)}–${fmt(s.t1)}`).join(' + ')}</div>
@@ -861,11 +869,11 @@ function seriesView(j, list) {
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">${first.requested_parts ? `${first.requested_parts}本に指定（1本あたり 約${(first.target_sec / 60).toFixed(1)}分）` : `1本あたり 約${(first.target_sec / 60).toFixed(1)}分の指定`} · 合計 ${fmt(total)} · 章分け: ${esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : '書き起こしの語彙の変化（AI なし）')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
     <div class="grid cols-cands">
-      ${list.map(({ candidate: c, preview_url, preview }) => {
+      ${list.map(({ candidate: c, preview_url, preview, preview_stale }) => {
         const se = c.series;
         return `
         <article class="card stack" aria-label="${esc(se.label)}">
-          <div class="card-head"><b>${esc(se.label)}</b><span class="badges">${qaBadges(preview?.qa)}<fluent-badge appearance="tint" color="brand">${preview ? fmt(preview.duration) : '—'}</fluent-badge></span></div>
+          <div class="card-head"><b>${esc(se.label)}</b><span class="badges">${preview_stale ? '<fluent-badge appearance="tint" color="warning">プレビュー・QAは編集前の結果</fluent-badge>' : qaBadges(preview?.qa)}<fluent-badge appearance="tint" color="brand">${preview ? fmt(preview.duration) : '—'}</fluent-badge></span></div>
           ${preview_url ? phone(preview_url) : '<p class="muted">プレビューなし</p>'}
           <div class="headline">${esc(c.hook_text)}</div>
           <div class="caption">元動画の ${fmt(se.body.t0)}–${fmt(se.body.t1)}（本編）</div>
@@ -950,6 +958,7 @@ function wireApprovals(j, list) {
       : e?.state === 'rendering' ? esc(e.step ? `実行中: ${e.step}` : e.message ?? '')
       : e?.state === 'failed' ? `<span class="fail">書き出しできませんでした。</span> <a href="#/render/${esc(e.render_id)}">理由を見る</a>${last ? ` · 前回の ${last}` : ''}`
       : e?.state === 'cancelled' ? `書き出しを取り消しました。${last ? ` 前回の ${last}` : ''}`
+      : x.final_render_stale ? '<span class="warnc">編集後のため、本番QA・書き出し結果は失効しています。</span>'
       : last ? `書き出し済み: ${last}` : '');
   };
   const showBatch = () => {
@@ -1026,7 +1035,7 @@ function wireApprovals(j, list) {
 // ---------------- review & edit ----------------
 async function review(epId) {
   setSteps(4);
-  let { plan, qa } = await api(`/api/editplans/${epId}`);
+  let { plan, qa, approval, final_render_stale: finalStale } = await api(`/api/editplans/${epId}`);
   const job = await api(`/api/jobs/${plan.provenance.job_id}`);
   const cands = await api(`/api/jobs/${job.id}/candidates`);
   const me = cands.find(x => x.candidate.edit_plan_id === epId);
@@ -1036,7 +1045,7 @@ async function review(epId) {
   let tr = await api(`/api/assets/${plan.audio.master}/transcript`);
   const capStyle = (await api('/api/presets')).find(x => x.id === plan.preset.id)?.telop?.caption ?? {};
   const roleName = { teaser: '先出し', reaction: 'リアクション', wide: '引き', recap: 'おさらい', next: '次回予告' };
-  let previewUrl = me?.preview_url, stale = false;
+  let previewUrl = me?.preview_url, stale = me?.preview_stale ?? false;
   const typeLabel = { caption: '字幕', emphasis: '強調', hook: 'フック', headline: '見出し', tsukkomi: 'ツッコミ', sfx: '擬音', counter: 'カウンター' };
   const width = (s) => [...s].reduce((a, c) => a + (c.charCodeAt(0) < 0x2e80 || (c.charCodeAt(0) >= 0xff61 && c.charCodeAt(0) <= 0xffdc) ? 0.5 : 1), 0);
   // body time → time in the rendered video (mirrors Planning.InsertMap: inserts push later content back)
@@ -1047,7 +1056,9 @@ async function review(epId) {
   const insertName = { opening: 'オープニング', closing: 'クロージング', card: '場面転換カード' };
 
   const draw = () => {
-    const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail');
+    const unapprovedText = plan.telops.some(t => t.enabled && !t.approved) || active().some(i => i.kind === 'card' && i.text && !i.approved);
+    const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail'
+      && !(q.check_id === 'H-08' && approval?.stale && !unapprovedText));
     const maxW = capStyle.max_chars_per_line ?? 14, maxCps = capStyle.max_cps ?? 6, maxLines = capStyle.max_lines ?? 1;
     main.innerHTML = `
       <div class="row" style="justify-content:space-between"><h1>確認・修正</h1>
@@ -1085,7 +1096,9 @@ async function review(epId) {
           <div class="row"><fluent-button size="small" data-adj="end:-1">終了を1文前へ</fluent-button><fluent-button size="small" data-adj="end:1">終了を1文後へ</fluent-button></div>`}
           <h3 style="margin-top:8px">自動チェック</h3>
           <div>${qaList(qa)}</div>
-          <fluent-button appearance="primary" id="export" ${hardFail ? 'disabled' : ''}>書き出し（1080×1920）</fluent-button>
+          <div id="review-approval">${approvalBadge(approval)}</div>
+          ${finalStale ? info('編集後のため、本番QA・書き出し結果は失効しています。現在の内容で再承認・再書き出ししてください。', 'warning') : ''}
+          <fluent-button appearance="primary" id="export" ${hardFail ? 'disabled' : ''}>この内容を承認して書き出す（1080×1920）</fluent-button>
           ${hardFail ? '<span class="caption fail">不合格の項目を直すと書き出せます</span>' : ''}
           <div id="msg"></div>
         </section>
@@ -1099,7 +1112,17 @@ async function review(epId) {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
               return `<tr class="${t.enabled ? '' : 'off'}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
                 <td class="caption">${finalT(t.start).toFixed(1)}–${finalT(t.end, true).toFixed(1)}</td>
-                <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}"></td>
+                <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}">
+                  ${['emphasis', 'headline', 'hook', 'counter'].includes(t.type) ? (() => {
+                    const words = t.source_word_ids.map(id => tr.words.find(w => w.id === id)).filter(Boolean);
+                    const evidence = words.length ? `話者${[...new Set(words.map(w => w.speaker))].join('/')}・${words[0].t0.toFixed(1)}–${words.at(-1).t1.toFixed(1)}秒「${words.map(w => w.text).join('')}」` : '根拠発話が未指定です';
+                    return `<p class="caption evidence" data-evidence="${esc(t.id)}">${esc(evidence)}</p>
+                      <label class="caption">根拠発話 <select class="native evidence-select" data-id="${esc(t.id)}" aria-label="根拠発話 ${esc(t.id)}"><option value="">選択してください</option>
+                      ${tr.sentences.filter(s => plan.timeline.some(c => s.t1 > (c.audio_in ?? c.src_in) && s.t0 < (c.audio_in ?? c.src_in) + c.src_out - c.src_in)).map(s => {
+                        const ids = tr.words.slice(s.first_word, s.last_word + 1).filter(w => plan.timeline.some(c => w.t0 >= (c.audio_in ?? c.src_in) - 0.15 && w.t1 <= (c.audio_in ?? c.src_in) + c.src_out - c.src_in + 0.15)).map(w => w.id);
+                        return `<option value="${esc(JSON.stringify(ids))}" ${JSON.stringify(ids) === JSON.stringify(t.source_word_ids) ? 'selected' : ''}>話者${s.speaker}・${s.t0.toFixed(1)}秒 ${esc(s.text)}</option>`;
+                      }).join('')}</select></label>`;
+                  })() : ''}</td>
                 <td class="${w > maxW * (t.type === 'caption' ? maxLines : 1) && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
                 <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td>
                 <td><fluent-switch data-id="${esc(t.id)}" class="en" ${t.enabled ? 'checked' : ''} aria-label="表示"></fluent-switch>${t.approved ? '' : `<fluent-button size="small" data-approve="${esc(t.id)}">承認</fluent-button>`}</td></tr>`;
@@ -1109,7 +1132,7 @@ async function review(epId) {
       </div>`;
     wireSafeToggle();
     const patch = async (ops) => {
-      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; stale = stale || r.preview_stale; draw(); }
+      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; draw(); }
       catch (e) { $('#msg').innerHTML = errorBar(e); }
     };
     $$('input.wd').forEach(inp => inp.addEventListener('change', async () => {
@@ -1117,6 +1140,7 @@ async function review(epId) {
       catch (e) { $('#msg').innerHTML = errorBar(e); }
     }));
     $$('input.telop').forEach(inp => inp.addEventListener('change', () => patch([{ op: 'replace_text', target: inp.dataset.id, text: inp.value }])));
+    $$('select.evidence-select').forEach(select => select.addEventListener('change', () => patch([{ op: 'set_evidence', target: select.dataset.id, source_word_ids: select.value ? JSON.parse(select.value) : [] }])));
     $$('fluent-switch.en').forEach(sw => sw.addEventListener('change', () => patch([{ op: 'set_enabled', target: sw.dataset.id, enabled: sw.checked }])));
     $$('fluent-switch[data-type]').forEach(sw => sw.addEventListener('change', () => patch([{ op: 'set_type_enabled', type: sw.dataset.type, enabled: sw.checked }])));
     $$('[data-approve]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve', target: b.dataset.approve }])));
@@ -1144,7 +1168,10 @@ async function review(epId) {
       catch (e) { clearInterval(tick); $('#msg').innerHTML = errorBar(e); $('#repreview').removeAttribute('disabled'); }
     });
     $('#export').addEventListener('click', async () => {
-      try { const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`; }
+      try {
+        await api(`/api/jobs/${job.id}/candidates/${encodeURIComponent(me.candidate.id)}/approval`, { method: 'PUT', body: { approved: true } });
+        const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`;
+      }
       catch (e) { $('#msg').innerHTML = errorBar(e) + (e.detail ? qaList(e.detail) : ''); }
     });
   };
@@ -1185,6 +1212,10 @@ async function exportView(renderId) {
       clearInterval(timer);
       main.innerHTML = `<h1>書き出しを取り消しました</h1>${info(s.message ?? '書き出しを取り消しました')}
         <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}" style="margin-top:12px">確認・修正に戻る</fluent-anchor-button>`;
+    } else if (s.state === 'stale') {
+      clearInterval(timer);
+      main.innerHTML = `<h1>書き出し結果は失効しています</h1>${info('編集計画が変更されたため、承認・本番QA・書き出し結果は現在の内容に使えません。再承認して書き出してください。', 'warning')}
+        <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}">確認・修正に戻る</fluent-anchor-button>`;
     } else if (s.state === 'failed') {
       clearInterval(timer);
       main.innerHTML = `<h1>書き出しできませんでした</h1>${errorBar({ message: s.message, code: s.error_code })}${s.failures ? `<section class="card">${qaList(s.failures)}</section>` : ''}

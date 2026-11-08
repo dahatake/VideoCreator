@@ -165,12 +165,22 @@ public static class PlanBuilder
         if (maskWords.Count > 0) inserts = inserts.Select(i => i with { Text = Masking.MaskText(i.Text, maskWords) }).ToList();
         if (maskWords.Count > 0 && series != null)
             series = series with { SeriesTitle = Masking.MaskText(series.SeriesTitle, maskWords), Chapters = series.Chapters.Select(c => c with { Title = Masking.MaskText(c.Title, maskWords) }).ToList() };
+        telops = telops.Select(t => TelopGrounding.Bind(t, packed, telopTr)).ToList();
+        foreach (var t in telops.Where(t => TelopGrounding.RequiresWords(t, series: series)
+                     && TelopGrounding.Problems(t, packed, telopTr, series: series).Count > 0).ToList())
+        {
+            notes.Add($"テロップ「{t.Text}」は区間内の発話との対応を確認できないため表示しません");
+            telops.Remove(t);
+        }
         var plan = new EditPlan
         {
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
             Series = series, Inserts = inserts,
         };
+        var (min, max, durationCap) = Qa.QaEngine.DurationRange(plan, p);
+        if (plan.Duration < min - 0.05 || plan.Duration > max + 0.05 || plan.TotalDuration > durationCap + 0.05)
+            throw new PlanException("E-SOL-INFEASIBLE", $"編集後の尺（本編{plan.Duration:0.##}秒・全体{plan.TotalDuration:0.##}秒）が条件を満たしません");
         return (plan, notes);
     }
 

@@ -70,6 +70,8 @@ _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg
     var rt = app.Services.GetRequiredService<Runtime>();
     var n = RenderMaintenance.RemoveDuplicateFinals(rt.Store, rt.Options.ResolvedDataDir);
     if (n > 0) app.Logger.LogInformation("removed {Count} duplicate export records", n);
+    var pending = RenderMaintenance.MarkLegacyPreviewChecksPending(rt.Store);
+    if (pending > 0) app.Logger.LogInformation("marked final-only checks pending in {Count} legacy preview records", pending);
     app.Services.GetRequiredService<ProjectsLocation>().Recover();
 }
 app.Lifetime.ApplicationStarted.Register(() =>

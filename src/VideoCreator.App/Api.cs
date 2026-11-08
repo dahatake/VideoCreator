@@ -51,6 +51,9 @@ public static class Api
         a.At, a.By, Stale = plan == null || EditPlanFingerprint.Of(plan) != a.PlanHash,
     };
 
+    static bool Stale(Runtime rt, Render r) => RenderValidity.IsStale(r, rt.Store.Get<EditPlan>(Kinds.EditPlan, r.EditplanId));
+    static IResult StaleError() => Error(409, "E-PLAN-STALE", "編集計画が変更されたため承認・QA・書き出し結果は失効しました。内容を確認して再承認してください");
+
     /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
     {
@@ -86,6 +89,7 @@ public static class Api
             llm_model = rt.Llm?.Model,
             copilot_cli = rt.CopilotCli,
             local_only = rt.LocalOnly,
+            transmission = rt.Transmission,
             faces_model = rt.Faces.Available,
             bgm_tracks = rt.Audio.Tracks.Count,
             presets = rt.Presets.Count,
@@ -95,6 +99,7 @@ public static class Api
         {
             llm_provider = rt.LlmProvider,
             local_only = rt.LocalOnly,
+            transmission = rt.Transmission,
             copilot_cli = rt.CopilotCli,
             copilot_model = rt.Options.Llm.CopilotModel,
             azure_deployment = rt.Options.Llm.Deployment,
@@ -262,13 +267,26 @@ public static class Api
             var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
             return a == null ? Error(404, "E-NOT-FOUND", "素材がありません") : Results.Json(rt.CreateRunner().LoadTranscript(a), Json.Options);
         });
-        api.MapPatch("/assets/{id}/transcript", (Runtime rt, string id, PatchTranscript req) =>
+        api.MapPatch("/assets/{id}/transcript", (Runtime rt, JobQueue q, string id, PatchTranscript req) => rt.Store.Atomic<IResult>(() =>
         {
             var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
             if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
-            try { return Results.Json(rt.CreateRunner().EditTranscript(a, req.Edits.Select(e => (e.WordId, e.Text))), Json.Options); }
+            var masters = rt.Store.List<SourceAsset>(Kinds.Asset).Where(x => x.Sha256[..16] == a.Sha256[..16]).Select(x => x.Id).ToHashSet();
+            var plans = rt.Store.List<EditPlan>(Kinds.EditPlan).Where(p => masters.Contains(p.Audio.Master)).ToList();
+            if (plans.Any(p => q.ActiveExport(p.EditplanId) != null)) return StaleError();
+            try
+            {
+                var transcript = rt.CreateRunner().EditTranscript(a, req.Edits.Select(e => (e.WordId, e.Text)));
+                foreach (var plan in plans)
+                    rt.Store.Put(Kinds.EditPlan, plan.EditplanId, plan.ProjectId, plan with
+                    {
+                        Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits,
+                            new EditRecord(DateTimeOffset.Now, "transcript", a.Id, null, string.Join(",", req.Edits.Select(e => e.WordId)))] },
+                    });
+                return Results.Json(transcript, Json.Options);
+            }
             catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { return Error(422, "E-VALIDATION", ex.Message); }
-        });
+        }));
 
         // ---- BGM (FR-AUD-01..04): synthesised library + user-supplied tracks with a rights confirmation ----
         api.MapGet("/bgm", async (Runtime rt, string? project_id, CancellationToken ct) =>
@@ -412,31 +430,34 @@ public static class Api
                 {
                     candidate = c,
                     preview = c.PreviewRenderId is string r ? rt.Store.Get<Render>(Kinds.Render, r) : null,
+                    preview_stale = c.PreviewRenderId is string pr && rt.Store.Get<Render>(Kinds.Render, pr) is { } preview && RenderValidity.IsStale(preview, plan),
                     preview_url = c.PreviewRenderId is string r2 ? $"/api/media/{r2}" : null,
                     approval = ApprovalView(c, plan),
                     // newest export of this plan in this session (queued / rendering / failed / cancelled / done)
                     export = plan == null ? null : q.LatestExport(plan.EditplanId),
-                    final_render_id = plan == null ? null : rt.Store.List<Render>(Kinds.Render, plan.EditplanId).FirstOrDefault(x => x.Kind == "final")?.Id,
+                    final_render_id = plan == null ? null : rt.Store.List<Render>(Kinds.Render, plan.EditplanId).FirstOrDefault(x => x.Kind == "final" && !RenderValidity.IsStale(x, plan))?.Id,
+                    final_render_stale = plan != null && rt.Store.List<Render>(Kinds.Render, plan.EditplanId).FirstOrDefault(x => x.Kind == "final") is { } latest && RenderValidity.IsStale(latest, plan),
                 };
             });
             return Results.Json(cands, Json.Options);
         });
-        api.MapPut("/jobs/{jobId}/candidates/{id}/approval", (Runtime rt, string jobId, string id, ApproveCandidateRequest req) =>
+        api.MapPut("/jobs/{jobId}/candidates/{id}/approval", (Runtime rt, JobQueue q, string jobId, string id, ApproveCandidateRequest req) => rt.Store.Atomic<IResult>(() =>
         {
             var c = rt.Store.Get<Candidate>(Kinds.Candidate, id);
             if (c == null || !rt.Store.Ids(Kinds.Candidate, jobId).Contains(id)) return Error(404, "E-NOT-FOUND", "候補がありません");
             var plan = c.EditPlanId is string ep ? rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) : null;
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            if (q.ActiveExport(plan.EditplanId) != null) return StaleError();
             if (req.Approved)
             {
-                var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
+                var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan) with { Approval = null }).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
                 if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動チェックで不合格の項目があるため承認できません。「確認・修正」で直してください", hard);
             }
             c = c with { Approval = req.Approved ? new CandidateApproval(DateTimeOffset.Now, Environment.UserName, EditPlanFingerprint.Of(plan)) : null };
             rt.Store.Put(Kinds.Candidate, c.Id, jobId, c);
             return Results.Json(new { candidate_id = c.Id, approval = ApprovalView(c, plan) }, Json.Options);
-        }).WithSummary("Approve (bound to the current edit plan) or withdraw the approval of a candidate");
-        api.MapPost("/jobs/{jobId}/exports", (Runtime rt, JobQueue q, HttpContext ctx, string jobId, BatchExportRequest req) =>
+        })).WithSummary("Approve (bound to the current edit plan) or withdraw the approval of a candidate");
+        api.MapPost("/jobs/{jobId}/exports", (Runtime rt, JobQueue q, HttpContext ctx, string jobId, BatchExportRequest req) => rt.Store.Atomic<IResult>(() =>
         {
             if (rt.Store.Get<Job>(Kinds.Job, jobId) == null) return Error(404, "E-NOT-FOUND", "ジョブがありません");
             var ids = (req.CandidateIds ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
@@ -445,6 +466,7 @@ public static class Api
             var runner = rt.CreateRunner();
             var picked = new List<(Candidate C, EditPlan Plan)>();
             var problems = new List<object>();
+            bool stale = false;
             // all-or-nothing: every selected candidate is checked before any export starts
             foreach (var id in ids)
             {
@@ -453,12 +475,12 @@ public static class Api
                 string name = c.Series?.Label ?? $"#{c.Rank}";
                 if (plan == null) { problems.Add(new { candidate_id = id, name, reason = "編集計画がありません" }); continue; }
                 if (c.Approval == null) problems.Add(new { candidate_id = id, name, reason = "承認されていません" });
-                else if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) problems.Add(new { candidate_id = id, name, reason = "承認後に修正されています。もう一度確認して承認してください" });
+                else if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) { stale = true; problems.Add(new { candidate_id = id, name, reason = "承認後に修正されています。もう一度確認して承認してください" }); }
                 else if (q.ActiveExport(plan.EditplanId) != null) problems.Add(new { candidate_id = id, name, reason = "書き出し中です" });
                 else if (QaEngine.PlanChecks(runner.QaContextFor(plan)).Any(x => x.Hard && x.Status == QaStatus.Fail)) problems.Add(new { candidate_id = id, name, reason = "自動チェックで不合格の項目があります" });
                 else picked.Add((c, plan));
             }
-            if (problems.Count > 0) return Error(409, "E-NOT-APPROVED", "書き出せない候補があるため、どれも書き出していません", problems);
+            if (problems.Count > 0) return Error(409, stale ? "E-PLAN-STALE" : "E-NOT-APPROVED", "書き出せない候補があるため、どれも書き出していません", problems);
             var started = new List<BatchExportItem>();
             foreach (var (c, plan) in picked.OrderBy(x => x.C.Series?.Part ?? x.C.Rank))
             {
@@ -469,7 +491,7 @@ public static class Api
             }
             ctx.Response.Headers.Location = $"/api/jobs/{Uri.EscapeDataString(jobId)}/candidates";
             return Results.Json(new BatchExportResponse(started), Json.Options, statusCode: 202);
-        }).WithSummary("Export one or more approved candidates (validated together; none starts if any is not exportable)");
+        })).WithSummary("Export one or more approved candidates (validated together; none starts if any is not exportable)");
         api.MapPost("/jobs/{jobId}/regenerate", (Runtime rt, JobQueue q, string jobId, Regenerate req) =>
         {
             var prev = rt.Store.Get<Job>(Kinds.Job, jobId);
@@ -483,12 +505,16 @@ public static class Api
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
-            return Results.Json(new { plan, qa = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)), duration = plan.Duration }, Json.Options);
+            var candidate = plan.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
+            var staleFinal = rt.Store.List<Render>(Kinds.Render, id).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, plan);
+            return Results.Json(new { plan, plan_hash = EditPlanFingerprint.Of(plan), qa = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)),
+                approval = candidate == null ? null : ApprovalView(candidate, plan), final_render_stale = staleFinal, qa_stale = staleFinal, duration = plan.Duration }, Json.Options);
         });
-        api.MapPatch("/editplans/{id}", async (Runtime rt, string id, PatchPlan req, CancellationToken ct) =>
+        api.MapPatch("/editplans/{id}", async (Runtime rt, JobQueue q, string id, PatchPlan req, CancellationToken ct) =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            if (q.ActiveExport(id) != null) return StaleError();
             var runner = rt.CreateRunner();
             try
             {
@@ -511,8 +537,18 @@ public static class Api
                     updated = PlanEditor.Reapply(rebuilt with { EditplanId = plan.EditplanId }, updated, adj.Op == "replan");
                     updated = updated with { Provenance = updated.Provenance with { Edits = [.. updated.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "adjust", adj.Edge ?? "end", null, (adj.Delta ?? 1).ToString())] } };
                 }
-                rt.Store.Put(Kinds.EditPlan, id, plan.ProjectId, updated);
-                return Results.Json(new { plan = updated, qa = QaEngine.PlanChecks(runner.QaContextFor(updated)), duration = updated.Duration, preview_stale = req.Ops.Any(o => o.Op is "adjust" or "replan") }, Json.Options);
+                return rt.Store.Atomic<IResult>(() =>
+                {
+                    if (q.ActiveExport(id) != null || rt.Store.Get<EditPlan>(Kinds.EditPlan, id) is not { } current
+                        || EditPlanFingerprint.Of(current) != EditPlanFingerprint.Of(plan)) return StaleError();
+                    rt.Store.Put(Kinds.EditPlan, id, plan.ProjectId, updated);
+                    var c = plan.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
+                    var finalStale = rt.Store.List<Render>(Kinds.Render, id).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, updated);
+                    return Results.Json(new { plan = updated, plan_hash = EditPlanFingerprint.Of(updated),
+                        qa = QaEngine.PlanChecks(runner.QaContextFor(updated)), duration = updated.Duration,
+                        preview_stale = EditPlanFingerprint.Of(updated) != EditPlanFingerprint.Of(plan),
+                        approval = c == null ? null : ApprovalView(c, updated), qa_stale = finalStale, final_render_stale = finalStale }, Json.Options);
+                });
             }
             catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { return Error(422, "E-VALIDATION", ex.Message); }
         });
@@ -534,10 +570,13 @@ public static class Api
         });
         api.MapGet("/editplans/{id}/preview/progress", (JobQueue q, string id) =>
             Results.Json(q.Previews.TryGetValue(id, out var p) ? p : new PreviewProgress(false, 0, null), Json.Options));
-        api.MapPost("/editplans/{id}/render", (Runtime rt, JobQueue q, string id) =>
+        api.MapPost("/editplans/{id}/render", (Runtime rt, JobQueue q, string id) => rt.Store.Atomic<IResult>(() =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            var candidate = plan.Provenance.CandidateId is { } cId ? rt.Store.Get<Candidate>(Kinds.Candidate, cId) : null;
+            if (candidate?.Approval == null) return Error(409, "E-NOT-APPROVED", "内容を確認し、候補を承認してから書き出してください");
+            if (candidate.Approval.PlanHash != EditPlanFingerprint.Of(plan)) return StaleError();
             var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
             if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動QAのハード制約に違反しています", hard);
             if (q.ActiveExport(id) is { } active) return Error(409, "E-EXPORT-BUSY", "この動画は書き出し中です。完了を待ってください", new { render_id = active.RenderId });
@@ -545,10 +584,11 @@ public static class Api
             var renderId = "r_" + Guid.NewGuid().ToString("N")[..12];
             q.EnqueueExport(renderId, plan, rank);
             return Results.Json(new { render_id = renderId }, Json.Options, statusCode: 202);
-        });
+        }));
         api.MapGet("/renders/{id}", (Runtime rt, JobQueue q, string id) =>
         {
-            if (rt.Store.Get<Render>(Kinds.Render, id) is Render r) return Results.Json(new { state = "done", render = r }, Json.Options);
+            if (rt.Store.Get<Render>(Kinds.Render, id) is Render r) return Results.Json(new { state = Stale(rt, r) ? "stale" : "done", render = r,
+                qa_stale = Stale(rt, r), error_code = Stale(rt, r) ? "E-PLAN-STALE" : null, editplan_id = r.EditplanId }, Json.Options);
             return q.Exports.TryGetValue(id, out var s) ? Results.Json(s, Json.Options) : Error(404, "E-NOT-FOUND", "書き出しがありません");
         });
         api.MapPost("/renders/{id}/cancel", (JobQueue q, string id) =>
@@ -558,6 +598,7 @@ public static class Api
         api.MapGet("/renders/{id}/files/{key}", (Runtime rt, string id, string key) =>
         {
             var r = rt.Store.Get<Render>(Kinds.Render, id);
+            if (r != null && Stale(rt, r)) return StaleError();
             if (r == null || !r.Outputs.TryGetValue(key, out var f) || !File.Exists(f)) return Error(404, "E-NOT-FOUND", "ファイルがありません");
             var type = Path.GetExtension(f) switch { ".png" => "image/png", ".mp4" => "video/mp4", ".srt" or ".md" or ".ass" => "text/plain; charset=utf-8", ".json" => "application/json", _ => "application/octet-stream" };
             return Results.File(f, type, enableRangeProcessing: true);
@@ -566,11 +607,16 @@ public static class Api
         {
             var r = rt.Store.Get<Render>(Kinds.Render, id);
             if (r == null) return Error(404, "E-NOT-FOUND", "書き出しがありません");
+            if (Stale(rt, r)) return StaleError();
             if (OperatingSystem.IsWindows()) System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{r.Path}\"");
             return Results.Accepted();
         });
         api.MapGet("/media/{renderId}", (Runtime rt, string renderId) =>
-            rt.Store.Get<Render>(Kinds.Render, renderId) is Render r && File.Exists(r.Path) ? Results.File(r.Path, "video/mp4", enableRangeProcessing: true) : Error(404, "E-NOT-FOUND", "動画がありません"));
+        {
+            var r = rt.Store.Get<Render>(Kinds.Render, renderId);
+            if (r != null && r.Kind == "final" && Stale(rt, r)) return StaleError();
+            return r != null && File.Exists(r.Path) ? Results.File(r.Path, "video/mp4", enableRangeProcessing: true) : Error(404, "E-NOT-FOUND", "動画がありません");
+        });
     }
 
     static List<Interval> MergedSegments(EditPlan plan)
@@ -605,6 +651,8 @@ public static class Api
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
         var runner = rt.CreateRunner();
         var mainAsset = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets[0];
+        if (!options.IsSeries && mainAsset.Media.Duration < main.Target.Min)
+            return Error(422, "E-SOL-INFEASIBLE", $"素材が{main.Id}の尺の下限（{main.Target.Min:0.#}秒）より短い");
         if (options.PartMinutes != null && options.Parts != null) return Error(422, "E-VALIDATION", "本数と1本あたりの長さは、どちらか一方だけを指定してください");
         if (options.Parts is int np)
         {

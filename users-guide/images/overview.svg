@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">VideoCreator：用意するもの、操作、成果物</title>
+  <desc id="desc">権利確認済みの発話動画とWindows PC、Speech設定を用意し、素材追加、パターン選択、候補生成、確認修正、書き出しを行う。MP4、字幕、編集計画、サムネイル、メタデータを得る。クラウド送信と手動公開の境界も示す。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f5f8fc"/>
+  <g font-family="'Segoe UI','Meiryo',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">長い動画から、確認して投稿できる動画へ</text>
+    <rect x="28" y="72" width="280" height="255" rx="12" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="108" font-size="22" font-weight="700">1. 用意する</text>
+    <text x="48" y="148" font-size="18">権利確認済みの動画</text>
+    <text x="48" y="180" font-size="18">Windows PC・保存領域</text>
+    <text x="48" y="212" font-size="18">Speechの設定と利用権限</text>
+    <text x="48" y="256" font-size="16">任意：OpenAI / Copilot</text>
+    <text x="48" y="284" font-size="16">BGM・カメラ・登録動画</text>
+    <rect x="360" y="72" width="455" height="255" rx="12" fill="#fff" stroke="#3974a2"/>
+    <text x="380" y="108" font-size="22" font-weight="700">2. アプリで操作する</text>
+    <text x="380" y="148" font-size="18">素材追加・権利確認 → パターン選択</text>
+    <text x="380" y="180" font-size="18">送信先と費用を確認 → 候補を生成</text>
+    <text x="380" y="212" font-size="18">再生・字幕や音を修正 → 書き出し</text>
+    <text x="380" y="256" font-size="16">通常：見どころ候補を最大3件</text>
+    <text x="380" y="284" font-size="16">シリーズ：全体を前編・後編等に分割</text>
+    <rect x="867" y="72" width="305" height="255" rx="12" fill="#e8f5ee" stroke="#28734d"/>
+    <text x="887" y="108" font-size="22" font-weight="700">3. 得られるもの</text>
+    <text x="887" y="148" font-size="18">MP4：1080×1920</text>
+    <text x="887" y="180" font-size="18">SRT / ASS：字幕</text>
+    <text x="887" y="212" font-size="18">JSON：編集計画</text>
+    <text x="887" y="244" font-size="18">サムネイル画像3枚</text>
+    <text x="887" y="276" font-size="18">投稿用メタデータ案</text>
+    <text x="28" y="365" font-size="18">ローカルで映像編集 ／ 通常は音声→Speech、文章・信号要約→任意のLLMへ送信</text>
+    <text x="28" y="402" font-size="18" font-weight="700">自動QAは確認の補助。内容・権利を人が確認し、SNSへの投稿は自分で行います。</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M308 190H352"/><path d="M815 190H859"/></g>
+</svg>

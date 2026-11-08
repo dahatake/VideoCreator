@@ -6,7 +6,7 @@ namespace VideoCreator.Planning;
 /// <summary>FR-TEL-01..05/09/10: builds telops on the OUTPUT timeline from words inside the clips.</summary>
 public static class TelopBuilder
 {
-    public const double HookSeconds = 2.5, EmphasisSeconds = 1.6, CaptionHoldMax = 0.6;
+    public const double HookSeconds = 2.5, EmphasisSeconds = 1.6, CaptionHoldMax = 0.5;
 
     public sealed record Mapped(Word Word, double Start, double End, int ClipIndex);
 
@@ -34,12 +34,14 @@ public static class TelopBuilder
         double total = clips.Sum(c => c.Length);
         var mapped = MapWords(clips, tr);
         var cap = p.Telop.Caption;
+        var captionClipEnds = new Dictionary<string, double>();
         int n = 0;
 
         if (p.HasTelop("caption"))
         {
             foreach (var group in mapped.GroupBy(m => m.ClipIndex))
             {
+                double clipEnd = clips.Take(group.Key + 1).Sum(c => c.Length);
                 foreach (var chunk in Chunk(group.ToList(), Rendering.AssWriter.CaptionLineChars(p) * cap.MaxLines))
                 {
                     var text = JapaneseText.NormalizeTelop(string.Concat(chunk.Select(c => c.Word.Text)));
@@ -49,15 +51,16 @@ public static class TelopBuilder
                         Id = $"t{++n}", Type = TelopType.Caption, Start = R(chunk[0].Start), End = R(chunk[^1].End), Text = text, Style = "Caption",
                         SourceWordIds = chunk.Select(c => c.Word.Id).ToList(), Speaker = chunk[0].Word.Speaker,
                     });
+                    captionClipEnds[$"t{n}"] = clipEnd;
                 }
             }
             // hold captions into following gaps (less flicker) and relieve CPS (FR-TEL-02 step 2)
             telops = telops.OrderBy(t => t.Start).ToList();
             for (int i = 0; i < telops.Count; i++)
             {
-                double next = i + 1 < telops.Count ? telops[i + 1].Start : total;
+                double next = Math.Min(i + 1 < telops.Count ? telops[i + 1].Start : total, captionClipEnds[telops[i].Id]);
                 double need = JapaneseText.DisplayWidth(telops[i].Text) / cap.MaxCps;
-                double end = Math.Min(next, Math.Max(telops[i].End + 0.2, telops[i].Start + need));
+                double end = Math.Min(Math.Min(next, telops[i].End + CaptionHoldMax), Math.Max(telops[i].End + 0.2, telops[i].Start + need));
                 telops[i] = telops[i] with { End = R(Math.Max(Math.Min(telops[i].End, next), end)) };
             }
         }
@@ -91,7 +94,7 @@ public static class TelopBuilder
             if (!string.IsNullOrWhiteSpace(headline) && hs < total) telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Headline, Start = R(hs), End = R(total), Text = headline, Style = "Headline" });
             else if (string.IsNullOrWhiteSpace(headline) && !string.IsNullOrWhiteSpace(hook) && total > HookSeconds) { /* hook only */ }
         }
-        return telops.OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
+        return telops.Select(t => TelopGrounding.Bind(t, clips, tr)).OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
     }
 
     static double R(double x) => Math.Round(x, 3);
@@ -113,7 +116,7 @@ public static class TelopBuilder
         void Flush() { if (phrase.Count > 0) res.AddRange(Balance(phrase, maxChars)); phrase = []; }
         for (int i = 0; i < words.Count; i++)
         {
-            if (phrase.Count > 0 && words[i].Start - phrase[^1].End > 0.6) Flush();
+            if (phrase.Count > 0 && (words[i].Start - phrase[^1].End > 0.6 || words[i].Word.Speaker != phrase[^1].Word.Speaker)) Flush();
             phrase.Add(words[i]);
             if (JapaneseText.BreakScore(words[i].Word.Text) == 4) Flush();
         }

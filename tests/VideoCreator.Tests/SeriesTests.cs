@@ -245,7 +245,7 @@ public class SeriesTests
         {
             var qa = QaEngine.PlanChecks(new QaContext(plan, P4, tr, ["a1"], []));
             Assert.All(qa.Where(q => q.Hard), q => Assert.True(q.Status == QaStatus.Pass, $"{plan.Series!.Label} {q.CheckId} {q.Measured} vs {q.Threshold}"));
-            Assert.Equal(QaStatus.Pass, qa.Single(q => q.CheckId == "S-10").Status);
+            Assert.Equal(QaStatus.Pass, qa.Single(q => q.CheckId == "S-14").Status);
             Assert.Equal(QaStatus.Pass, qa.Single(q => q.CheckId == "S-11").Status);
             Assert.True(plan.Duration > 180, "a series part is not limited to the 180 s short-video cap");
         }
