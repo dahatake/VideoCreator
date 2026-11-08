@@ -8,7 +8,11 @@ public sealed record Project
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string Language { get; init; } = "ja-JP";
     public required string Directory { get; init; }
+    public List<SceneCardImage> SceneCardImages { get; init; } = [];
 }
+
+/// <summary>A project-only card image extracted from a source frame, with provenance for rights checks.</summary>
+public sealed record SceneCardImage(string Path, int Width, int Height, string AssetId, double SourceT);
 
 public enum AssetRole { Main, CamA, CamB, Wide, AudioMaster }
 
@@ -295,6 +299,8 @@ public sealed record Insert
     /// At render time it is re-based on the body's measured loudness, so the bumper ends up exactly as loud as the speech after the whole-file normalisation.</summary>
     public double GainDb { get; init; }
     public bool RightsConfirmed { get; init; }
+    /// <summary>Source asset of an extracted card image; checked again when exporting.</summary>
+    public string? ImageAssetId { get; init; }
     /// <summary>Card text (tsukkomi). Empty for bumpers and for image cards without text.</summary>
     public string Text { get; init; } = "";
     public string TextSource { get; init; } = "";    // ai | fixed | user
@@ -319,6 +325,7 @@ public sealed record BrandFile
     public double Aspect => Height == 0 ? 0 : (double)Width / Height;
     /// <summary>Set when a smaller-than-canvas video was upscaled at registration and the per-file quality check accepted it; renders use this file.</summary>
     public BrandEnhancement? Enhancement { get; init; }
+    public string? ImageAssetId { get; init; }
 }
 
 /// <summary>

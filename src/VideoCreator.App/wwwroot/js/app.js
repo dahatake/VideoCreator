@@ -24,7 +24,7 @@ const ERRORS = { // UX-04: plain-language explanation + what to do next
 };
 
 async function api(path, opts = {}) {
-  const init = { method: opts.method ?? 'GET', headers: { 'X-VideoCreator': '1' } };
+  const init = { method: opts.method ?? 'GET', headers: { 'X-VideoCreator': '1' }, signal: opts.signal };
   if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
   const r = await fetch(path, init);
   const text = await r.text();
@@ -355,11 +355,25 @@ async function project(id) {
             <form id="kitForm" class="stack" style="margin-top:8px">
               <p class="caption">フォルダーのフルパスを指定すると、ファイル名に Opening / Closing を含む動画と、PNG / JPG 画像（カード用）を読み込みます。縦型（9:16）と横型（16:9）の両方があれば、出力に合う方を自動で使います。登録はすべてのプロジェクトで共通です。</p>
               <fluent-text-input id="kitPath" placeholder="C:\\Work\\HubRadio\\OpeningClosing" value="${esc(kitView.kit?.sources?.[0] ?? '')}" aria-label="オープニング・クロージングのフォルダー"></fluent-text-input>
+              <fluent-button id="kitBrowse" type="button" size="small">フォルダーを選ぶ（OS の画面）</fluent-button>
               <label class="caption">カードの長さ（秒） <input class="native" type="number" id="kitCardSec" min="0.5" max="3" step="0.1" value="${esc(kitView.kit?.card_sec ?? 1)}" style="width:72px"></label>
               ${field('1080×1920 より小さい動画を高画質化する（登録時に一度だけ。AI の超解像で細部を補い、この動画で実測して元に忠実になる場合だけ使います。GPU で 1 本 1〜2 分）', `<fluent-checkbox slot="input" id="kitUpscale" ${kitView.kit?.upscale === false ? '' : 'checked'}></fluent-checkbox>`)}
               ${field('これらの動画・画像（ロゴ・音楽・イラストを含む）を使う権利を自分が持っている、または許諾を得ています', '<fluent-checkbox slot="input" id="kitRights"></fluent-checkbox>')}
               <div class="row"><fluent-button type="submit" size="small">登録</fluent-button>${kitView.registered ? '<fluent-button size="small" id="kitClear" type="button">登録を解除</fluent-button>' : ''}</div><div id="kitMsg"></div>
             </form></details>
+          <div class="stack" style="margin-top:12px">
+            <b>動画から場面転換の画像を作る</b>
+            <p class="caption">登録したカード画像がない場合に使います。映像の変化・明るさ・時間分布から代表画像を選び、黒画面や似た画像を除きます。AI に動画を送らず、このプロジェクトだけに保存します。意味上の見どころを保証するものではありません。作成後に候補を生成すると反映されます。</p>
+            ${d.project.scene_card_images?.length ? `<div class="row" style="flex-wrap:wrap">${d.project.scene_card_images.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="場面転換の候補 ${i + 1}、元動画 ${esc(fmt(img.source_t))}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(assets.find(a => a.id === img.asset_id)?.path.split(/[\\/]/).pop() ?? '元動画')} · ${fmt(img.source_t)}</figcaption></figure>`).join('')}</div><p class="caption">${d.project.scene_card_images.length} 枚を作成済み。${kitView.card_images ? '共通の登録済みカード画像を優先します。' : '場面転換で順番に使います。'}既存の画像は上書きしません。</p>` : `
+              <label class="caption">画像を取り出す元動画
+                <select class="native" id="cardSource" aria-label="カード画像の元動画">${assets.filter(a => a.media.duration > 0).map(a => `<option value="${esc(a.id)}">${esc(a.path.split(/[\\/]/).pop())}${rights.has(a.id) ? '' : '（権利未確認）'}</option>`).join('')}</select>
+              </label>
+              <label class="caption">画像の枚数（最大） <input class="native" type="number" id="cardCount" min="2" max="6" step="1" value="4" style="width:72px"></label>
+              <fluent-button id="makeCards" size="small" ${!assets.length || kitView.card_images ? 'disabled' : ''}>動画からカード画像を作る</fluent-button>
+              ${!assets.length || kitView.card_images ? `<p class="caption">${kitView.card_images ? '登録済みのカード画像があるため、その画像を使用します。' : '先に元動画を追加してください。'}</p>` : ''}
+            `}
+            <div id="cardImageMsg" aria-live="polite"></div>
+          </div>
         </div>
         </div>
         <div class="col-foot">
@@ -447,6 +461,35 @@ async function project(id) {
   $('#openingSw').addEventListener('change', (e) => { opts.opening = e.target.checked; saveOpts(); });
   $('#closingSw').addEventListener('change', (e) => { opts.closing = e.target.checked; saveOpts(); });
   $('#cardsSw').addEventListener('change', (e) => { opts.scene_cards = e.target.checked; saveOpts(); });
+  const cardRequests = new AbortController();
+  { const prev = cleanup; cleanup = () => { cardRequests.abort(); prev?.(); }; }
+  $('#kitBrowse').addEventListener('click', async () => {
+    const button = $('#kitBrowse'), input = $('#kitPath'), msg = $('#kitMsg');
+    button.disabled = true;
+    msg.innerHTML = info('OS のフォルダー選択画面でフォルダーを選んでください');
+    try {
+      const r = await api('/api/dialogs/folder', { method: 'POST', body: { initial_path: input.value ?? '' }, signal: cardRequests.signal });
+      if (r.path != null) input.value = r.path;
+      msg.innerHTML = r.path == null ? info('選択をキャンセルしました。入力は変更していません') : info('フォルダーを選択しました。権利を確認して「登録」を押してください');
+    } catch (e) { if (e.name !== 'AbortError') msg.innerHTML = errorBar(e); }
+    finally { button.disabled = false; }
+  });
+  $('#makeCards')?.addEventListener('click', async () => {
+    const button = $('#makeCards'), msg = $('#cardImageMsg'), assetId = $('#cardSource').value;
+    if (!rights.has(assetId)) { msg.innerHTML = info('元動画の権利確認にチェックしてください', 'warning'); return; }
+    const count = Number($('#cardCount').value);
+    if (!Number.isInteger(count) || count < 2 || count > 6) { msg.innerHTML = info('画像の枚数は 2〜6 枚の整数で指定してください', 'warning'); return; }
+    button.disabled = true; $('#gen').disabled = true;
+    msg.innerHTML = '<fluent-spinner size="small"></fluent-spinner> 元動画から代表画像を抽出しています…';
+    try {
+      const r = await api(`/api/projects/${id}/scene-cards`, { method: 'POST', body: { asset_id: assetId, count }, signal: cardRequests.signal });
+      opts.scene_cards = true; saveOpts();
+      sessionStorage.setItem(`cardImageMessage:${id}`, r.message);
+      router();
+    } catch (e) { if (e.name !== 'AbortError') msg.innerHTML = errorBar(e); }
+    finally { button.disabled = false; const gen = $('#gen'); if (gen) gen.disabled = false; }
+  });
+  { const message = sessionStorage.getItem(`cardImageMessage:${id}`); sessionStorage.removeItem(`cardImageMessage:${id}`); if (message) $('#cardImageMsg').innerHTML = info(message, 'success'); }
   $('#kitForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     if (!$('#kitRights').checked) { $('#kitMsg').innerHTML = info('使う権利の確認にチェックしてください', 'warning'); $('#kitRights').focus(); return; }

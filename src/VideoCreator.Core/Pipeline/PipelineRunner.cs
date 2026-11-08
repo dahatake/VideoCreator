@@ -283,11 +283,26 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public async Task<(EditPlan plan, List<string> notes)> BuildPlanAsync(Candidate c, Transcript tr, SignalSet sig, Preset p, SourceAsset main, IReadOnlyList<SourceAsset> assets, string projectId, Job job,
         IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null)
-        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKit), ct);
+        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKitFor(projectId)), ct);
 
     public const string BrandKitId = "default";
     /// <summary>The channel's registered opening / closing / card files (one per installation).</summary>
     public BrandKit? BrandKit => s.Store.Get<BrandKit>(Kinds.BrandKit, BrandKitId);
+
+    public BrandKit? BrandKitFor(string projectId)
+    {
+        var kit = BrandKit;
+        if (kit is { RightsConfirmed: true } && kit.Files.Any(f => f.Kind == "card")) return kit;
+        var images = s.Store.Get<Project>(Kinds.Project, projectId)?.SceneCardImages ?? [];
+        var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, projectId).Select(r => r.AssetId).ToHashSet();
+        var cards = images.Where(i => rights.Contains(i.AssetId) && File.Exists(i.Path))
+            .Select(i => new BrandFile { Path = i.Path, Kind = "card", Width = i.Width, Height = i.Height, ImageAssetId = i.AssetId }).ToList();
+        if (cards.Count == 0) return kit;
+        return (kit is { RightsConfirmed: true } ? kit : new BrandKit()) with
+        {
+            RightsConfirmed = true, Files = [.. kit is { RightsConfirmed: true } ? kit.Files : [], .. cards],
+        };
+    }
 
     /// <summary>FR-SWT-01: cameras without a user-set speaker get one from their own microphone, when the evidence is clear.</summary>
     async Task AutoAssignSpeakersAsync(List<SourceAsset> used, SourceAsset main, Transcript tr, List<string> warnings, CancellationToken ct)

@@ -310,6 +310,7 @@ public static class InsertPlanner
                 inserts.Add(new Insert
                 {
                     Id = $"card{k + 1}", Kind = "card", At = Math.Round(b.At, 3), Duration = sec, Path = img?.Path, Width = img?.Width ?? 0, Height = img?.Height ?? 0, RightsConfirmed = img != null,
+                    ImageAssetId = img?.ImageAssetId,
                     Text = img != null ? "" : FixedPhrases[k % FixedPhrases.Length], TextSource = img != null ? "" : "fixed", SourceT = Math.Round(b.SourceT, 3), Sfx = CardSfx,
                 });
                 if (clips[b.ClipIndex].TransitionSec > 0) { clips[b.ClipIndex] = clips[b.ClipIndex] with { TransitionSec = 0 }; faded++; }

@@ -1,0 +1,27 @@
+@baseUrl = http://127.0.0.1:8765
+@projectId = replace-with-project-id
+@assetId = replace-with-confirmed-source-asset-id
+
+### Opens a Windows OS folder dialog; Cancel returns {"path":null}.
+POST {{baseUrl}}/api/dialogs/folder
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"initial_path":"C:\\Work\\HubRadio\\OpeningClosing"}
+
+### Requires source rights confirmation and no existing card images.
+POST {{baseUrl}}/api/projects/{{projectId}}/scene-cards
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"asset_id":"{{assetId}}","count":4}
+
+### Preview the first extracted PNG.
+GET {{baseUrl}}/api/projects/{{projectId}}/scene-cards/0
+
+### Validation error: count must be 2–6.
+POST {{baseUrl}}/api/projects/{{projectId}}/scene-cards
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"asset_id":"{{assetId}}","count":7}

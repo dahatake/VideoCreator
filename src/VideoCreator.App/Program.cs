@@ -19,6 +19,8 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 builder.Services.AddSingleton<Runtime>();
 builder.Services.AddSingleton<JobEvents>();
 builder.Services.AddSingleton<BrandKitWorker>();
+builder.Services.AddSingleton<IFolderPicker, FolderPicker>();
+builder.Services.AddSingleton<SceneCardService>();
 builder.Services.AddSingleton<RemoveFolder>(ProjectDeletion.SendToRecycleBin);
 builder.Services.AddSingleton(sp => new JobQueue(sp.GetRequiredService<Runtime>().Store, () => sp.GetRequiredService<Runtime>().CreateRunner(), sp.GetRequiredService<JobEvents>(), sp.GetRequiredService<ILogger<JobQueue>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueue>());

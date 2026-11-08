@@ -23,6 +23,13 @@ public static class Api
     public sealed record WordEdit(string WordId, string Text);
     public sealed record PatchTranscript(List<WordEdit> Edits);
     public sealed record PutBrandKit(List<string>? Paths, bool RightsConfirmed, double? CardSec, bool? Upscale = null);
+    /// <summary>Initial directory for the Windows folder selection dialog.</summary>
+    public sealed record PickFolderRequest(string? InitialPath);
+    /// <summary>Selected absolute directory, or an explicit null when the user cancels.</summary>
+    public sealed record PickFolderResponse(
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? Path);
+    /// <summary>Source video and target number of distinct project-only scene-card images (2–6).</summary>
+    public sealed record GenerateSceneCardsRequest(string AssetId, int Count = 4);
 
     /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
@@ -124,11 +131,11 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
-        api.MapDelete("/projects/{id}", (Runtime rt, JobQueue q, RemoveFolder remove, string id) =>
+        api.MapDelete("/projects/{id}", (Runtime rt, JobQueue q, SceneCardService cards, RemoveFolder remove, string id) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
-            if (q.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "このプロジェクトは生成または書き出しの途中です。終わるか、キャンセルしてから削除してください");
+            if (q.IsBusy(id) || cards.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "このプロジェクトは生成または書き出しの途中です。終わるか、キャンセルしてから削除してください");
             try
             {
                 var r = ProjectDeletion.Delete(rt.Store, p, rt.Options.ResolvedProjectsDir, rt.Options.ResolvedDataDir, remove, out var jobs, out var renders);
@@ -253,6 +260,47 @@ public static class Api
         }).DisableAntiforgery();
 
         // ---- brand kit: opening / closing videos and scene-card images (one per installation, rights confirmed at registration) ----
+        api.MapPost("/dialogs/folder", async (IFolderPicker picker, PickFolderRequest req, CancellationToken ct) =>
+        {
+            try { return Results.Json(new PickFolderResponse(await picker.PickAsync(req.InitialPath, ct)), Json.Options); }
+            catch (PlatformNotSupportedException ex) { return Error(501, "E-FOLDER-PICKER", ex.Message); }
+            catch (InvalidOperationException ex) { return Error(409, "E-FOLDER-PICKER", ex.Message); }
+            catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or JsonException)
+            {
+                app.Logger.LogWarning(ex, "Folder selection failed");
+                return Error(500, "E-FOLDER-PICKER", "フォルダー選択に失敗しました。フルパスを手入力するか、もう一度選択してください");
+            }
+        }).WithSummary("Open the Windows folder picker; cancellation returns a null path");
+        api.MapPost("/projects/{id}/scene-cards", async (Runtime rt, SceneCardService service, HttpContext ctx, string id, GenerateSceneCardsRequest req, CancellationToken ct) =>
+        {
+            var project = rt.Store.Get<Project>(Kinds.Project, id);
+            if (project == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (string.IsNullOrWhiteSpace(req.AssetId)) return Error(422, "E-VALIDATION", "画像を取り出す元動画を選んでください");
+            var source = rt.Store.Get<SourceAsset>(Kinds.Asset, req.AssetId);
+            if (source == null || source.ProjectId != id) return Error(404, "E-NOT-FOUND", "このプロジェクトの元動画がありません");
+            if (req.Count is < 2 or > 6) return Error(422, "E-VALIDATION", "画像の枚数は 2〜6 枚で指定してください");
+            try
+            {
+                var images = await service.GenerateAsync(project, source, req.Count, ct);
+                ctx.Response.Headers.Location = $"/api/projects/{Uri.EscapeDataString(id)}";
+                return Results.Json(new { images, message = images.Count < req.Count ? $"類似画像・黒画面を除き、{images.Count} 枚を作成しました" : $"{images.Count} 枚を作成しました" }, Json.Options, statusCode: 201);
+            }
+            catch (InvalidOperationException ex) { return Error(409, "E-CARD-IMAGES", ex.Message); }
+            catch (IngestException ex) { return Error(422, ex.Code, ex.Message); }
+            catch (Exception ex) when (ex is FFmpegException or IOException or UnauthorizedAccessException)
+            {
+                app.Logger.LogWarning(ex, "Scene-card generation failed for {Project}", id);
+                return Error(500, "E-CARD-IMAGES", "カード画像の作成に失敗しました。元動画と保存先の空き容量を確認してください");
+            }
+        }).WithSummary("Extract distinct representative scene-card images from a project video");
+        api.MapGet("/projects/{id}/scene-cards/{index:int}", (Runtime rt, string id, int index) =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null || index < 0 || index >= p.SceneCardImages.Count) return Error(404, "E-NOT-FOUND", "カード画像がありません");
+            var path = p.SceneCardImages[index].Path;
+            PipelineRunner.EnsureInside(p.Directory, path);
+            return File.Exists(path) ? Results.File(path, "image/png") : Error(404, "E-NOT-FOUND", "カード画像が見つかりません");
+        }).WithSummary("Preview a generated project scene-card image");
         api.MapGet("/brandkit", (Runtime rt, BrandKitWorker w) => Results.Json(BrandKitView(rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId), [], w), Json.Options));
         api.MapPut("/brandkit", async (Runtime rt, BrandKitWorker w, PutBrandKit req, CancellationToken ct) =>
         {
