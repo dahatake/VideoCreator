@@ -40,7 +40,7 @@ public static class TelopBuilder
         {
             foreach (var group in mapped.GroupBy(m => m.ClipIndex))
             {
-                foreach (var chunk in Chunk(group.ToList(), cap.MaxCharsPerLine))
+                foreach (var chunk in Chunk(group.ToList(), Rendering.AssWriter.CaptionLineChars(p) * cap.MaxLines))
                 {
                     var text = JapaneseText.NormalizeTelop(string.Concat(chunk.Select(c => c.Word.Text)));
                     if (text.Length == 0) continue;
@@ -96,10 +96,15 @@ public static class TelopBuilder
 
     static double R(double x) => Math.Round(x, 3);
 
+    /// <summary>Captions shorter than this flicker (Netflix ja: ≥ 5/6 s); the chunker prefers longer captions when the phrase allows.</summary>
+    public const double MinCaptionSec = 0.8;
+
     /// <summary>
-    /// Caption chunking: split at sentence ends / pauses, then break each phrase into balanced lines with a small
-    /// dynamic program (≤ maxChars per line, never starting a line with a particle/small kana/punctuation,
-    /// preferring breaks after punctuation and particles). Avoids greedy orphans like 「…いっぱい」+「ですよ」.
+    /// Caption chunking: split at sentence ends / pauses, then break each phrase into balanced captions with a small
+    /// dynamic program. The length of each caption is chosen automatically: ≤ maxChars (the on-screen limit), never breaking where
+    /// JIS X 4051 kinsoku forbids (line-start/line-end characters, number+counter, words) nor before a particle/auxiliary,
+    /// preferring 文節 boundaries and breath pauses, and avoiding flickering captions shorter than <see cref="MinCaptionSec"/>
+    /// and greedy orphans like 「…いっぱい」+「ですよ」.
     /// </summary>
     public static List<List<Mapped>> Chunk(List<Mapped> words, int maxChars)
     {
@@ -116,30 +121,47 @@ public static class TelopBuilder
         return res.Where(c => c.Any(x => !JapaneseText.IsPunct(x.Word.Text))).ToList();
     }
 
-    static double W(Mapped m) => JapaneseText.DisplayWidth(JapaneseText.NormalizeTelop(m.Word.Text));
-
     static List<List<Mapped>> Balance(List<Mapped> ws, int maxChars)
     {
         int n = ws.Count;
-        var widths = ws.Select(W).ToArray();
-        double total = widths.Sum();
+        // width as displayed (、→ full-width space inside a caption, trimmed at its edges), not a sum of per-word widths
+        var raw = ws.Select(m => m.Word.Text).ToArray();
+        double SegWidth(int i, int j) => JapaneseText.DisplayWidth(JapaneseText.NormalizeTelop(string.Concat(raw[i..j])));
+        double total = SegWidth(0, n);
         if (total <= maxChars) return [ws];
         int lines = (int)Math.Ceiling(total / maxChars);
         double target = total / lines;
+        // cost of a break after word k (between k and k+1): kinsoku/文節 quality, relieved by a breath pause
+        var breakCost = new double[n];
+        for (int k = 0; k + 1 < n; k++)
+        {
+            var c = JapaneseText.TokenBreakCost(ws[k].Word.Text, ws[k + 1].Word.Text);
+            if (c < JapaneseText.Forbidden && ws[k + 1].Start - ws[k].End >= 0.25) c = Math.Max(0, c - 3);
+            breakCost[k] = c;
+        }
         var best = new double[n + 1]; var from = new int[n + 1];
         Array.Fill(best, double.PositiveInfinity); best[0] = 0;
+        // a katakana/Latin/number word split by ASR into several tokens is one unit: never cut, shrunk to fit if longer than a caption
+        var unitStart = Enumerable.Range(0, n + 1).Select(k => k == 0 || k == n || !JapaneseText.InsideWord(raw[k - 1], raw[k])).ToArray();
         for (int j = 1; j <= n; j++)
         {
-            double width = 0;
+            if (!unitStart[j]) continue;
+            // over-long only when unavoidable: one word plus the particles/auxiliaries glued to it (「パワープラットフォームの」), shrunk to fit
+            bool glued = true; int prev = -1;
             for (int i = j - 1; i >= 0; i--)
             {
-                width += widths[i];
-                if (width > maxChars && j - i > 1) break;                       // a single over-long token is allowed alone
+                if (!unitStart[i]) continue;
+                if (prev >= 0 && breakCost[prev - 1] < JapaneseText.Detached) glued = false;
+                prev = i;
+                double width = SegWidth(i, j);
+                if (width > maxChars && !glued) break;
                 if (double.IsInfinity(best[i])) continue;
-                bool okStart = i == 0 || JapaneseText.CanStartLine(ws[i].Word.Text);
-                double cost = (width - target) * (width - target) / Math.Max(1, target) + 2;   // +2 per line favours fewer lines
-                if (!okStart) cost += 50;                                       // forbidden unless nothing else fits
-                if (j < n) cost += (4 - JapaneseText.BreakScore(ws[j - 1].Word.Text)) * 3;   // prefer breaks after 、/particles
+                double cost = (width - target) * (width - target) / Math.Max(1, target) + 2;   // +2 per caption favours fewer captions
+                if (j < n) cost += breakCost[j - 1] * 1.5;
+                double dur = ws[j - 1].End - ws[i].Start;
+                if (dur < MinCaptionSec) cost += (MinCaptionSec - dur) * 15;
+                if (width < 4) cost += (4 - width) * 4;                         // a 1–3 character caption is an orphan
+                if (width > maxChars) cost += (width - maxChars) * 6;           // shrinking the font is the last resort
                 if (best[i] + cost < best[j]) { best[j] = best[i] + cost; from[j] = i; }
             }
         }

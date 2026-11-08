@@ -9,7 +9,8 @@ using VideoCreator.Rendering;
 
 namespace VideoCreator.Qa;
 
-public sealed record QaContext(EditPlan Plan, Preset Preset, Transcript Transcript, IReadOnlyCollection<string> RightsAssetIds, IReadOnlyList<string> Dictionary, IReadOnlyList<SourceAsset>? Assets = null);
+public sealed record QaContext(EditPlan Plan, Preset Preset, Transcript Transcript, IReadOnlyCollection<string> RightsAssetIds, IReadOnlyList<string> Dictionary, IReadOnlyList<SourceAsset>? Assets = null,
+    IReadOnlyList<string>? MaskWords = null);
 
 /// <summary>PRD §13 automatic QA. Hard (H-*) failures block export.</summary>
 public sealed class QaEngine(FFmpeg ff)
@@ -62,11 +63,34 @@ public sealed class QaEngine(FFmpeg ff)
             .Concat(plan.Inserts.Where(i => i.Enabled && i.Path != null && !i.RightsConfirmed).Select(i => Path.GetFileName(i.Path!))).ToList();
         res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認"));
 
+        // H-10 伏せ字: no hidden word may survive in any telop / card (including hand edits), and every spoken occurrence inside the edit must be bleeped.
+        // The spans are recomputed here from the original transcript, independently of the planner.
+        var mask = Planning.Masking.Clean(ctx.MaskWords);
+        if (mask.Count > 0)
+        {
+            var leaks = plan.Telops.Where(t => t.Enabled && Planning.Masking.Contains(t.Text, mask)).Select(t => t.Id)
+                .Concat(plan.Inserts.Where(i => i.Enabled && Planning.Masking.Contains(i.Text, mask)).Select(i => i.Id)).ToList();
+            var spoken = Planning.Masking.ToOutput(plan.Timeline, Planning.Masking.Apply(tr, mask).Spans);
+            var unbleeped = spoken.Where(s => !plan.Audio.Bleeps.Any(b => b.T0 <= s.T0 + 0.01 && b.T1 >= s.T1 - 0.01)).Select(s => $"{s.T0:F2}s").ToList();
+            var maskBad = leaks.Concat(unbleeped).ToList();
+            res.Add(new("H-10", maskBad.Count == 0 ? QaStatus.Pass : QaStatus.Fail, maskBad.Count == 0 ? $"{mask.Count} 語・{spoken.Count} か所" : string.Join(", ", maskBad.Take(5)), "伏せた語が文字にも音声にも残らない", "伏せ字"));
+        }
+
         var caps = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).ToList();
         var fast = caps.Where(t => JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start) > p.Telop.Caption.MaxCps + 0.01).ToList();
         res.Add(new("S-01", fast.Count == 0 ? QaStatus.Pass : QaStatus.Warn, fast.Count == 0 ? "ok" : string.Join(", ", fast.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text) / (t.End - t.Start):F1}cps")), $"≤{p.Telop.Caption.MaxCps} 文字/秒", "字幕速度"));
-        var wide = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Caption or TelopType.Emphasis && JapaneseText.DisplayWidth(t.Text) > p.Telop.Caption.MaxCharsPerLine).ToList();
-        res.Add(new("S-02", wide.Count == 0 ? QaStatus.Pass : QaStatus.Warn, wide.Count == 0 ? "ok" : string.Join(", ", wide.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text)}字")), $"≤{p.Telop.Caption.MaxCharsPerLine} 字/行", "1行の文字数"));
+        int lineChars = AssWriter.CaptionLineChars(p, plan.Canvas.Width);
+        var wide = plan.Telops.Where(t => t.Enabled && (t.Type == TelopType.Caption ? AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width).Any(l => JapaneseText.DisplayWidth(l) > lineChars)
+            : t.Type == TelopType.Emphasis && JapaneseText.DisplayWidth(t.Text) > p.Telop.Caption.MaxCharsPerLine)).ToList();
+        res.Add(new("S-02", wide.Count == 0 ? QaStatus.Pass : QaStatus.Warn, wide.Count == 0 ? "ok" : string.Join(", ", wide.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text)}字")), $"≤{lineChars} 字/行" + (p.Telop.Caption.MaxLines > 1 ? $"・{p.Telop.Caption.MaxLines}行まで" : ""), "1行の文字数"));
+
+        // S-08 禁則: every displayed caption line (incl. hand edits) obeys JIS X 4051 line-start/line-end rules, and a caption never starts with a particle/auxiliary of the previous caption
+        var wordText = tr.Words.GroupBy(w => w.Id).ToDictionary(g => g.Key, g => g.First().Text);
+        var kinsoku = caps.Select(t => (t, why: JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width))
+                .Concat(t.SourceWordIds.Count > 0 && wordText.TryGetValue(t.SourceWordIds[0], out var w0) && !JapaneseText.IsPunct(w0) && !JapaneseText.CanStartLine(w0) && t.Start > 0.01
+                    && caps.Any(o => o.End >= t.Start - 0.05 && o.Start < t.Start) ? [$"先頭が「{w0}」"] : Array.Empty<string>()).FirstOrDefault()))
+            .Where(x => x.why != null).ToList();
+        res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則"));
 
         var mapped = TelopBuilder.MapWords(plan.Timeline, tr);
         bool hookOk = mapped.Any(m => m.Start <= p.Hook.MaxSec) || plan.Timeline.FirstOrDefault()?.Role == "teaser" || tr.Words.Count == 0;
@@ -180,15 +204,8 @@ public sealed class QaEngine(FFmpeg ff)
     /// <summary>S-05: detect faces in the rendered frames (independent of the planner's own face data) and check that no caption-type telop covers a face.</summary>
     public async Task<QaResult> FaceOverlapAsync(QaContext ctx, string rendered, CancellationToken ct)
     {
-        var c = ctx.Preset.Telop.Caption; int H = ctx.Plan.Canvas.Height;
-        (double top, double bottom)? Band(Telop t) => t.Type switch
-        {
-            TelopType.Caption => (H - c.MarginV - c.FontPx * 1.3, H - c.MarginV),
-            TelopType.Emphasis => (H - c.MarginV - AssWriter.EmphLift - c.FontPx * 1.6, H - c.MarginV - AssWriter.EmphLift),
-            TelopType.Tsukkomi => (H - AssWriter.TsukkomiMarginV - 90, H - AssWriter.TsukkomiMarginV),
-            TelopType.Counter => (AssWriter.CounterMarginV, AssWriter.CounterMarginV + 120),
-            _ => null,
-        };
+        int H = ctx.Plan.Canvas.Height;
+        (double top, double bottom)? Band(Telop t) => AssWriter.Band(t.Type, ctx.Preset, H);
         var cand = ctx.Plan.Telops.Where(t => t.Enabled && Band(t) != null).OrderBy(t => t.Start).ToList();
         if (cand.Count == 0) return new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
         int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>();

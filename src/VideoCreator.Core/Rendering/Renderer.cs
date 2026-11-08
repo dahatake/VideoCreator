@@ -21,6 +21,8 @@ public sealed partial class Renderer(FFmpeg ff)
     /// <summary>Sidechain ducking tuned in spike 08 (threshold 0.015 / ratio 10 gave only 11.6 dB; these reach ≥ 12 dB).</summary>
     public const string DuckFilter = "sidechaincompress=threshold=0.01:ratio=12:attack=15:release=350";
     public const double SfxBaseDb = -8;
+    /// <summary>Peak of the 伏せ字 tone (≈ −13 dBFS RMS): clearly a bleep, below shouted dialogue.</summary>
+    public const double BleepAmplitude = 0.3;
 
     /// <summary>Maps a BgmTrack id (library or user-supplied) to a file.</summary>
     public Func<string, string?>? BgmResolver { get; init; }
@@ -120,7 +122,8 @@ public sealed partial class Renderer(FFmpeg ff)
         sfx.AddRange(spans.Where(x => x.Insert.Kind == "card" && x.Insert.Sfx != null).Select(x => new SfxEvent(x.Insert.Sfx!, Math.Round(x.Start, 3), -3)));
         var mutes = plan.Audio.BgmMutes.SelectMany(m => InsertMap.Span(ins, m.T0, m.T1)).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList();
         mutes.AddRange(spans.Where(x => x.Insert.Kind != "card").Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))));
-        return plan.Audio with { Sfx = sfx.OrderBy(s => s.T).ToList(), BgmMutes = mutes.OrderBy(m => m.T0).ToList() };
+        var bleeps = plan.Audio.Bleeps.SelectMany(m => InsertMap.Span(ins, m.T0, m.T1)).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList();
+        return plan.Audio with { Sfx = sfx.OrderBy(s => s.T).ToList(), BgmMutes = mutes.OrderBy(m => m.T0).ToList(), Bleeps = bleeps };
     }
 
     /// <summary>Playback order: each insert goes before the first clip that starts at (or after) its position.</summary>
@@ -171,6 +174,14 @@ public sealed partial class Renderer(FFmpeg ff)
         var g = new StringBuilder();
         string cur = inLabel;
         if (Math.Abs(a.DialogueGainDb) > 0.01) { g.Append($"[{cur}]volume={F(a.DialogueGainDb)}dB[dg];"); cur = "dg"; }
+        if (a.Bleeps.Count > 0)
+        {
+            // 伏せ字: silence the dialogue and gate a 1 kHz tone into exactly the same spans (before the duck, so the BGM ducks under the bleep too)
+            var gate = string.Join("+", a.Bleeps.Select(b => $"between(t,{F(b.T0)},{F(b.T1)})"));
+            g.Append($"[{cur}]volume=volume=0:enable='{gate}'[bq];aevalsrc='{F(BleepAmplitude)}*sin(2*PI*1000*t)*gt({gate},0)':s=48000:d={F(a.Bleeps.Max(b => b.T1) + 0.1)},aformat=sample_fmts=fltp:channel_layouts=stereo[bt];" +
+                     "[bq][bt]amix=inputs=2:normalize=0:duration=first[bl];");
+            cur = "bl";
+        }
         if (inp.Index.TryGetValue("bgm", out var bk))
         {
             g.Append($"[{bk}:a]atrim=start={F(a.BgmPhase)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={F(a.BgmGainDb)}dB,atrim=duration={F(bgmEnd)},asetpts=PTS-STARTPTS," +
@@ -523,14 +534,17 @@ public sealed partial class Renderer(FFmpeg ff)
 
     static double Num(Match m) => m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, IC, out var d) ? d : double.NaN;
 
-    /// <summary>Three candidate stills from the BODY (<paramref name="toFinal"/> skips the opening, cards and closing).</summary>
-    public async Task<List<string>> ThumbnailsAsync(string video, double duration, string prefix, CancellationToken ct, Func<double, double>? toFinal = null)
+    /// <summary>Thumbnail stills at the given FINAL-timeline times. <paramref name="saturation"/> &gt; 1 grades the still more vivid (variety look: thumbnails measured ≈ 1.7× the video's saturation).</summary>
+    public async Task<List<string>> ThumbnailsAsync(string video, IReadOnlyList<double> times, string prefix, double saturation, CancellationToken ct)
     {
         var list = new List<string>();
-        foreach (var (t, i) in new[] { Math.Min(1.0, duration * 0.1), duration * 0.5, Math.Max(0, duration - 2.0) }.Select((t, i) => (toFinal?.Invoke(t) ?? t, i)))
+        for (int i = 0; i < times.Count; i++)
         {
             var f = $"{prefix}_thumb{i + 1}.png";
-            var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", "-ss", F(t), "-i", video, "-frames:v", "1", f], ct);
+            List<string> args = ["-hide_banner", "-loglevel", "error", "-y", "-ss", F(times[i]), "-i", video, "-frames:v", "1"];
+            if (Math.Abs(saturation - 1) > 0.01) args.AddRange(["-vf", $"eq=saturation={F(saturation)}"]);
+            args.Add(f);
+            var r = await ff.RunFfmpegAsync(args, ct);
             if (r.ExitCode == 0) list.Add(f);
         }
         return list;

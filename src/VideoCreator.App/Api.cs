@@ -583,6 +583,9 @@ public static class Api
     {
         options ??= new JobOptions();
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
+        if (options.MaskWords.Count > Planning.Masking.MaxWords || options.MaskWords.Any(w => w.Trim().Length > Planning.Masking.MaxWordLength))
+            return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
+        options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };
         if (options.Bgm is not ("auto" or "none") && rt.Audio.Find(options.Bgm) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
         if (options.Opening || options.Closing)
         {

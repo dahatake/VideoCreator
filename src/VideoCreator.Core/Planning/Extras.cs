@@ -40,6 +40,33 @@ public static partial class TelopExtras
         return res;
     }
 
+    /// <summary>
+    /// Variety look: big punch telops (emphasis, tsukkomi, onomatopoeia) are shown one at a time, as in TV variety editing (measured: one big telop
+    /// per ~1 s onset, never stacked). A later punch cuts the earlier one short if that one has been readable for ≥ 0.8 s; otherwise the later one is dropped.
+    /// Emphasis wins ties (it is the speaker's own words), then tsukkomi, then onomatopoeia.
+    /// </summary>
+    public static List<Telop> OnePunchAtATime(IReadOnlyList<Telop> telops, List<string> notes)
+    {
+        static int Rank(TelopType t) => t switch { TelopType.Emphasis => 0, TelopType.Tsukkomi => 1, _ => 2 };
+        static bool IsPunch(Telop t) => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Tsukkomi or TelopType.Sfx;
+        var res = telops.Where(t => !IsPunch(t)).ToList();
+        Telop? last = null;
+        foreach (var t in telops.Where(IsPunch).OrderBy(t => t.Start).ThenBy(t => Rank(t.Type)))
+        {
+            if (last != null && last.End > t.Start + 0.01)
+            {
+                if (t.Start - last.Start >= 0.8) { res[res.IndexOf(last)] = last = last with { End = t.Start }; }
+                else
+                {
+                    if (t.Type == TelopType.Tsukkomi) notes.Add($"ツッコミ「{t.Text}」は直前の大きなテロップと重なるため表示しません");
+                    continue;
+                }
+            }
+            res.Add(t); last = t;
+        }
+        return res.OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
+    }
+
     /// <summary>⑤ Onomatopoeia: a laugh burst gets 「ワハハ」, the last emphasis gets 「ドーン」 (decorative; not factual claims).</summary>
     public static List<Telop> Onomatopoeia(IReadOnlyList<Clip> clips, IReadOnlyList<Interval> bursts, IReadOnlyList<Telop> existing, double total, ref int n)
     {

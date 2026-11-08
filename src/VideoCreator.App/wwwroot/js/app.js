@@ -315,7 +315,7 @@ async function project(id) {
   let selected = sessionStorage.getItem(`preset:${id}`) ?? 'P4';
   const saved = JSON.parse(sessionStorage.getItem(`opts:${id}`) ?? '{}');
   const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
-    opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false };
+    opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
   if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
@@ -423,6 +423,7 @@ async function project(id) {
           </select></label>
           ${field('効果音（ポン・ピンポン・ドーン など）', `<fluent-switch slot="input" id="sfx" ${opts.sfx ? 'checked' : ''}></fluent-switch>`)}
           ${field('ツッコミテロップを AI に提案させる（P3 のみ。承認するまで書き出せません）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
+          <label class="caption">伏せる語（読点・カンマ区切り。字幕・テロップでは ● になり、音声はピー音になります）<input type="text" class="native" id="maskWords" maxlength="400" style="display:block;width:100%;margin-top:4px" value="${esc(opts.mask_words.join('、'))}" placeholder="例: 店の名前、人の名前"></label>
           <details><summary class="caption">自分の BGM を追加する</summary>
             <form id="bgmForm" class="stack" style="margin-top:8px">
               <input type="file" id="bgmFile" accept="audio/*" class="native" aria-label="BGM ファイル">
@@ -575,6 +576,7 @@ async function project(id) {
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; saveOpts(); });
+  $('#maskWords').addEventListener('input', () => { opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean); saveOpts(); });
   $('#openingSw').addEventListener('change', (e) => { opts.opening = e.target.checked; saveOpts(); });
   $('#closingSw').addEventListener('change', (e) => { opts.closing = e.target.checked; saveOpts(); });
   $('#cardsSw').addEventListener('change', (e) => { opts.scene_cards = e.target.checked; saveOpts(); });
@@ -1032,6 +1034,7 @@ async function review(epId) {
   const projAssets = (await api(`/api/projects/${plan.project_id}`)).assets;
   const assetName = (aid) => (projAssets.find(a => a.id === aid)?.path ?? aid).split(/[\\/]/).pop();
   let tr = await api(`/api/assets/${plan.audio.master}/transcript`);
+  const capStyle = (await api('/api/presets')).find(x => x.id === plan.preset.id)?.telop?.caption ?? {};
   const roleName = { teaser: '先出し', reaction: 'リアクション', wide: '引き', recap: 'おさらい', next: '次回予告' };
   let previewUrl = me?.preview_url, stale = false;
   const typeLabel = { caption: '字幕', emphasis: '強調', hook: 'フック', headline: '見出し', tsukkomi: 'ツッコミ', sfx: '擬音', counter: 'カウンター' };
@@ -1045,7 +1048,7 @@ async function review(epId) {
 
   const draw = () => {
     const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail');
-    const maxW = 14, maxCps = 6;
+    const maxW = capStyle.max_chars_per_line ?? 14, maxCps = capStyle.max_cps ?? 6, maxLines = capStyle.max_lines ?? 1;
     main.innerHTML = `
       <div class="row" style="justify-content:space-between"><h1>確認・修正</h1>
         <div class="row">${safeToggle()}<fluent-anchor-button href="#/job/${esc(job.id)}" appearance="subtle">候補に戻る</fluent-anchor-button></div></div>
@@ -1090,14 +1093,14 @@ async function review(epId) {
           <div class="row" style="justify-content:space-between"><h2>テロップ</h2>
             <div class="row">${['caption', 'emphasis', 'headline', 'counter', 'sfx', 'tsukkomi'].filter(t => plan.telops.some(x => x.type === t) || ['caption', 'emphasis', 'headline'].includes(t)).map(t => field(typeLabel[t], `<fluent-switch slot="input" data-type="${t}" ${plan.telops.filter(x => x.type === t).some(x => x.enabled) || !plan.telops.some(x => x.type === t) ? 'checked' : ''}></fluent-switch>`)).join('')}
               ${plan.telops.some(t => t.type === 'tsukkomi' && !t.approved) ? '<fluent-button size="small" id="approveAll">ツッコミをすべて承認</fluent-button>' : ''}</div></div>
-          <p class="caption">文字を直すと、文字数・表示速度・安全領域の自動チェックがすぐにやり直されます。1行は全角${maxW}字まで、字幕は毎秒${maxCps}字までが目安です。</p>
+          <p class="caption">文字を直すと、文字数・表示速度・行頭や行末の禁則・安全領域の自動チェックがすぐにやり直されます。1行は全角${maxW}字${maxLines > 1 ? `（字幕は${maxLines}行）` : ''}まで、字幕は毎秒${maxCps}字までが目安です。</p>
           <div class="scroll"><table class="list"><thead><tr><th>種類</th><th>時刻</th><th style="width:55%">テキスト</th><th>字数</th><th>速さ</th><th>表示</th></tr></thead><tbody>
             ${plan.telops.map(t => {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
               return `<tr class="${t.enabled ? '' : 'off'}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
                 <td class="caption">${finalT(t.start).toFixed(1)}–${finalT(t.end, true).toFixed(1)}</td>
                 <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}"></td>
-                <td class="${w > maxW && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
+                <td class="${w > maxW * (t.type === 'caption' ? maxLines : 1) && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
                 <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td>
                 <td><fluent-switch data-id="${esc(t.id)}" class="en" ${t.enabled ? 'checked' : ''} aria-label="表示"></fluent-switch>${t.approved ? '' : `<fluent-button size="small" data-approve="${esc(t.id)}">承認</fluent-button>`}</td></tr>`;
             }).join('')}

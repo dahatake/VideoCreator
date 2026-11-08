@@ -87,12 +87,16 @@ public static class PlanBuilder
         clips = ApplyFaces(clips, r, notes);
 
         double total = clips.Sum(c => c.Length);
+        // 伏せ字: telops are built from a masked transcript (so a name split across words/captions is hidden too); LLM texts are masked afterwards
+        var maskWords = Masking.Clean(r.Job.Options.MaskWords);
+        var (maskedTr, maskSpans) = Masking.Apply(tr, maskWords);
+        var telopTr = maskedTr;
         SeriesInfo? series = null;
         List<Telop> telops;
         if (r.Part is { } part)
         {
-            telops = TelopBuilder.Build(clips, tr, p, "", "", part.Emphasis, notes);
-            var (st, chapters) = SeriesPlanner.Telops(part, clips, tr, p);
+            telops = TelopBuilder.Build(clips, telopTr, p, "", "", part.Emphasis.Select(w => Masking.MaskText(w, maskWords)).ToList(), notes);
+            var (st, chapters) = SeriesPlanner.Telops(part, clips, telopTr, p);
             telops.AddRange(st);
             series = new SeriesInfo
             {
@@ -100,14 +104,14 @@ public static class PlanBuilder
                 TargetSec = part.TargetSec, RequestedParts = part.RequestedParts, MinSec = part.MinSec, MaxSec = part.MaxSec, Body = part.Body, Chapters = chapters, Boundary = part.Boundary,
             };
         }
-        else telops = TelopBuilder.Build(clips, tr, p, r.Candidate.HookText, r.Candidate.Headline, r.Candidate.EmphasisWords, notes);
+        else telops = TelopBuilder.Build(clips, telopTr, p, Masking.MaskText(r.Candidate.HookText, maskWords), Masking.MaskText(r.Candidate.Headline, maskWords), r.Candidate.EmphasisWords.Select(w => Masking.MaskText(w, maskWords)).ToList(), notes);
         if (r.Llm != null)
         {
             try { var (sh, ch) = await CaptionShortener.ApplyAsync(r.Llm, telops, p.Telop.Caption.MaxCps, ct); telops = sh; if (ch > 0) notes.Add($"表示が間に合わない字幕 {ch} 件を、文字を削って短くしました（言い換えなし）"); }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("字幕の短縮に失敗しました: " + ex.Message); }
         }
         int n = telops.Count + 100;
-        var mapped = TelopBuilder.MapWords(clips, tr);
+        var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
         if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n));
         if (p.HasTelop("tsukkomi") && r.Job.Options.Tsukkomi)
@@ -118,7 +122,7 @@ public static class PlanBuilder
                 try
                 {
                     var caps = telops.Where(t => t.Type == TelopType.Caption).ToList();
-                    var src = CandidateValidator.TextOf(tr, clips.Select(c => new Interval(c.MasterIn, c.MasterOut)));
+                    var src = CandidateValidator.TextOf(telopTr, clips.Select(c => new Interval(c.MasterIn, c.MasterOut)));
                     var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct);
                     foreach (var (id, text) in items)
                     {
@@ -132,6 +136,10 @@ public static class PlanBuilder
             }
         }
         telops = telops.OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
+        if (p.Telop.IsVariety) telops = TelopExtras.OnePunchAtATime(telops, notes);
+        if (maskWords.Count > 0) telops = telops.Select(t => t with { Text = Masking.MaskText(t.Text, maskWords) }).ToList();
+        var bleeps = Masking.ToOutput(clips, maskSpans);
+        if (maskWords.Count > 0) notes.Add($"伏せ字: {maskWords.Count} 語を ● にし、{bleeps.Count} か所の音声をピー音にしました");
 
         string? bgmId = r.Bgm?.Id;
         var (sfx, mutes) = r.Job.Options.Sfx ? SfxPlanner.Plan(clips, telops, p.Audio.Sfx, total) : ([], []);
@@ -140,7 +148,7 @@ public static class PlanBuilder
             Master = master.Id, TargetLufs = p.Audio.Loudnorm.I, TruePeak = p.Audio.Loudnorm.TP,
             Bgm = bgmId, BgmGainDb = p.Audio.BgmDb, Duck = p.Audio.Duck, DialogueGainDb = p.Audio.DialogueGainDb,
             BgmPhase = p.Planner == "beat" ? r.Bgm?.Phase ?? 0 : 0,
-            SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = bgmId == null ? [] : mutes,
+            SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = bgmId == null ? [] : mutes, Bleeps = bleeps,
         };
         var canvas = new Canvas();
         var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
@@ -148,12 +156,15 @@ public static class PlanBuilder
         {
             try
             {
-                var src = CandidateValidator.TextOf(tr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
+                var src = CandidateValidator.TextOf(telopTr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
                 int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct);
                 if (ai > 0) notes.Add($"場面転換カード {ai} 枚のツッコミを AI が提案しました（承認するまで書き出せません）");
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("場面転換カードのツッコミの生成に失敗しました（定型の文を使います）: " + ex.Message); }
         }
+        if (maskWords.Count > 0) inserts = inserts.Select(i => i with { Text = Masking.MaskText(i.Text, maskWords) }).ToList();
+        if (maskWords.Count > 0 && series != null)
+            series = series with { SeriesTitle = Masking.MaskText(series.SeriesTitle, maskWords), Chapters = series.Chapters.Select(c => c with { Title = Masking.MaskText(c.Title, maskWords) }).ToList() };
         var plan = new EditPlan
         {
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,

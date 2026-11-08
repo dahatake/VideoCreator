@@ -291,6 +291,8 @@ public sealed record AudioSpec
     public bool SfxEnabled { get; init; } = true;
     public List<SfxEvent> Sfx { get; init; } = [];
     public List<Interval> BgmMutes { get; init; } = [];
+    /// <summary>伏せ字: dialogue is silenced and a 1 kHz tone plays inside these spans (body timeline; shifted past inserts by Renderer.FinalAudio).</summary>
+    public List<Interval> Bleeps { get; init; } = [];
     public double TargetLufs { get; init; } = -14;
     public double TruePeak { get; init; } = -1.5;
     public double Lra { get; init; } = 11;
@@ -440,6 +442,8 @@ public sealed record JobOptions
     public bool Closing { get; init; }
     /// <summary>~1 s tsukkomi cards at scene changes.</summary>
     public bool SceneCards { get; init; }
+    /// <summary>伏せ字: words hidden as ● in every telop/SRT/card, with the dialogue under them replaced by a tone (Planning.Masking).</summary>
+    public List<string> MaskWords { get; init; } = [];
 }
 
 public sealed record Job

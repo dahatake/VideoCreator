@@ -379,6 +379,8 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     public const string BrandKitId = "default";
+    /// <summary>Variety thumbnails are graded this much more saturated (the references measured 1.7–1.8× the saturation of their own frames).</summary>
+    public const double ThumbnailSaturation = 1.6;
     /// <summary>The channel's registered opening / closing / card files (one per installation).</summary>
     public BrandKit? BrandKit => s.Store.Get<BrandKit>(Kinds.BrandKit, BrandKitId);
 
@@ -461,7 +463,8 @@ public sealed class PipelineRunner(PipelineServices s)
         var main = assets.First(a => a.Id == plan.Audio.Master);
         var tr = LoadTranscript(main);
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, plan.ProjectId).Select(r => r.AssetId).ToHashSet();
-        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, s.Dictionary, assets);
+        var mask = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options.MaskWords : null;
+        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, s.Dictionary, assets, mask);
     }
 
     public Transcript LoadTranscript(SourceAsset a)
@@ -531,9 +534,13 @@ public sealed class PipelineRunner(PipelineServices s)
                 throw new QaBlockedException(hard);
             }
             progress?.Report((0.97, "字幕ファイルとサムネイル候補を作っています"));
-            var srt = Path.ChangeExtension(file, ".srt"); await File.WriteAllTextAsync(srt, AssWriter.Srt(plan), new UTF8Encoding(false), ct); outputs["srt"] = srt;
+            var srt = Path.ChangeExtension(file, ".srt"); await File.WriteAllTextAsync(srt, AssWriter.Srt(plan, preset), new UTF8Encoding(false), ct); outputs["srt"] = srt;
             var epj = Path.ChangeExtension(file, ".editplan.json"); await File.WriteAllTextAsync(epj, Json.Serialize(plan, true), ct); outputs["editplan"] = epj;
-            var thumbs = await s.Renderer.ThumbnailsAsync(file, plan.Duration, Path.ChangeExtension(file, null), ct, t => InsertMap.ToFinal(plan, t));
+            Func<double, Task<double>>? faceScore = s.Faces is { Available: true } fs
+                ? async t => (await fs.DetectAtAsync(file, t, ct)).Select(f => f.W * f.H).DefaultIfEmpty(0).Max()
+                : null;
+            var times = await ThumbnailPicker.PickAsync(plan, faceScore);
+            var thumbs = await s.Renderer.ThumbnailsAsync(file, times, Path.ChangeExtension(file, null), preset.Telop.IsVariety ? ThumbnailSaturation : 1.0, ct);
             for (int i = 0; i < thumbs.Count; i++) outputs[$"thumb{i + 1}"] = thumbs[i];
             var ass = Path.ChangeExtension(file, ".ass"); if (File.Exists(ass)) outputs["ass"] = ass;
         }

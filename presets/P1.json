@@ -1,6 +1,6 @@
 {
   "id": "P1",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "ハイテンション・チャレンジ",
   "genre": "エンタメ",
   "available": true,
@@ -40,13 +40,14 @@
       "sfx",
       "counter"
     ],
+    "look": "variety",
     "caption": {
       "max_lines": 1,
       "margin_v": 620,
       "margin_r": 160,
-      "font_px": 80,
+      "font_px": 124,
       "max_cps": 6,
-      "max_chars_per_line": 14
+      "max_chars_per_line": 10
     }
   },
   "audio": {

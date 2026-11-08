@@ -101,6 +101,27 @@ public class RenderingTests : IAsyncLifetime
         Assert.Contains(@"\fs", AssWriter.Write(stressed, ctx.Preset));
     }
 
+    [Fact] // 字幕 in every caption preset: a line of the automatically chosen maximum length, and a two-line caption, fit the safe zone as libass draws them — without shrinking
+    public async Task Caption_lengths_fit_the_safe_zone_as_rendered()
+    {
+        var (plan, _, _) = Build(_landscape, 1280, 720);
+        foreach (var p in Fixtures.Presets.Values.Where(p => p.HasTelop("caption")))
+        {
+            int n = AssWriter.CaptionLineChars(p);
+            var two = p with { Telop = p.Telop with { Caption = p.Telop.Caption with { MaxLines = 2 } } };
+            var twoText = n >= 14 ? "今日はみんなでパワーアップの方法を話します" : "今日はみんなでパワーの話をします";
+            foreach (var (pp, text) in new[] { (p, new string('漢', n)), (two, twoText) })
+            {
+                var tp = plan with { Preset = pp.Ref, Telops = [new Telop { Id = "c", Type = TelopType.Caption, Start = 1, End = 3, Text = text, Style = "Caption" }] };
+                var ass = AssWriter.Write(tp, pp);
+                Assert.DoesNotContain(@"\fs", ass);
+                Assert.Equal(pp.Telop.Caption.MaxLines > 1, ass.Contains(@"\N"));
+                var res = await new QaEngine(Ff).SafeZoneAsync(new QaContext(tp, pp, Tr, ["a1"], []), Path.Combine(_dir, $"qa_cap_{pp.Id}_{pp.Telop.Caption.MaxLines}"), TestContext.Current.CancellationToken);
+                Assert.True(res.Status == QaStatus.Pass, $"{pp.Id} lines={pp.Telop.Caption.MaxLines}: {res.Measured}");
+            }
+        }
+    }
+
     [Fact] // H-05 negative test: telops pushed into the bottom UI band must be detected by measurement
     public async Task SafeZone_check_detects_violations()
     {
