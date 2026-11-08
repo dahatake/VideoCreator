@@ -1,6 +1,6 @@
 # Software Engineer向けテクニカルリファレンス
 
-[目次](README.md) / [設定・API](configuration-api.md) / [検証と保守](verification.md)
+[アプリREADME](../README.md) / [ガイド目次](README.md) / [クイックスタート](quickstart.md) / [画面説明](screens.md) / [困ったとき](troubleshooting.md) / [設定・API](configuration-api.md) / [検証と保守](verification.md)
 
 対象は現在のC#/.NET 10実装です。これは汎用動画編集ライブラリやマルチユーザーサービスではなく、Windows上の単一ユーザー用ローカルWebアプリです。設計上の要求は[PRD](../docs/PRD.md)、過去の実測は[実装レポート](../docs/IMPLEMENTATION.md)にあります。過去の検証結果を最新条件の合格証拠として流用しないでください。
 

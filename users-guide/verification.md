@@ -1,6 +1,6 @@
 # 資料の検証と保守
 
-[目次](README.md) / [技術リファレンス](technical-reference.md)
+[アプリREADME](../README.md) / [ガイド目次](README.md) / [技術リファレンス](technical-reference.md) / [制作方針](documentation-brief.md)
 
 ## 一次資料と検証範囲
 

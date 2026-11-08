@@ -1,6 +1,6 @@
 # 設定・APIリファレンス
 
-[目次](README.md) / [構成・拡張](technical-reference.md) / [画面](screens.md)
+[アプリREADME](../README.md) / [ガイド目次](README.md) / [クイックスタート](quickstart.md) / [画面](screens.md) / [困ったとき](troubleshooting.md) / [構成・拡張](technical-reference.md) / [検証と保守](verification.md)
 
 ## 起動設定
 

@@ -1,6 +1,6 @@
 # クイックスタート：最初の1本を作る
 
-[ガイド目次](README.md) / [画面説明](screens.md) / [困ったとき](troubleshooting.md)
+[アプリREADME](../README.md) / [ガイド目次](README.md) / [画面説明](screens.md) / [困ったとき](troubleshooting.md) / [設定・API](configuration-api.md)
 
 **ゴール**：発話のある動画1本からP4の候補を作り、内容を確認して1080×1920のMP4と字幕などを保存します。処理時間は素材・PC・サービスの状況で変わるため、一定時間での完了は保証しません。
 

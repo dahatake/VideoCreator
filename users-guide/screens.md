@@ -1,6 +1,6 @@
 # 画面・コンポーネント説明
 
-[目次](README.md) / [最初の1本](quickstart.md) / [QAとエラー](troubleshooting.md)
+[アプリREADME](../README.md) / [ガイド目次](README.md) / [最初の1本](quickstart.md) / [QAとエラー](troubleshooting.md) / [設定・API](configuration-api.md)
 
 画面例は2026-11-08の実装をMicrosoft Edge、viewport 1440×1000で取得し、長いページは全体をキャプチャしています。PCの幅や選んだパターン、素材の数で項目が変わります。縦に長い欄は**各列の内側**をスクロールしてください。
 
