@@ -1,0 +1,80 @@
+{
+  "id": "P10",
+  "version": "1.0.0",
+  "name": "画面解説（画面＋ワイプ）",
+  "genre": "解説/チュートリアル",
+  "available": true,
+  "target": {
+    "duration_sec": [
+      30,
+      60
+    ],
+    "aspect": "9:16"
+  },
+  "hook": {
+    "prefer": [
+      "question",
+      "strong_claim"
+    ],
+    "max_sec": 2.0
+  },
+  "cut": {
+    "snap_to": [
+      "sentence_end"
+    ],
+    "min_shot_sec": 2.0,
+    "target_asl_sec": [
+      2.0,
+      6.0
+    ],
+    "remove_silence_over_sec": 0.8,
+    "punch_in_scale": 1.0,
+    "cold_open": "none"
+  },
+  "telop": {
+    "types": [
+      "caption",
+      "emphasis",
+      "headline"
+    ],
+    "caption": {
+      "max_lines": 1,
+      "margin_v": 620,
+      "margin_r": 160,
+      "font_px": 76,
+      "max_cps": 6,
+      "max_chars_per_line": 14
+    }
+  },
+  "audio": {
+    "sfx": "none",
+    "bgm_duck_db": -15,
+    "loudnorm": {
+      "tp": -1.5,
+      "i": -14
+    },
+    "bgm": "none"
+  },
+  "loop": {
+    "required": false,
+    "enabled": false
+  },
+  "card": {
+    "opening": "話し手の顔で始める",
+    "tempo": "操作している間は画面（自動ズーム）、止まったら話し手",
+    "telop": "字幕・要点",
+    "sound": "マスター音声1本"
+  },
+  "selection_rules": "1つの操作や手順が、目的→操作→結果まで完結している30〜60秒を選ぶ。画面の操作を説明している発話を優先する。",
+  "planner": "screen",
+  "screen": {
+    "min_hold_sec": 2.0,
+    "presenter_after_static_sec": 4.0,
+    "lead_sec": 0.6,
+    "tail_sec": 1.0,
+    "hook_presenter_sec": 2.0,
+    "max_zoom": 1.5,
+    "pip_diameter": 360
+  },
+  "reframe": "auto"
+}

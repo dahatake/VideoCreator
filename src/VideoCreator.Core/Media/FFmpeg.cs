@@ -139,7 +139,7 @@ public sealed class FFmpeg
     public async Task<List<string>> MissingFiltersAsync()
     {
         var r = await RunFfmpegAsync(["-hide_banner", "-filters"]);
-        var need = new[] { "subtitles", "loudnorm", "xfade", "sidechaincompress", "boxblur", "scdet", "alimiter", "blackdetect", "freezedetect" };
+        var need = new[] { "subtitles", "loudnorm", "xfade", "sidechaincompress", "boxblur", "scdet", "alimiter", "blackdetect", "freezedetect", "alphamerge", "geq" };
         return need.Where(f => !System.Text.RegularExpressions.Regex.IsMatch(r.StdOut, $@"\s{f}\s")).ToList();
     }
 

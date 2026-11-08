@@ -57,7 +57,7 @@ public sealed class QaEngine(FFmpeg ff)
         var unapproved = plan.Telops.Count(t => t.Enabled && !t.Approved) + plan.Inserts.Count(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved);
         res.Add(new("H-08", unapproved == 0 ? QaStatus.Pass : QaStatus.Fail, unapproved.ToString(IC), "0", "未承認テロップ（ツッコミ・場面転換カード）"));
 
-        var missing = plan.Timeline.Select(c => c.AssetId).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
+        var missing = plan.Timeline.Select(c => c.AssetId).Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId)).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.ImageAssetId != null && !ctx.RightsAssetIds.Contains(i.ImageAssetId)).Select(i => i.ImageAssetId!))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.Path != null && !i.RightsConfirmed).Select(i => Path.GetFileName(i.Path!))).ToList();
         res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認"));

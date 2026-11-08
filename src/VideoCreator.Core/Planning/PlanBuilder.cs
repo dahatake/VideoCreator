@@ -9,7 +9,7 @@ public sealed record PlanRequest(
     Candidate Candidate, Transcript Transcript, SignalSet Signals, Preset Preset,
     IReadOnlyList<SourceAsset> Assets, SourceAsset Master, string ProjectId, Job Job,
     IReadOnlyDictionary<string, List<FaceSample>> Faces, BgmTrack? Bgm, IHighlightSelector? Llm,
-    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null, BrandKit? Kit = null);
+    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null, BrandKit? Kit = null, ScreenContext? Screen = null);
 
 /// <summary>Candidate → EditPlan. Dispatches on preset.Planner, then reframes, adds telops, BGM and SFX (PRD FR-SOL, FR-SWT, FR-SPD, FR-BGM, FR-AUD).</summary>
 public static class PlanBuilder
@@ -47,6 +47,7 @@ public static class PlanBuilder
                     if (cams.Count >= 2) clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes);
                     else notes.Add("カメラ素材が 2 つ以上ないため、切り替えは行いませんでした");
                 }
+                clips = Screen(clips, r, notes);
                 break;
             }
             case "speed":
@@ -75,11 +76,13 @@ public static class PlanBuilder
                     if (cams.Count >= 2) clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes);
                     else notes.Add("カメラ素材が 2 つ以上ないため、切り替えは行いませんでした");
                 }
+                clips = Screen(clips, r, notes);
                 break;
             }
         }
         if (clips.Count == 0) throw new PlanException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした");
 
+        clips = ApplyDrift(clips, r.Assets, master.Id, new Canvas().Fps);
         clips = ApplyFades(clips, p, r.Assets, notes);
         clips = ApplyFaces(clips, r, notes);
 
@@ -160,6 +163,48 @@ public static class PlanBuilder
         return (plan, notes);
     }
 
+    static List<Clip> Screen(List<Clip> clips, PlanRequest r, List<string> notes)
+    {
+        if (r.Preset.Planner != "screen") return clips;
+        if (r.Screen == null) { notes.Add("画面収録の解析結果がないため、基準映像だけで編集しました"); return clips; }
+        return ScreenPlanner.Plan(clips, r.Transcript, r.Assets, r.Master, r.Screen, r.Faces, r.Preset, new Canvas(), notes);
+    }
+
+    /// <summary>
+    /// A drifting clock moves a synced asset away from the master inside a long clip (60 ppm ≈ 17 ms after 4.6 min). Clips on such assets are split
+    /// so that every piece re-anchors at <see cref="SourceAsset.CameraTime"/> and stays within half a frame; pieces join with a sub-frame jump.
+    /// </summary>
+    public static List<Clip> ApplyDrift(List<Clip> clips, IReadOnlyList<SourceAsset> assets, string masterId, int fps)
+    {
+        var byId = assets.ToDictionary(a => a.Id);
+        double Ppm(string? id) => id != null && id != masterId && byId.TryGetValue(id, out var a) ? Math.Abs(a.SyncDriftPpm) : 0;
+        var res = new List<Clip>();
+        foreach (var c in clips)
+        {
+            double ppm = Math.Max(Ppm(c.AssetId), Ppm(c.Pip?.AssetId));
+            double maxLen = ppm > 0 ? 0.5 / fps / (ppm * 1e-6) : double.MaxValue, span = c.MasterOut - c.MasterIn;
+            if (span <= maxLen) { res.Add(c); continue; }
+            int n = (int)Math.Ceiling(span / maxLen);
+            for (int k = 0; k < n; k++)
+            {
+                double m0 = c.MasterIn + span * k / n, m1 = c.MasterIn + span * (k + 1) / n;
+                double s0 = byId.TryGetValue(c.AssetId, out var a) ? a.CameraTime(m0, masterId) : c.SrcIn + (m0 - c.MasterIn);
+                // a pan/face track is in clip time: re-base it at this piece's start (value interpolated at the cut)
+                double dt = (m0 - c.MasterIn) / c.Speed;
+                List<TrackPoint>? Shift(List<TrackPoint>? t) => t == null || dt <= 0 ? t
+                    : [new TrackPoint(0, Math.Round(Faces.FaceTrack.XAt(t, dt), 1)), .. t.Where(p => p.T > dt + 1e-6).Select(p => p with { T = Math.Round(p.T - dt, 3) })];
+                res.Add(c with
+                {
+                    ClipId = $"{c.ClipId}_{k + 1}", SrcIn = Math.Round(s0, 3), SrcOut = Math.Round(s0 + (m1 - m0), 3), AudioIn = Math.Round(m0, 3),
+                    TransitionSec = k == 0 ? c.TransitionSec : 0,
+                    Reframe = c.Reframe with { Track = Shift(c.Reframe.Track), TrackY = Shift(c.Reframe.TrackY) },
+                    Pip = c.Pip is { } pip && byId.TryGetValue(pip.AssetId, out var pa) ? pip with { SrcIn = Math.Round(pa.CameraTime(m0, masterId), 3) } : c.Pip,
+                });
+            }
+        }
+        return res;
+    }
+
     /// <summary>FR-SWT-05: a short cross-fade only where the story jumps (source gap > 3 s between consecutive body clips of one camera).</summary>
     public static List<Clip> ApplyFades(List<Clip> clips, Preset p, IReadOnlyList<SourceAsset> assets, List<string> notes)
     {
@@ -190,7 +235,7 @@ public static class PlanBuilder
         var res = new List<Clip>();
         foreach (var c in clips)
         {
-            if (!byId.TryGetValue(c.AssetId, out var a) || a.Media.Aspect < 0.9 || !r.Faces.TryGetValue(a.Id, out var samples)) { res.Add(c); continue; }
+            if (c.Reframe.Mode == "screen" || !byId.TryGetValue(c.AssetId, out var a) || a.Media.Aspect < 0.9 || !r.Faces.TryGetValue(a.Id, out var samples)) { res.Add(c); continue; }
             eligible++;
             var spec = FaceTrack.Plan(samples, a.Media, c.SrcIn, c.SrcOut, c.Speed, out var why);
             if (spec != null) { followed++; res.Add(c with { Reframe = spec }); }

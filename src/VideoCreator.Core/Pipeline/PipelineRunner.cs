@@ -134,6 +134,7 @@ public sealed class PipelineRunner(PipelineServices s)
             if (assets.Count < 2) throw new PipelineException("E-SWT-ASSETS", "複数カメラの切り替えには、2 つ以上の素材（カメラ）を追加してください");
             used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         }
+        else if (preset.Planner == "screen") used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
         if (preset.HasTelop("caption") && main.Media.AudioChannels > 0 && s.Asr == null)
             throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure AI Speech）が設定されていません。設定を確認してください。");
@@ -141,23 +142,48 @@ public sealed class PipelineRunner(PipelineServices s)
         const string proxyMsg = "解析用のプロキシを作成しています";
         Stage(JobStatus.Ingesting, 0.02, proxyMsg);
         var (proxy, audio) = await s.Probe.MakeProxyAsync(main.Path, main.Media, CacheDir(main), ct, Sub(JobStatus.Ingesting, 0.02, 0.1, proxyMsg, "360p プロキシと 16kHz 音声の作成"));
-        // multi-camera: align every other camera to the master audio (GCC-PHAT, FR-SWT-01)
+        // multi-source: align every other recording to the master audio (full-length search + drift fit, FR-SWT-01 / FR-ING-05)
         for (int i = 0; i < used.Count; i++)
         {
             var a = used[i];
             if (a.Id == main.Id) continue;
-            if (a.Media.AudioChannels == 0) { warnings.Add($"{Path.GetFileName(a.Path)} は音声がないため同期できません。時間のずれは 0 秒として扱います"); continue; }
-            if (a.SyncConfidence == null)
+            string name = Path.GetFileName(a.Path);
+            // older versions measured one 90 s window (no drift, no late-start search) → measure again; manual offsets are kept
+            if (a.SyncConfidence == null || a.SyncMethod == null && a.SyncConfidence != SyncResult.Manual)
             {
-                Stage(JobStatus.Ingesting, 0.1, $"カメラの時間を音声で合わせています（{Path.GetFileName(a.Path)}）");
-                var sync = await AudioSync.EstimateAsync(s.Ff, main.Path, a.Path, ct);
-                a = a with { SyncOffset = Math.Round(sync.Delay, 3), SyncConfidence = Math.Round(sync.Confidence, 1) };
+                Stage(JobStatus.Ingesting, 0.1, $"素材の時間を音声で合わせています（{name}）");
+                SyncFit fit;
+                if (a.Media.AudioChannels > 0 && main.Media.AudioChannels > 0) fit = await AudioSync.AlignAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, ct);
+                else fit = new SyncFit { Method = "none" };
+                if (!fit.Reliable && await AudioSync.FromMetadataAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, ct) is { } meta) fit = meta;
+                a = a with
+                {
+                    SyncOffset = fit.Method is "audio" or "metadata" ? Math.Round(fit.Offset, 4) : 0, SyncDriftPpm = fit.Method == "audio" ? fit.DriftPpm : 0,
+                    SyncConfidence = Math.Round(fit.Confidence, 1), SyncMethod = fit.Reliable || fit.Method == "metadata" ? fit.Method : "none",
+                    SyncResidualMs = fit.Method == "audio" ? fit.ResidualMs : null, SyncWindows = fit.Method == "audio" ? $"{fit.Agreeing}/{fit.Windows}" : null,
+                };
                 s.Store.Put(Kinds.Asset, a.Id, a.ProjectId, a); used[i] = a;
+                s.Log($"[{job.Id}] sync {name}: {fit.Method} offset {fit.Offset:F4}s drift {fit.DriftPpm:F1}ppm conf {fit.Confidence:F0} windows {fit.Agreeing}/{fit.Windows} residual {fit.ResidualMs:F2}ms");
             }
-            if (a.SyncConfidence < SyncResult.MinConfidence)
+            switch (a.SyncMethod)
             {
-                warnings.Add($"{Path.GetFileName(a.Path)} の音声が基準映像と一致しません（信頼度 {a.SyncConfidence}）。このカメラは使いません");
-                used.RemoveAt(i--);
+                case "audio":
+                    break;
+                case "metadata":
+                    warnings.Add($"{name} は音声で同期できないため、撮影日時（メタデータ）で合わせました（{a.SyncOffset:+0.0;-0.0} 秒、誤差 ±1 秒程度）。ずれていれば「ずれ(秒)」で直せます");
+                    break;
+                case "manual":
+                    break;
+                default:
+                    if (a.SyncMethod == null && a.SyncConfidence == SyncResult.Manual) break;
+                    if (a.Media.AudioChannels == 0 || main.Media.AudioChannels == 0)
+                    {
+                        warnings.Add($"{name} は音声も撮影日時もないため同期できません。開始が同時として扱います（ずれていれば「ずれ(秒)」で直せます）");
+                        break;
+                    }
+                    warnings.Add($"{name} の音声が基準映像と一致しません（信頼度 {a.SyncConfidence}）。この素材は使いません");
+                    used.RemoveAt(i--);
+                    break;
             }
         }
         if (preset.Planner == "switch" && used.Count < 2) throw new PipelineException("E-SWT-SYNC", "カメラの音声を同期できませんでした。同じ場面を撮影した素材を選んでください");
@@ -175,6 +201,12 @@ public sealed class PipelineRunner(PipelineServices s)
         var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct, Sub(JobStatus.Analyzing, 0.35, 0.43, sigMsg, "ショットの切り替わり検出"));
         var laughs = await LaughsAsync(main, tr, sig, audio, ct);
         if (preset.Planner == "switch") await AutoAssignSpeakersAsync(used, main, tr, warnings, ct);
+        ScreenContext? screen = null;
+        if (preset.Planner == "screen")
+        {
+            Stage(JobStatus.Analyzing, 0.43, "画面収録と話し手のカメラを見分けています");
+            screen = await AnalyzeScreenAsync(used, main, proxy, warnings, ct);
+        }
         Mark("signals");
 
         BgmTrack? bgm = null;
@@ -215,9 +247,9 @@ public sealed class PipelineRunner(PipelineServices s)
         if (preset.Reframe == "auto" && s.Faces is { Available: true } fs)
         {
             Stage(JobStatus.Analyzing, 0.55, "顔の位置を解析しています");
-            foreach (var a in used.Where(a => a.Media.Aspect >= 0.9 && a.Media.Width > 0))
+            foreach (var a in used.Where(a => a.Media.Aspect >= 0.9 && a.Media.Width > 0 && a.Id != screen?.ScreenAssetId))
             {
-                var ranges = outcome.Candidates.SelectMany(c => c.Segments).Select(x => new Interval(Math.Max(0, x.T0 + (a.Id == main.Id ? 0 : a.SyncOffset)), x.T1 + (a.Id == main.Id ? 0 : a.SyncOffset))).ToList();
+                var ranges = outcome.Candidates.SelectMany(c => c.Segments).Select(x => new Interval(Math.Max(0, a.CameraTime(x.T0, main.Id)), a.CameraTime(x.T1, main.Id))).ToList();
                 var apx = a.Id == main.Id ? proxy : (await s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct)).Item1;
                 faces[a.Id] = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct);
             }
@@ -230,7 +262,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             var cid = $"{job.Id}_{c0.Id}";
             (EditPlan plan, List<string> notes) built;
-            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id)); }
+            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id), screen); }
             catch (PlanException ex) { warnings.Add($"{c0.Id}: {ex.Message}"); continue; }
             var (plan, notes) = built;
             s.Store.Put(Kinds.EditPlan, plan.EditplanId, project.Id, plan);
@@ -273,7 +305,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into exactly <paramref name="parts"/> parts, or parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
     async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double? partMinutes, int? parts0, List<string> warnings, CancellationToken ct)
     {
-        if (preset.Planner is not ("speech" or "switch")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
+        if (preset.Planner is not ("speech" or "switch" or "screen")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
         if (tr.Sentences.Count == 0) throw new PipelineException("E-SERIES-NOSPEECH", "前編・後編の分割は、話の切れ目を書き起こしから探します。発話のある動画を選んでください");
         ChapterOutline? outline = null;
         if (s.Llm != null)
@@ -299,8 +331,52 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     public async Task<(EditPlan plan, List<string> notes)> BuildPlanAsync(Candidate c, Transcript tr, SignalSet sig, Preset p, SourceAsset main, IReadOnlyList<SourceAsset> assets, string projectId, Job job,
-        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null)
-        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKitFor(projectId)), ct);
+        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null, ScreenContext? screen = null)
+        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKitFor(projectId), screen), ct);
+
+    public const string ScreenActivityFile = "screen_activity.v3.json";
+
+    /// <summary>
+    /// P10: per asset, how often the picture is still (screen activity from its proxy) and how often a face is seen (6 spread samples of 4 s);
+    /// then which one is the screen recording and which the presenter. The decision and its evidence are reported to the user.
+    /// </summary>
+    async Task<ScreenContext> AnalyzeScreenAsync(List<SourceAsset> used, SourceAsset main, string mainProxy, List<string> warnings, CancellationToken ct)
+    {
+        var profiles = new Dictionary<string, SourceProfile>(); var activity = new Dictionary<string, ScreenAnalysis>();
+        foreach (var a in used)
+        {
+            var apx = a.Id == main.Id ? mainProxy : (await s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct)).Item1;
+            var act = await ScreenActivity.AnalyzeAsync(s.Ff, apx, Path.Combine(CacheDir(a), ScreenActivityFile), ct);
+            activity[a.Id] = act;
+            double faceRatio = -1;
+            if (s.Faces is { Available: true } fs)
+            {
+                double d = a.Media.Duration;
+                var ranges = Enumerable.Range(0, 6).Select(k => d * (k + 0.5) / 6).Select(t => new Interval(Math.Max(0, t - 2), Math.Min(d, t + 2))).ToList();
+                var samples = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct);
+                var inside = samples.Where(x => ranges.Any(r => x.T >= r.T0 && x.T <= r.T1)).ToList();
+                faceRatio = inside.Count == 0 ? 0 : inside.Count(x => x.Boxes.Count > 0) / (double)inside.Count;
+            }
+            profiles[a.Id] = new SourceProfile(a.Id, ScreenActivity.StaticRatio(act.Samples), faceRatio);
+        }
+        var (scr, pres, reason) = ScreenRoles.Classify(used, profiles);
+        s.Log("screen roles: " + reason);
+        if (scr == null) throw new PipelineException("E-SCR-NOSCREEN", reason + "。素材の役割で「画面」を指定してください");
+        warnings.Add("自動判定 — " + reason);
+        if (pres == null) warnings.Add("話し手のカメラがないため、ワイプなしで画面だけを使います");
+        return new ScreenContext(scr, pres, activity[scr].Samples, activity[scr].Details);
+    }
+
+    public ScreenContext? LoadScreenContext(IReadOnlyList<SourceAsset> used, EditPlan old)
+    {
+        var scr = old.Timeline.FirstOrDefault(c => c.Reframe.Mode == "screen")?.AssetId ?? used.FirstOrDefault(a => a.Role == AssetRole.Screen)?.Id;
+        if (scr == null || used.FirstOrDefault(a => a.Id == scr) is not { } sa) return null;
+        var f = Path.Combine(CacheDir(sa), ScreenActivityFile);
+        if (!File.Exists(f)) return null;
+        var pres = old.Timeline.FirstOrDefault(c => c.Pip != null)?.Pip!.AssetId ?? old.Timeline.FirstOrDefault(c => c.AssetId != scr)?.AssetId;
+        var an = Json.Deserialize<ScreenAnalysis>(File.ReadAllText(f));
+        return new ScreenContext(scr, pres, an.Samples, an.Details);
+    }
 
     public const string BrandKitId = "default";
     /// <summary>The channel's registered opening / closing / card files (one per installation).</summary>
@@ -333,7 +409,7 @@ public sealed class PipelineRunner(PipelineServices s)
         var audios = new List<float[]>();
         foreach (var a in cams)
         {
-            double off = a.Id == main.Id ? 0 : a.SyncOffset;
+            double off = a.CameraTime(0, main.Id);
             audios.Add(await AudioSync.LoadAsync(s.Ff, a.Path, 8000, 600, ct, Math.Max(0, off), 0));
         }
         var res = SpeakerAssign.Assign(audios, 8000, tr);
@@ -370,11 +446,13 @@ public sealed class PipelineRunner(PipelineServices s)
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, old.ProjectId);
         var main = assets.First(a => a.Id == old.Audio.Master);
         var p = s.Presets[old.Preset.Id];
-        var used = p.Planner == "switch" ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id)).ToList() : [main];
+        var used = p.Planner is "switch" or "screen"
+            ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id || t.Pip?.AssetId == a.Id)).ToList() : [main];
         var faces = new Dictionary<string, List<FaceSample>>();
         foreach (var a in used) { var f = FaceService.Load(Path.Combine(CacheDir(a), "faces.json")); if (f.Count > 0) faces[a.Id] = f; }
         BgmTrack? bgm = old.Audio.Bgm is { } id && FindBgm(id) is { } t ? (p.Planner == "beat" ? await AnalyzedBgmAsync(t, ct) : t) : null;
-        return await BuildPlanAsync(c, LoadTranscript(main), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = old.Audio.Bgm ?? "none" } }, faces, bgm, segments, ct, LoadLaughs(main));
+        return await BuildPlanAsync(c, LoadTranscript(main), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = old.Audio.Bgm ?? "none" } }, faces, bgm, segments, ct, LoadLaughs(main),
+            screen: p.Planner == "screen" ? LoadScreenContext(used, old) : null);
     }
 
     public QaContext QaContextFor(EditPlan plan)

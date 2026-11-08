@@ -20,7 +20,7 @@ public sealed record Project
 /// </summary>
 public sealed record SceneCardImage(string Path, int Width, int Height, string? AssetId, double SourceT, string? BrandPath = null);
 
-public enum AssetRole { Main, CamA, CamB, Wide, AudioMaster }
+public enum AssetRole { Main, CamA, CamB, Wide, AudioMaster, Screen }
 
 public sealed record MediaInfo
 {
@@ -46,10 +46,20 @@ public sealed record SourceAsset
     public AssetRole Role { get; init; } = AssetRole.Main;
     /// <summary>Which speaker this camera shows (1-based, order of first appearance in the transcript). Null = wide / no single speaker.</summary>
     public int? Speaker { get; init; }
-    /// <summary>Seconds such that cameraTime = masterTime + SyncOffset (audio cross-correlation or manual).</summary>
+    /// <summary>Seconds such that cameraTime = masterTime + SyncOffset + SyncDriftPpm·1e-6·masterTime (audio alignment, metadata or manual).</summary>
     public double SyncOffset { get; init; }
     public double? SyncConfidence { get; init; }
+    /// <summary>Clock-rate difference to the master (parts per million); 0 = none measured.</summary>
+    public double SyncDriftPpm { get; init; }
+    /// <summary>audio | metadata | manual | none. Null = aligned by an older version (single window) → aligned again.</summary>
+    public string? SyncMethod { get; init; }
+    /// <summary>Median disagreement of the measurement windows with the fit (ms) and how many windows agreed.</summary>
+    public double? SyncResidualMs { get; init; }
+    public string? SyncWindows { get; init; }
     public List<string> Warnings { get; init; } = [];
+
+    /// <summary>This asset's own time for master time <paramref name="masterT"/> (identity for the master itself).</summary>
+    public double CameraTime(double masterT, string masterId) => Id == masterId ? masterT : masterT + SyncOffset + SyncDriftPpm * 1e-6 * masterT;
 }
 
 public sealed record BgmTrack
@@ -193,13 +203,37 @@ public sealed record TrackPoint(double T, double X);
 
 public sealed record ReframeSpec
 {
-    public string Mode { get; init; } = "blur_bg";   // blur_bg | fit | face
+    public string Mode { get; init; } = "blur_bg";   // blur_bg | fit | face | screen
     public int FgOffsetY { get; init; } = -120;
-    /// <summary>face mode: crop window (source pixels), left edge over clip time (seconds after the clip start).</summary>
+    /// <summary>face / screen mode: crop window (source pixels), left edge over clip time (seconds after the clip start).</summary>
     public List<TrackPoint>? Track { get; init; }
     public int CropW { get; init; }
     public int CropH { get; init; }
     public int CropY { get; init; }
+    /// <summary>screen mode: crop top edge over clip time (null = <see cref="CropY"/>). CropW = 0 shows the whole screen fitted to the box.</summary>
+    public List<TrackPoint>? TrackY { get; init; }
+    /// <summary>screen mode: the band of the canvas (full-size pixels) the screen is shown in; the rest is its blurred, dimmed copy.</summary>
+    public int BoxY { get; init; }
+    public int BoxH { get; init; }
+}
+
+/// <summary>Picture-in-picture: a circular inset of another (synchronised) asset, e.g. the presenter's camera over a screen recording.</summary>
+public sealed record PipSpec
+{
+    public required string AssetId { get; init; }
+    /// <summary>Start in the PiP asset's own time; it runs as long as the clip, at the clip's speed.</summary>
+    public double SrcIn { get; init; }
+    /// <summary>Square crop in the PiP asset (source pixels), usually around the face.</summary>
+    public int CropX { get; init; }
+    public int CropY { get; init; }
+    public int CropS { get; init; }
+    /// <summary>Position (top-left of the ring) and inner diameter on the full-size canvas; <see cref="Border"/> = white ring width.</summary>
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int D { get; init; }
+    public int Border { get; init; } = 8;
+    /// <summary>tl | tr | bl | br — chosen to cover the least on-screen activity.</summary>
+    public string Corner { get; init; } = "br";
 }
 
 public sealed record Clip
@@ -213,6 +247,8 @@ public sealed record Clip
     public double? AudioIn { get; init; }
     public double Speed { get; init; } = 1.0;
     public ReframeSpec Reframe { get; init; } = new();
+    /// <summary>Optional inset of a second asset (screen layout: the presenter over the screen recording).</summary>
+    public PipSpec? Pip { get; init; }
     public double Zoom { get; init; } = 1.0;
     public string TransitionIn { get; init; } = "cut";
     public string Role { get; init; } = "body";      // body | teaser | reaction | wide | recap | next (series)

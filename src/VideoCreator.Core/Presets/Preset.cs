@@ -46,6 +46,17 @@ public sealed record SpeedUp(double MaxFactor = 16, double SpeechFactor = 1.0, d
 /// <summary>P7: multi-camera switching rules (PRD FR-SWT-02..05).</summary>
 public sealed record PresetSwitching(double MinHoldSec = 2.0, double ReactionSec = 1.2, double WideEverySec = 45, double WideOpenSec = 2.0);
 
+/// <summary>
+/// P10: screen recording + presenter camera. The screen (with the presenter as a circular inset) is shown while it changes or is referred to;
+/// after <see cref="PresenterAfterStaticSec"/> of a still, unmentioned screen the presenter gets the full frame.
+/// </summary>
+/// <param name="LeadSec">Show the screen this long before a change starts (the viewer sees the action happen).</param>
+/// <param name="TailSec">Stay on the screen this long after a change ends (time to read the result).</param>
+/// <param name="HookPresenterSec">The first seconds show the presenter's face (a face holds attention), unless the screen is changing.</param>
+/// <param name="MaxZoom">Largest magnification of screen pixels onto the canvas (beyond it text gets soft).</param>
+public sealed record PresetScreen(double MinHoldSec = 2.0, double PresenterAfterStaticSec = 4.0, double LeadSec = 0.6, double TailSec = 1.0,
+    double HookPresenterSec = 2.0, double MaxZoom = 1.5, int PipDiameter = 360);
+
 public sealed record PresetTelop
 {
     public List<string> Types { get; init; } = ["caption", "emphasis", "headline"];
@@ -92,11 +103,12 @@ public sealed record Preset
     public List<PresetExample> Examples { get; init; } = [];
     public List<string> IncompatibleWith { get; init; } = [];
     public string SelectionRules { get; init; } = "";
-    /// <summary>speech | switch | speed | beat — which planner turns a candidate into an EditPlan.</summary>
+    /// <summary>speech | switch | speed | beat | screen — which planner turns a candidate into an EditPlan.</summary>
     public string Planner { get; init; } = "speech";
     /// <summary>auto: follow a single face when there is one (else blurred background); blur: always blurred background.</summary>
     public string Reframe { get; init; } = "auto";
     public PresetSwitching? Switching { get; init; }
+    public PresetScreen? Screen { get; init; }
 
     public bool HasTelop(string type) => Telop.Types.Contains(type);
     public PresetRef Ref => new(Id, Version);
@@ -137,11 +149,12 @@ public static class PresetStore
         Req(c.MaxCps is >= 3 and <= 10, "caption.max_cps 3..10");
         Req(c.MarginV >= 580, "caption.margin_v >= 580 (C-4 safe zone)");
         Req(c.MarginR >= 160, "caption.margin_r >= 160 (C-4 safe zone)");
-        Req(p.Planner is "speech" or "switch" or "speed" or "beat", "planner must be speech|switch|speed|beat");
+        Req(p.Planner is "speech" or "switch" or "speed" or "beat" or "screen", "planner must be speech|switch|speed|beat|screen");
         Req(p.Reframe is "auto" or "blur", "reframe must be auto|blur");
         Req(p.Audio.Sfx is "none" or "light" or "heavy", "audio.sfx must be none|light|heavy");
         Req(p.Audio.BgmDb is >= -40 and <= -6, "audio.bgm_db -40..-6");
         Req(p.Planner != "switch" || p.Switching is { MinHoldSec: >= 1.0 and <= 4.0 }, "switch planner needs switching.min_hold_sec 1..4 (FR-SWT-02)");
+        Req(p.Screen is null || p.Screen is { MinHoldSec: >= 1.0 and <= 4.0, MaxZoom: >= 1.0 and <= 3.0, PipDiameter: >= 200 and <= 540 }, "screen: min_hold_sec 1..4, max_zoom 1..3, pip_diameter 200..540");
         Req(p.Cut.SpeedUp is null || p.Cut.SpeedUp.MaxFactor is >= 1 and <= 64, "speed_up.max_factor 1..64");
         Req(p.Audio.Loudnorm.I == -14, "loudnorm.I must be -14 (C-5)");
         Req(p.Audio.Loudnorm.TP <= -1.0, "loudnorm.TP <= -1.0 (C-5)");

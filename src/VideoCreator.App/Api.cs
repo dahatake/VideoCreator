@@ -246,7 +246,11 @@ public static class Api
                 Role = req.Role ?? a.Role,
                 Speaker = req.ClearSpeaker == true ? null : req.Speaker is int sp ? Math.Clamp(sp, 1, 8) : a.Speaker,
                 SyncOffset = req.SyncOffset is double so ? Math.Round(Math.Clamp(so, -600, 600), 3) : a.SyncOffset,
-                SyncConfidence = req.SyncOffset != null ? 9999 : a.SyncConfidence,   // a manual offset is trusted
+                SyncConfidence = req.SyncOffset != null ? Audio.SyncResult.Manual : a.SyncConfidence,   // a manual offset is trusted
+                SyncDriftPpm = req.SyncOffset != null ? 0 : a.SyncDriftPpm,
+                SyncMethod = req.SyncOffset != null ? "manual" : a.SyncMethod,
+                SyncResidualMs = req.SyncOffset != null ? null : a.SyncResidualMs,
+                SyncWindows = req.SyncOffset != null ? null : a.SyncWindows,
             };
             rt.Store.Put(Kinds.Asset, id, a.ProjectId, u);
             return Results.Json(u, Json.Options);
@@ -605,7 +609,7 @@ public static class Api
             int max = Planning.SeriesPlanner.MaxPartsFor(mainAsset.Media.Duration, int.MaxValue);
             if (np > max) return Error(422, "E-SERIES-PARTS", max < 2 ? $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため分けられません" : $"{np}本に分けると1本あたり{Planning.SeriesPlanner.MinPartSec / 60:0}分未満になります。この動画（{mainAsset.Media.Duration / 60:F1}分）は最大 {max} 本まで分けられます");
         }
-        if (options.IsSeries && main.Planner is not ("speech" or "switch")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9）を選んでください");
+        if (options.IsSeries && main.Planner is not ("speech" or "switch" or "screen")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
         if (options.PartMinutes is double pm)
         {
             if (!double.IsFinite(pm) || pm < MinPartMinutes || pm > MaxPartMinutes) return Error(422, "E-VALIDATION", $"1本あたりの長さは {MinPartMinutes}〜{MaxPartMinutes} 分で指定してください");
@@ -636,6 +640,7 @@ public static class Api
                 Id = id, ProjectId = projectId, Path = path, Sha256 = sha, Media = media, Warnings = warnings,
                 Role = prev?.Role ?? (existing.Count == 0 ? AssetRole.Main : AssetRole.CamB),
                 Speaker = prev?.Speaker, SyncOffset = prev?.SyncOffset ?? 0, SyncConfidence = prev?.SyncConfidence,
+                SyncDriftPpm = prev?.SyncDriftPpm ?? 0, SyncMethod = prev?.SyncMethod, SyncResidualMs = prev?.SyncResidualMs, SyncWindows = prev?.SyncWindows,
             };
             rt.Store.Put(Kinds.Asset, asset.Id, projectId, asset);
             return Results.Json(asset, Json.Options, statusCode: 201);

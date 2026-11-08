@@ -100,7 +100,8 @@ public sealed class MediaProbe(FFmpeg ff)
         if (File.Exists(proxy) && (m.AudioChannels == 0 || File.Exists(audio))) return (proxy, audio);
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y", "-i", file,
             "-map", "0:v:0", "-vf", "scale=-2:360,fps=30", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-an", proxy + ".tmp.mp4" };
-        if (m.AudioChannels > 0) args.AddRange(["-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", audio + ".tmp.flac"]);
+        // timestamp-true audio (a late-starting stream is padded): transcript times then equal the file times that atrim/trim cut on
+        if (m.AudioChannels > 0) args.AddRange(["-map", "0:a:0", "-vn", "-af", Audio.AudioSync.TimelineFilter, "-ac", "1", "-ar", "16000", "-c:a", "flac", audio + ".tmp.flac"]);
         await ff.RunFfmpegCheckedAsync(args, ct, progress: progress, duration: m.Duration);
         File.Move(proxy + ".tmp.mp4", proxy, true);
         if (m.AudioChannels > 0) File.Move(audio + ".tmp.flac", audio, true);

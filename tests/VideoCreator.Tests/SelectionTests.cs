@@ -109,11 +109,12 @@ public class SelectionTests
     public void All_presets_load_and_mvp_presets_are_available()
     {
         var ps = Fixtures.Presets;
-        Assert.Equal(9, ps.Count);
+        Assert.Equal(10, ps.Count);
         Assert.True(ps.Values.All(p => p.Available));
         Assert.Equal("switch", ps["P7"].Planner);
         Assert.Equal("speed", ps["P8"].Planner);
         Assert.Equal("beat", ps["P5"].Planner);
+        Assert.Equal("screen", ps["P10"].Planner);
         Assert.Contains("P3", ps["P9"].IncompatibleWith);
     }
 

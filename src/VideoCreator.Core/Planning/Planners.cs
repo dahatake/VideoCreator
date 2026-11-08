@@ -42,8 +42,7 @@ public static class SwitchPlanner
         SourceAsset Cam(int speaker) => cams.TryGetValue(speaker, out var a) ? a : wide ?? master;
         Clip Make(SourceAsset cam, double m0, double m1, string role, double zoom = 1.0)
         {
-            double off = cam.Id == master.Id ? 0 : cam.SyncOffset;
-            double s0 = m0 + off, s1 = m1 + off;
+            double s0 = cam.CameraTime(m0, master.Id), s1 = s0 + (m1 - m0);
             if (s0 < 0 || s1 > cam.Media.Duration + 0.01) { cam = master; s0 = m0; s1 = m1; notes.Add($"{m0:F1}s は同期後のカメラ映像が範囲外のため、基準映像を使いました"); }
             return new Clip { ClipId = $"c{++ci}", AssetId = cam.Id, SrcIn = Math.Round(s0, 3), SrcOut = Math.Round(s1, 3), AudioIn = Math.Round(m0, 3), Role = role, Zoom = zoom, Reframe = new ReframeSpec { Mode = cam.Media.Aspect < 0.9 ? "fit" : "blur_bg" } };
         }

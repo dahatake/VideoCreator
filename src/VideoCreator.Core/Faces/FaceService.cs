@@ -168,7 +168,7 @@ public static class FaceTrack
         return p[^1].x;
     }
 
-    static List<(double t, double x)> Simplify(List<(double t, double x)> pts, double tol)
+    internal static List<(double t, double x)> Simplify(List<(double t, double x)> pts, double tol)
     {
         if (pts.Count < 3) return pts;
         double Dist(int i, int a, int b) { var (ta, xa) = pts[a]; var (tb, xb) = pts[b]; var xi = xa + (xb - xa) * (pts[i].t - ta) / Math.Max(1e-9, tb - ta); return Math.Abs(pts[i].x - xi); }

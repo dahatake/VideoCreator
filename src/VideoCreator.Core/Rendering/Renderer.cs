@@ -33,6 +33,8 @@ public sealed partial class Renderer(FFmpeg ff)
         /// <summary>Per timeline clip: input index and the source time at which that input starts (non-zero for seeked inputs).</summary>
         public List<(int Index, double Offset)> Video { get; init; } = [];
         public List<(int Index, double Offset)> Audio { get; init; } = [];
+        /// <summary>Per timeline clip: the PiP asset's input (Index −1 = no PiP).</summary>
+        public List<(int Index, double Offset)> Pip { get; init; } = [];
     }
 
     /// <summary>Series plans are long and play clips out of source order (cold open, recap, next teaser). Sharing one input would make FFmpeg
@@ -43,7 +45,7 @@ public sealed partial class Renderer(FFmpeg ff)
     public Inputs ResolveInputs(EditPlan plan, IReadOnlyDictionary<string, SourceAsset> assets)
     {
         var args = new List<string[]>(); var idx = new Dictionary<string, int>(); var media = new Dictionary<string, MediaInfo>();
-        var video = new List<(int, double)>(); var audio = new List<(int, double)>();
+        var video = new List<(int, double)>(); var audio = new List<(int, double)>(); var pip = new List<(int, double)>();
         SourceAsset Asset(string id) => assets.TryGetValue(id, out var a) ? a : throw new FFmpegException($"asset {id} not found");
         void AddAsset(string id)
         {
@@ -55,19 +57,21 @@ public sealed partial class Renderer(FFmpeg ff)
         {
             foreach (var id in plan.Timeline.Select(c => c.AssetId).Distinct()) AddAsset(id);
             AddAsset(plan.Audio.Master);
-            foreach (var c in plan.Timeline) { video.Add((idx[c.AssetId], 0)); audio.Add((idx[plan.Audio.Master], 0)); }
+            foreach (var id in plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId).Distinct()) AddAsset(id);
+            foreach (var c in plan.Timeline) { video.Add((idx[c.AssetId], 0)); audio.Add((idx[plan.Audio.Master], 0)); pip.Add(c.Pip != null ? (idx[c.Pip.AssetId], 0) : (-1, 0)); }
         }
         else
         {
             var open = new Dictionary<string, (int index, double offset, double last)>();
-            (int, double) Block(string assetId, double t0, double t1)
+            // key = asset id, or "audio:<id>" / "pip:<id>" for a second, independent chain of blocks on the same file
+            (int, double) Block(string key, double t0, double t1)
             {
-                if (open.TryGetValue(assetId, out var b) && t0 >= b.last - 0.01) { open[assetId] = b with { last = t1 }; return (b.index, b.offset); }
-                var a = Asset(assetId); media[a.Id] = a.Media;
+                if (open.TryGetValue(key, out var b) && t0 >= b.last - 0.01) { open[key] = b with { last = t1 }; return (b.index, b.offset); }
+                var a = Asset(key[(key.IndexOf(':') + 1)..]); media[a.Id] = a.Media;
                 double seek = Math.Max(0, Math.Round(t0 - SeekMargin, 3));
                 var nb = (args.Count, seek, t1);
                 args.Add(seek > 0 ? ["-ss", F(seek), "-i", a.Path] : ["-i", a.Path]);
-                open[assetId] = nb;
+                open[key] = nb;
                 return (nb.Item1, nb.Item2);
             }
             foreach (var c in plan.Timeline)
@@ -76,6 +80,7 @@ public sealed partial class Renderer(FFmpeg ff)
                 video.Add(v);
                 // single-source clips read their audio from the same input; other cameras take it from the master's own blocks
                 audio.Add(c.AssetId == plan.Audio.Master && c.AudioIn == null ? v : Block("audio:" + plan.Audio.Master, c.MasterIn, c.MasterOut));
+                pip.Add(c.Pip is { } p ? Block("pip:" + p.AssetId, p.SrcIn, p.SrcIn + (c.SrcOut - c.SrcIn)) : (-1, 0));
             }
             media[plan.Audio.Master] = Asset(plan.Audio.Master).Media;
         }
@@ -100,7 +105,7 @@ public sealed partial class Renderer(FFmpeg ff)
             // a card image becomes a still stream of the card's length
             args.Add(ins.Kind == "card" ? ["-loop", "1", "-framerate", plan.Canvas.Fps.ToString(IC), "-t", F(ins.Duration), "-i", path] : ["-i", path]);
         }
-        return new Inputs(args, idx, media) { Video = video, Audio = audio };
+        return new Inputs(args, idx, media) { Video = video, Audio = audio, Pip = pip };
     }
 
     static string KindName(Insert i) => i.Kind switch { "opening" => "オープニング", "closing" => "クロージング", _ => "場面転換カード" };
@@ -191,11 +196,17 @@ public sealed partial class Renderer(FFmpeg ff)
         return g.ToString();
     }
 
-    /// <summary>One clip (or a one-frame freeze of it) reframed to the canvas: face crop, punch-in, fit or blurred background. <paramref name="post"/> runs before the output label.</summary>
-    static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "")
+    /// <summary>One clip (or a one-frame freeze of it) reframed to the canvas: face crop, punch-in, fit, blurred background or the screen layout. <paramref name="post"/> runs before the output label.
+    /// <paramref name="pipHead"/>: the PiP asset's trimmed stream for <see cref="Clip.Pip"/> (null = no inset, e.g. a freeze frame).</summary>
+    static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "", string? pipHead = null)
     {
         g.Append(head);
         bool zoom = c.Zoom > 1.001;
+        if (c.Reframe.Mode == "screen")
+        {
+            AppendScreen(g, c, W, H, half, id, label, post, pipHead);
+            return;
+        }
         if (c.Reframe.Mode == "face" && c.Reframe.Track is { Count: > 0 } track)
         {
             g.Append($",crop={c.Reframe.CropW}:{c.Reframe.CropH}:x='{FaceTrack.XExpression(track)}':y={c.Reframe.CropY},scale={W}:{H}:flags=lanczos,setsar=1");
@@ -215,6 +226,31 @@ public sealed partial class Renderer(FFmpeg ff)
 
     /// <summary>Exactly <paramref name="frames"/> frames: a short stream is held on its last frame, a long one is cut.</summary>
     static string Frames(int frames) => $",tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},setpts=PTS-STARTPTS";
+
+    /// <summary>
+    /// Screen layout: the screen recording's blurred, dimmed copy fills the canvas; the screen itself — zoomed and panned along its track, or whole when
+    /// CropW = 0 — fills the band [BoxY, BoxY+BoxH); the PiP is a circle with a white ring. Both masks are computed for ONE frame with geq and looped
+    /// (geq per frame would cost ~130 k expression evaluations per frame).
+    /// </summary>
+    static void AppendScreen(StringBuilder g, Clip c, int W, int H, bool half, string id, string label, string post, string? pipHead)
+    {
+        int S(int v) => half ? (v / 2) & ~1 : v;
+        var r = c.Reframe; int by = S(r.BoxY), bh = S(r.BoxH);
+        g.Append($",split[sf{id}][sb{id}];[sb{id}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2,eq=brightness=-0.12[sbb{id}];");
+        if (r.CropW > 0 && r.Track is { Count: > 0 } tx)
+            g.Append($"[sf{id}]crop={r.CropW}:{r.CropH}:x='{FaceTrack.XExpression(tx)}':y='{FaceTrack.XExpression(r.TrackY ?? [new TrackPoint(0, r.CropY)])}',scale={W}:{bh}:flags=lanczos,setsar=1[sff{id}];" +
+                     $"[sbb{id}][sff{id}]overlay=0:{by}");
+        else
+            g.Append($"[sf{id}]scale={W}:{bh}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,setsar=1[sff{id}];[sbb{id}][sff{id}]overlay=(W-w)/2:{by}+({bh}-h)/2");
+        if (pipHead == null || c.Pip is not { } pip) { g.Append($",setsar=1{post}[{label}];"); return; }
+        int d = S(pip.D), b = Math.Max(2, S(pip.Border)), rr = d / 2, rb = rr + b, db = d + 2 * b;
+        g.Append($"[sx{id}];");
+        g.Append($"{pipHead},crop={pip.CropS}:{pip.CropS}:{pip.CropX}:{pip.CropY},scale={d}:{d}:flags=lanczos,format=yuva420p[pv{id}];");
+        g.Append($"color=c=black:s={d}x{d}:r=30,trim=end_frame=1,format=gray,geq=lum='255*lte(hypot(X-{rr}+0.5,Y-{rr}+0.5),{rr})',loop=loop=-1:size=1,setpts=N/30/TB[pm{id}];");
+        g.Append($"color=c=white:s={db}x{db}:r=30,trim=end_frame=1,format=yuva420p,geq=lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':a='255*lte(hypot(X-{rb}+0.5,Y-{rb}+0.5),{rb})',loop=loop=-1:size=1,setpts=N/30/TB[pr{id}];");
+        g.Append($"[pv{id}][pm{id}]alphamerge[pa{id}];[pr{id}][pa{id}]overlay={b}:{b}:shortest=1[pb{id}];");
+        g.Append($"[sx{id}][pb{id}]overlay={S(pip.X)}:{S(pip.Y)}:shortest=1,setsar=1{post}[{label}];");
+    }
 
     /// <summary>
     /// Insert video [iv{j}]: a bumper scaled to the canvas (blurred background when its shape differs, e.g. a 16:9 opening in a 9:16 output),
@@ -322,8 +358,14 @@ public sealed partial class Renderer(FFmpeg ff)
             // cross-fade overlap taken from this clip's tail (only when the next thing played is a clip that fades in)
             double ext = s + 1 < seq.Count && seq[s + 1].Insert == null ? plan.Timeline[seq[s + 1].Clip].TransitionSec : 0;
             int extFrames = (int)Math.Round(ext * fps);
+            string? pipHead = null;
+            if (c.Pip is { } pp && inp.Pip.Count > i && inp.Pip[i].Index >= 0)
+            {
+                var (pk, poff) = inp.Pip[i];
+                pipHead = $"[{pk}:v]trim=start={F(pp.SrcIn - poff)}:end={F(pp.SrcIn + (c.SrcOut - c.SrcIn) + ext * c.Speed - poff)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}";
+            }
             AppendVideo(g, $"[{k}:v]trim=start={F(c.SrcIn - off)}:end={F(c.SrcOut + ext * c.Speed - off)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}", c, W, H, half, i.ToString(IC), $"v{i}",
-                Frames(frames[s] + extFrames));
+                Frames(frames[s] + extFrames), pipHead);
             vlabel.Add($"v{i}"); fadeFrames.Add(s > 0 && seq[s - 1].Insert == null ? (int)Math.Round(c.TransitionSec * fps) : 0);
             labels.Append($"[v{i}][a{i}]");
         }

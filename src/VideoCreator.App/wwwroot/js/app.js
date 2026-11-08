@@ -320,7 +320,17 @@ async function project(id) {
   let estimate = null;
   if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
   const lastJob = d.jobs[0];
-  const roleLabel = { main: '基準（音声の元）', cam_a: 'カメラA', cam_b: 'カメラB', wide: '引き（全体）', audio_master: '音声のみの基準' };
+  const roleLabel = { main: '基準（音声の元）', cam_a: 'カメラA', cam_b: 'カメラB', wide: '引き（全体）', audio_master: '音声のみの基準', screen: '画面（PC の画面収録）' };
+  const syncText = (a) => {
+    if (a.role === 'main') return '基準（ほかの素材をこの音声に合わせます）';
+    if (a.sync_method === 'manual' || (a.sync_method == null && a.sync_confidence === 9999)) return `手入力のずれ ${(a.sync_offset * 1000).toFixed(0)} ms`;
+    if (a.sync_method === 'audio') return `音声で同期: ${a.sync_offset >= 0 ? '+' : ''}${(a.sync_offset * 1000).toFixed(1)} ms` +
+      (a.sync_drift_ppm ? `・時計のずれ ${a.sync_drift_ppm > 0 ? '+' : ''}${a.sync_drift_ppm.toFixed(1)} ppm（1時間で ${(Math.abs(a.sync_drift_ppm) * 3.6).toFixed(0)} ms を補正）` : '') +
+      (a.sync_windows ? `・${a.sync_windows} 区間が一致（残差 ${a.sync_residual_ms} ms）` : '');
+    if (a.sync_method === 'metadata') return `撮影日時で同期: ${a.sync_offset.toFixed(1)} 秒（誤差 ±1 秒程度・要確認）`;
+    if (a.sync_method === 'none') return '同期できませんでした（「ずれ(秒)」で指定できます）';
+    return a.sync_confidence != null ? `同期の信頼度 ${a.sync_confidence}（次の生成で測り直します）` : '生成時に音声で自動同期';
+  };
   const scopeLabel = { economy: ['節約', '盛り上がりの大きい区間だけを AI に送ります（速い・安い）'], balanced: ['標準', '半分程度に絞って AI に送ります'], full: ['全文', '書き起こし全体を AI に送ります（いちばん見落としが少ない）'] };
   const jpy = (c) => `¥${Number(c.estimated_jpy).toFixed(1)}`;
   const long = estimate && estimate.duration > 1800;
@@ -342,7 +352,7 @@ async function project(id) {
         <div class="col-body">
         <div class="drop" id="drop">
           <p><b>動画ファイルをここにドラッグ＆ドロップ</b></p>
-          <p class="caption">MP4 / MOV / MKV / WebM、10秒〜3時間。複数カメラの切り替え（P7）では同じ場面を撮った動画を複数追加します。</p>
+          <p class="caption">MP4 / MOV / MKV / WebM、10秒〜3時間。複数カメラの切り替え（P7）や画面解説（P10: PC の画面収録＋話し手のカメラ）では、同じ場面を撮った動画を複数追加します。開始時刻のずれは音声から自動で合わせます。</p>
           <input type="file" id="file" accept="video/*,.mkv" hidden>
           <fluent-button id="pick">ファイルを選ぶ</fluent-button>
           <div id="upload" class="stack" style="margin-top:12px"></div>
@@ -360,7 +370,7 @@ async function project(id) {
               ${assets.length > 1 ? `<div class="row" style="margin:8px 0"><label class="caption">役割 <select class="native role" data-asset="${esc(a.id)}">${Object.entries(roleLabel).map(([k, v]) => `<option value="${k}" ${a.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
                 <label class="caption">話者 <input class="native spk" type="number" min="1" max="8" style="width:64px" data-asset="${esc(a.id)}" value="${a.speaker ?? ''}" placeholder="自動"></label>
                 <label class="caption">ずれ(秒) <input class="native off" type="number" step="0.001" style="width:96px" data-asset="${esc(a.id)}" value="${a.sync_offset ?? 0}"></label>
-                <span class="caption">${a.sync_confidence != null ? `同期の信頼度 ${a.sync_confidence}` : '生成時に音声で自動同期'}</span></div>` : ''}
+                <span class="caption">${esc(syncText(a))}</span></div>` : ''}
               <div style="margin-top:8px">${field(esc(d.rights_statement), `<fluent-checkbox slot="input" class="rights" data-asset="${esc(a.id)}" ${rights.has(a.id) ? 'checked disabled' : ''}></fluent-checkbox>`)}</div>
             </div>
             <fluent-badge appearance="tint" color="${rights.has(a.id) ? 'success' : 'warning'}">${rights.has(a.id) ? '確認済み' : '要確認'}</fluent-badge>
@@ -1058,7 +1068,7 @@ async function review(epId) {
           ${(plan.inserts ?? []).some(i => i.kind === 'card' && i.text && !i.approved) ? '<fluent-button size="small" id="approveCards">カードをすべて承認</fluent-button>' : ''}` : ''}
           ${plan.series?.chapters?.length ? `<details><summary class="caption">構成・チャプター（${plan.series.chapters.length}）</summary><ul class="notes">${plan.series.chapters.map(ch => `<li>${fmt(ch.start)} ${esc(ch.title)}</li>`).join('')}</ul></details>` : ''}
           <details><summary class="caption">カット一覧（映像・速度）</summary>
-            <ul class="notes">${plan.timeline.map(c => `<li>${esc(c.clip_id)} ${esc(assetName(c.asset_id))}${c.role !== 'body' ? `（${esc(roleName[c.role] ?? c.role)}）` : ''} ${((c.src_out - c.src_in) / (c.speed || 1)).toFixed(1)}秒${c.speed && c.speed !== 1 ? ` ×${c.speed}倍速` : ''}${c.reframe?.mode === 'face' ? ' · 顔を追う' : ''}</li>`).join('')}</ul></details>
+            <ul class="notes">${plan.timeline.map(c => `<li>${esc(c.clip_id)} ${esc(assetName(c.asset_id))}${c.role !== 'body' ? `（${esc(roleName[c.role] ?? c.role)}）` : ''} ${((c.src_out - c.src_in) / (c.speed || 1)).toFixed(1)}秒${c.speed && c.speed !== 1 ? ` ×${c.speed}倍速` : ''}${c.reframe?.mode === 'face' ? ' · 顔を追う' : ''}${c.reframe?.mode === 'screen' ? (c.reframe.crop_w ? ' · 画面（操作箇所へズーム）' : ' · 画面（全体）') : ''}${c.pip ? ` · ワイプ: ${esc(assetName(c.pip.asset_id))}` : ''}</li>`).join('')}</ul></details>
           <h3>音</h3>
           <div class="row"><label class="caption">BGM <select class="native" id="bgmSel">
             <option value="none" ${!plan.audio.bgm ? 'selected' : ''}>なし</option>${bgmList.map(b => `<option value="${esc(b.id)}" ${plan.audio.bgm === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
