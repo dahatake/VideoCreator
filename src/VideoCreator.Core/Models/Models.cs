@@ -8,10 +8,21 @@ public sealed record Project
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string Language { get; init; } = "ja-JP";
     public required string Directory { get; init; }
+    public List<ProjectProperNoun> ProperNouns { get; init; } = [];
     public List<SceneCardImage> SceneCardImages { get; init; } = [];
     /// <summary>The user's 作る / 作らない choice for video-extracted scene-card images. Null (older projects) = use them when some exist.</summary>
     public bool? MakeSceneCardImages { get; init; }
     public bool UsesSceneCardImages() => MakeSceneCardImages ?? SceneCardImages.Count > 0;
+}
+
+public enum ProperNounType { Person, Place, Organization, Product, Other }
+
+public sealed record ProjectProperNoun
+{
+    public string DisplayText { get; init; } = "";
+    public string Reading { get; init; } = "";
+    public List<string> Variants { get; init; } = [];
+    public ProperNounType Type { get; init; }
 }
 
 /// <summary>

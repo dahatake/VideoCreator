@@ -509,8 +509,68 @@ async function project(id) {
           ${notReady ? `<span class="caption" id="genHint"> ${notReady}</span>` : ''}
         </div>
       </section>
-    </div>`;
+    </div>
+    <section class="card" aria-labelledby="proper-nouns-heading" style="margin-top:16px">
+      <details id="properNounsDetails">
+        <summary id="proper-nouns-heading"><b>字幕・テロップの固有名詞</b> <span class="caption">（<span id="properNounCount">${d.project.proper_nouns?.length ?? 0}</span>件）</span></summary>
+        <p class="caption" style="margin-top:8px">人名・地名・会社名などの表示表記、読み、音声認識で出やすい別表記を登録できます。表記・読み・別表記は次回以降の書き起こしで認識ヒントとして使い、表示表記はテロップの語句照合にも使います。既存の書き起こしや時刻は変更しません。音声認識結果は確認画面で確認・修正してください。</p>
+        <div id="properNounRows" class="stack"></div>
+        <div class="row" style="margin-top:8px"><fluent-button id="addProperNoun" type="button" size="small">固有名詞を追加</fluent-button><fluent-button id="saveProperNouns" type="button" appearance="primary" size="small">保存</fluent-button></div>
+        <div id="properNounsMsg" role="status" aria-live="polite"></div>
+      </details>
+    </section>`;
   document.body.classList.add('fit');
+
+  let properNouns = (d.project.proper_nouns ?? []).map(n => ({ ...n, variants: n.variants ?? [] }));
+  const properNounTypes = { person: '人名', place: '地名', organization: '企業・団体名', product: '商品・作品名', other: 'その他' };
+  const renderProperNouns = () => {
+    $('#properNounCount').textContent = String(properNouns.length);
+    $('#properNounRows').innerHTML = properNouns.length ? properNouns.map((n, i) => `
+      <fieldset class="proper-noun-row">
+        <legend class="caption">固有名詞 ${i + 1}</legend>
+        <div class="row">
+          <label class="caption">種類 <select class="native" data-proper-index="${i}" data-proper-field="type">${Object.entries(properNounTypes).map(([v, label]) => `<option value="${v}" ${n.type === v ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <label class="caption">字幕・テロップの表記 <input class="native" data-proper-index="${i}" data-proper-field="display_text" maxlength="100" value="${esc(n.display_text)}" placeholder="例: 東京太郎"></label>
+          <label class="caption">読み（任意） <input class="native" data-proper-index="${i}" data-proper-field="reading" maxlength="100" value="${esc(n.reading)}" placeholder="例: とうきょうたろう"></label>
+          <label class="caption">音声認識の別表記（任意・読点区切り） <input class="native proper-variants" data-proper-index="${i}" data-proper-field="variants" maxlength="1000" value="${esc(n.variants.join('、'))}" placeholder="例: 東京たろう、とうきょう太郎"></label>
+          <fluent-button type="button" size="small" appearance="subtle" class="removeProperNoun" data-proper-index="${i}" aria-label="固有名詞 ${i + 1} を削除">削除</fluent-button>
+        </div>
+      </fieldset>`).join('') : '<p class="caption">まだ登録されていません。</p>';
+  };
+  renderProperNouns();
+  $('#addProperNoun').addEventListener('click', () => {
+    properNouns.push({ display_text: '', reading: '', variants: [], type: 'person' });
+    renderProperNouns();
+    $('#properNounRows fieldset:last-child [data-proper-field="display_text"]')?.focus();
+  });
+  const updateProperNoun = e => {
+    const el = e.target.closest('[data-proper-index][data-proper-field]');
+    if (!el) return;
+    const row = properNouns[Number(el.dataset.properIndex)];
+    row[el.dataset.properField] = el.dataset.properField === 'variants'
+      ? el.value.split(/[,、，\n]/).map(v => v.trim()).filter(Boolean)
+      : el.value;
+  };
+  $('#properNounRows').addEventListener('input', updateProperNoun);
+  $('#properNounRows').addEventListener('change', updateProperNoun);
+  $('#properNounRows').addEventListener('click', e => {
+    const button = e.target.closest('.removeProperNoun');
+    if (!button) return;
+    properNouns.splice(Number(button.dataset.properIndex), 1);
+    renderProperNouns();
+  });
+  $('#saveProperNouns').addEventListener('click', async () => {
+    const button = $('#saveProperNouns'), msg = $('#properNounsMsg');
+    button.disabled = true;
+    try {
+      const p = await api(`/api/projects/${encodeURIComponent(id)}/proper-nouns`, { method: 'PUT', body: { proper_nouns: properNouns } });
+      properNouns = (p.proper_nouns ?? []).map(n => ({ ...n, variants: n.variants ?? [] }));
+      d.project.proper_nouns = properNouns;
+      renderProperNouns();
+      msg.innerHTML = info('固有名詞を保存しました。ASRのヒントは次回の候補生成時の書き起こしから反映されます。', 'success');
+    } catch (e) { msg.innerHTML = errorBar(e); }
+    finally { button.disabled = false; }
+  });
 
   const titleView = $('#title-view'), titleEdit = $('#title-edit'), nameInput = $('#rename-input');
   let renaming = false;

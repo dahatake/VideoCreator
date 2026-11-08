@@ -85,12 +85,26 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<Transcript> TranscriptAsync(SourceAsset a, string audio, CancellationToken ct)
     {
         if (a.Media.AudioChannels == 0 || s.Asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration };
-        var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s.Asr.Name + "|" + string.Join("|", s.Dictionary))))[..12];
-        var file = Path.Combine(CacheDir(a), $"transcript_{key}.json");
+        var phrases = DictionaryFor(a.ProjectId);
+        var file = TranscriptFile(a, phrases);
         if (File.Exists(file)) return Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
-        var tr = await s.Asr.TranscribeAsync(audio, a.Media.Duration, s.Dictionary, 4, ct);
+        var tr = await s.Asr.TranscribeAsync(audio, a.Media.Duration, phrases, 4, ct);
         await File.WriteAllTextAsync(file, Json.Serialize(tr), ct);
         return tr;
+    }
+
+    List<string> DictionaryFor(string projectId)
+    {
+        var project = s.Store.Get<Project>(Kinds.Project, projectId);
+        return s.Dictionary.Concat(project?.ProperNouns.SelectMany(n => new[] { n.DisplayText, n.Reading }.Concat(n.Variants)) ?? [])
+            .Select(text => text.Trim()).Where(text => text.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    string TranscriptFile(SourceAsset a, IReadOnlyList<string> phrases)
+    {
+        var provider = s.Asr?.Name ?? "none";
+        var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(provider + "|" + string.Join("|", phrases))))[..12];
+        return Path.Combine(CacheDir(a), $"transcript_{key}.json");
     }
 
     public async Task<SignalSet> SignalsAsync(SourceAsset a, string proxy, string? audio, CancellationToken ct, IProgress<double>? progress = null)
@@ -483,12 +497,14 @@ public sealed class PipelineRunner(PipelineServices s)
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, plan.ProjectId).Select(r => r.AssetId).ToHashSet();
         var mask = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options.MaskWords : null;
         var approval = plan.Provenance.CandidateId is { } cid ? s.Store.Get<Candidate>(Kinds.Candidate, cid)?.Approval : null;
-        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, s.Dictionary, assets, mask, approval);
+        return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, DictionaryFor(plan.ProjectId), assets, mask, approval);
     }
 
     public Transcript LoadTranscript(SourceAsset a)
     {
         var dir = CacheDir(a);
+        var expected = TranscriptFile(a, DictionaryFor(a.ProjectId));
+        if (File.Exists(expected)) return Json.Deserialize<Transcript>(File.ReadAllText(expected));
         var f = Directory.Exists(dir) ? Directory.GetFiles(dir, "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
         return f != null ? Json.Deserialize<Transcript>(File.ReadAllText(f)) : new Transcript { Provider = "none", Duration = a.Media.Duration };
     }

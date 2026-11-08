@@ -170,3 +170,8 @@ fluent-message-bar { margin-bottom: var(--s12); }
 .words input.native { min-height: 28px; padding: 2px 6px; }
 fieldset.series-by { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
 fieldset.series-by legend { padding: 0; margin-bottom: 4px; }
+fieldset.proper-noun-row { border: 1px solid var(--colorNeutralStroke2); border-radius: var(--borderRadiusMedium, 4px); margin: 0; padding: var(--s8); }
+fieldset.proper-noun-row legend { padding: 0 var(--s4); }
+fieldset.proper-noun-row label { display: flex; flex-direction: column; gap: var(--s4); }
+fieldset.proper-noun-row input { min-width: 180px; }
+fieldset.proper-noun-row label:last-of-type { flex: 1; }

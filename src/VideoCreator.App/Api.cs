@@ -13,6 +13,7 @@ public static class Api
 {
     public sealed record CreateProject(string Name);
     public sealed record RenameProject(string? Name);
+    public sealed record PutProjectProperNouns(List<ProjectProperNoun?>? ProperNouns);
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
     public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null);
@@ -171,6 +172,41 @@ public static class Api
             if (ValidateProjectName(req.Name, out var name) is string err) return Error(422, "E-VALIDATION", err);
             if (name == p.Name) return Results.Json(p, Json.Options);
             p = p with { Name = name };
+            rt.Store.Put(Kinds.Project, id, null, p);
+            return Results.Json(p, Json.Options);
+        });
+        api.MapPut("/projects/{id}/proper-nouns", (Runtime rt, string id, PutProjectProperNouns req) =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (req.ProperNouns == null || req.ProperNouns.Count > 100)
+                return Error(422, "E-VALIDATION", "固有名詞は1プロジェクトあたり100件以内で指定してください");
+
+            var properNouns = new List<ProjectProperNoun>(req.ProperNouns.Count);
+            foreach (var item in req.ProperNouns)
+            {
+                if (item == null) return Error(422, "E-VALIDATION", "空の固有名詞は登録できません");
+                var display = NormalizeProperNounText(item.DisplayText);
+                var reading = NormalizeProperNounText(item.Reading);
+                if (display.Length == 0 || TextLength(display) > 100 || TextLength(reading) > 100 ||
+                    display.Any(char.IsControl) || reading.Any(char.IsControl))
+                    return Error(422, "E-VALIDATION", "表記は必須、表記と読みはそれぞれ100文字以内で指定してください");
+                if (!Enum.IsDefined(item.Type))
+                    return Error(422, "E-VALIDATION", "固有名詞の種類が正しくありません");
+                if (item.Variants == null || item.Variants.Count > 10)
+                    return Error(422, "E-VALIDATION", "音声認識の別表記は1件あたり10個以内で指定してください");
+
+                var variants = item.Variants.Select(NormalizeProperNounText).Where(v => v.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (variants.Any(v => TextLength(v) > 100 || v.Any(char.IsControl)))
+                    return Error(422, "E-VALIDATION", "音声認識の別表記はそれぞれ100文字以内で指定してください");
+                properNouns.Add(new ProjectProperNoun { DisplayText = display, Reading = reading, Variants = variants, Type = item.Type });
+            }
+            var phraseCount = rt.Options.Dictionary.Concat(properNouns.SelectMany(n => new[] { n.DisplayText, n.Reading }.Concat(n.Variants)))
+                .Where(text => text.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            if (phraseCount > 500) return Error(422, "E-VALIDATION", "共有辞書を含む音声認識フレーズは500件以内にしてください");
+
+            p = p with { ProperNouns = properNouns };
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
@@ -701,6 +737,11 @@ public static class Api
 
     public const int MaxProjectNameLength = 80;
     public const double MinPartMinutes = 1, MaxPartMinutes = 60;
+
+    static string NormalizeProperNounText(string? value) =>
+        (value ?? "").Trim().Normalize(System.Text.NormalizationForm.FormC);
+
+    static int TextLength(string value) => new System.Globalization.StringInfo(value).LengthInTextElements;
 
     /// <summary>Shared by create and rename. Returns an error message, or null with the normalized name.</summary>
     public static string? ValidateProjectName(string? raw, out string name)
