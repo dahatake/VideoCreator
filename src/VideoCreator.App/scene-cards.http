@@ -16,6 +16,20 @@ Content-Type: application/json
 
 {"asset_id":"{{assetId}}","count":4}
 
+### From a registered opening / closing video (must be a file of the registered brand kit; anything else is 404).
+POST {{baseUrl}}/api/projects/{{projectId}}/scene-cards
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"brand_path":"C:\\Work\\HubRadio\\OpeningClosing\\Opening-9x16.mp4","count":3}
+
+### 作らない: keep existing images but stop using them in new candidates (make=true to use them again).
+PUT {{baseUrl}}/api/projects/{{projectId}}/scene-cards/settings
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"make":false}
+
 ### Preview the first extracted PNG.
 GET {{baseUrl}}/api/projects/{{projectId}}/scene-cards/0
 

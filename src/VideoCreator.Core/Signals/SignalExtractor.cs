@@ -10,9 +10,9 @@ public sealed partial class SignalExtractor(FFmpeg ff)
 {
     public const double SilenceDb = -40;
 
-    public async Task<SignalSet> ExtractAsync(string proxyVideo, string? audio, double minSilence, CancellationToken ct = default)
+    public async Task<SignalSet> ExtractAsync(string proxyVideo, string? audio, double minSilence, CancellationToken ct = default, IProgress<double>? progress = null, double duration = 0)
     {
-        var shotsTask = DetectShotsAsync(proxyVideo, ct);
+        var shotsTask = DetectShotsAsync(proxyVideo, ct, progress, duration);
         var loud = audio != null ? await LoudnessSeriesAsync(audio, ct) : [];
         var shots = await shotsTask;
         var voiced = loud.Where(d => d > -60).OrderBy(d => d).ToList();
@@ -27,9 +27,9 @@ public sealed partial class SignalExtractor(FFmpeg ff)
         };
     }
 
-    public async Task<List<double>> DetectShotsAsync(string video, CancellationToken ct)
+    public async Task<List<double>> DetectShotsAsync(string video, CancellationToken ct, IProgress<double>? progress = null, double duration = 0)
     {
-        var r = await ff.RunFfmpegAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0", "-f", "null", "-"], ct);
+        var r = await ff.RunFfmpegAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0", "-f", "null", "-"], ct, progress: progress, duration: duration);
         return ScdetRegex().Matches(r.StdErr).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).Distinct().OrderBy(x => x).ToList();
     }
 

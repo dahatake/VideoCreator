@@ -218,6 +218,83 @@ public sealed class SceneCardTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Opening_video_is_a_source_and_make_choice_controls_use_without_deleting()
+    {
+        var kitDir = Path.Combine(_root, "kit");
+        Directory.CreateDirectory(kitDir);
+        var opening = Path.Combine(kitDir, "Opening.mp4");
+        // Fades from/to black like a typical title sequence: the black ends must not become cards.
+        await Rt.Ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-n", "-f", "lavfi", "-i", "testsrc2=s=360x640:r=10:d=4",
+            "-vf", "hue=h=60*t,fade=in:d=1,fade=out:st=3:d=1", "-c:v", "libx264", "-preset", "ultrafast", opening], Ct);
+        using (var reg = await _http.PutAsJsonAsync("/api/brandkit", new { paths = new[] { kitDir }, rights_confirmed = true, upscale = false }, Ct))
+            Assert.True(reg.IsSuccessStatusCode, await reg.Content.ReadAsStringAsync(Ct));
+        var project = Rt.Store.Get<Project>(Kinds.Project, _id)!;
+        Assert.Null(project.MakeSceneCardImages);
+        Assert.False(project.UsesSceneCardImages());
+
+        var stranger = Path.Combine(_root, "Opening-not-registered.mp4");
+        File.Copy(opening, stranger);
+        using (var r = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards", new { brand_path = stranger, count = 3 }, Ct))
+            Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        using (var r = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards", new { asset_id = "x", brand_path = opening }, Ct))
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
+        Assert.False(Directory.Exists(Path.Combine(project.Directory, "scene-cards")) && Directory.EnumerateFileSystemEntries(Path.Combine(project.Directory, "scene-cards")).Any());
+
+        using (var r = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards", new { brand_path = opening.ToUpperInvariant(), count = 3 }, Ct))
+            Assert.True(r.StatusCode == HttpStatusCode.Created, await r.Content.ReadAsStringAsync(Ct));
+        project = Rt.Store.Get<Project>(Kinds.Project, _id)!;
+        Assert.True(project.MakeSceneCardImages);
+        var images = project.SceneCardImages;
+        Assert.InRange(images.Count, 2, 3);
+        Assert.All(images, i =>
+        {
+            Assert.Null(i.AssetId);
+            Assert.Equal(opening, i.BrandPath);
+            Assert.Equal((360, 640), (i.Width, i.Height));
+            Assert.InRange(i.SourceT, 0.5, 3.5);
+            Assert.StartsWith(project.Directory, i.Path);
+        });
+        foreach (var i in images)
+        {
+            var px = await PixelsAsync(i.Path, 0);
+            Assert.True(px.Average(b => (double)b) > 30, $"{i.Path} must not be a fade-to-black frame");
+        }
+        using (var preview = await _http.GetAsync($"/api/projects/{_id}/scene-cards/0", Ct))
+            Assert.Equal("image/png", preview.Content.Headers.ContentType?.MediaType);
+
+        var runner = Rt.CreateRunner();
+        string[] Cards() => runner.BrandKitFor(_id)?.Files.Where(f => f.Kind == "card").Select(f => f.Path).ToArray() ?? [];
+        Assert.Equal(images.Select(i => i.Path), Cards());
+
+        using (var off = await _http.PutAsJsonAsync($"/api/projects/{_id}/scene-cards/settings", new { make = false }, Ct))
+            Assert.False((await off.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("make_scene_card_images").GetBoolean());
+        Assert.Empty(Cards());
+        Assert.Contains(runner.BrandKitFor(_id)!.Files, f => f.Kind == "opening");
+        Assert.Equal(images.Count, Rt.Store.Get<Project>(Kinds.Project, _id)!.SceneCardImages.Count);
+        Assert.All(images, i => Assert.True(File.Exists(i.Path)));
+
+        using (var on = await _http.PutAsJsonAsync($"/api/projects/{_id}/scene-cards/settings", new { make = true }, Ct))
+            Assert.Equal(HttpStatusCode.OK, on.StatusCode);
+        Assert.Equal(images.Select(i => i.Path), Cards());
+        using (var missing = await _http.PutAsJsonAsync("/api/projects/p_missing/scene-cards/settings", new { make = true }, Ct))
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        // The rights basis is the kit registration: unregistering the opening stops its images being used.
+        using (var clear = await _http.DeleteAsync("/api/brandkit", Ct)) clear.EnsureSuccessStatusCode();
+        Assert.Empty(Cards());
+        Assert.True(File.Exists(opening));
+    }
+
+    [Fact]
+    public void Older_projects_with_images_keep_using_them_until_the_user_chooses()
+    {
+        var img = new SceneCardImage("a.png", 1, 1, "asset", 1);
+        Assert.True(new Project { Id = "p", Name = "n", Directory = "d", SceneCardImages = [img] }.UsesSceneCardImages());
+        Assert.False(new Project { Id = "p", Name = "n", Directory = "d" }.UsesSceneCardImages());
+        Assert.False(new Project { Id = "p", Name = "n", Directory = "d", SceneCardImages = [img], MakeSceneCardImages = false }.UsesSceneCardImages());
+    }
+
+    [Fact]
     public async Task Static_video_returns_one_distinct_image_instead_of_duplicates()
     {
         var path = Path.Combine(_root, "still.mp4");

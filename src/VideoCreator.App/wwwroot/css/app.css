@@ -71,6 +71,7 @@ body.fit .col-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1
 .title-row h1 { margin: 0; overflow-wrap: anywhere; }
 .title-row fluent-text-input { width: min(480px, 70vw); }
 .stack { display: flex; flex-direction: column; gap: var(--s8); }
+.stack[hidden] { display: none; }
 
 .card {
   background: var(--colorNeutralBackground1, #fff);

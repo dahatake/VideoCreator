@@ -16,7 +16,7 @@ using VideoCreator.Storage;
 
 namespace VideoCreator.Pipeline;
 
-public sealed record JobUpdate(string JobId, JobStatus Stage, double Progress, string Message);
+public sealed record JobUpdate(string JobId, JobStatus Stage, double Progress, string Message, double? StepProgress = null, string? Step = null);
 
 /// <summary>Retail list prices (JPY, Japan East) from prices.azure.com, retrieved 2026-11-07.</summary>
 public sealed record Pricing(double AsrJpyPerHour = 56.96, double LlmInJpyPer1M = 791.15, double LlmOutJpyPer1M = 4746.90)
@@ -93,11 +93,11 @@ public sealed class PipelineRunner(PipelineServices s)
         return tr;
     }
 
-    public async Task<SignalSet> SignalsAsync(SourceAsset a, string proxy, string? audio, CancellationToken ct)
+    public async Task<SignalSet> SignalsAsync(SourceAsset a, string proxy, string? audio, CancellationToken ct, IProgress<double>? progress = null)
     {
         var file = Path.Combine(CacheDir(a), "signals.json");
         if (File.Exists(file)) return Json.Deserialize<SignalSet>(await File.ReadAllTextAsync(file, ct));
-        var sig = await s.Signals.ExtractAsync(proxy, audio, 0.5, ct);
+        var sig = await s.Signals.ExtractAsync(proxy, audio, 0.5, ct, progress, a.Media.Duration);
         await File.WriteAllTextAsync(file, Json.Serialize(sig), ct);
         return sig;
     }
@@ -106,7 +106,18 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<Job> GenerateAsync(Job job, IProgress<JobUpdate> progress, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew(); var stageTimes = new Dictionary<string, double>();
-        void Stage(JobStatus st, double pct, string msg) { progress.Report(new JobUpdate(job.Id, st, pct, msg)); s.Log($"[{job.Id}] {st} {pct:P0} {msg}"); }
+        double overall = 0; var loggedTenth = -1;
+        // overall never moves backwards; step = measured 0..1 of the current sub-task (null = not measurable → indeterminate bar)
+        void Stage(JobStatus st, double pct, string msg, double? step = null, string? stepLabel = null)
+        {
+            overall = Math.Max(overall, pct);
+            progress.Report(new JobUpdate(job.Id, st, Math.Round(overall, 4), msg, step is double v ? Math.Round(v, 4) : null, stepLabel));
+            var tenth = step is double t ? (int)(t * 10) : -1;
+            if (step == null || tenth != loggedTenth) s.Log($"[{job.Id}] {st} {overall:P0} {msg}{(step is double d ? $" — {stepLabel} {d:P0}" : "")}");
+            loggedTenth = tenth;
+        }
+        IProgress<double> Sub(JobStatus st, double from, double to, string msg, string label) =>
+            new SyncProgress<double>(v => Stage(st, from + (to - from) * Math.Clamp(v, 0, 1), msg, Math.Clamp(v, 0, 1), label));
         void Mark(string name) { stageTimes[name] = Math.Round(sw.Elapsed.TotalSeconds, 2); sw.Restart(); }
 
         var project = s.Store.Get<Project>(Kinds.Project, job.ProjectId) ?? throw new PipelineException("E-NOT-FOUND", "プロジェクトがありません");
@@ -127,8 +138,9 @@ public sealed class PipelineRunner(PipelineServices s)
         if (preset.HasTelop("caption") && main.Media.AudioChannels > 0 && s.Asr == null)
             throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure AI Speech）が設定されていません。設定を確認してください。");
 
-        Stage(JobStatus.Ingesting, 0.05, "解析用のプロキシを作成しています");
-        var (proxy, audio) = await s.Probe.MakeProxyAsync(main.Path, main.Media, CacheDir(main), ct);
+        const string proxyMsg = "解析用のプロキシを作成しています";
+        Stage(JobStatus.Ingesting, 0.02, proxyMsg);
+        var (proxy, audio) = await s.Probe.MakeProxyAsync(main.Path, main.Media, CacheDir(main), ct, Sub(JobStatus.Ingesting, 0.02, 0.1, proxyMsg, "360p プロキシと 16kHz 音声の作成"));
         // multi-camera: align every other camera to the master audio (GCC-PHAT, FR-SWT-01)
         for (int i = 0; i < used.Count; i++)
         {
@@ -137,7 +149,7 @@ public sealed class PipelineRunner(PipelineServices s)
             if (a.Media.AudioChannels == 0) { warnings.Add($"{Path.GetFileName(a.Path)} は音声がないため同期できません。時間のずれは 0 秒として扱います"); continue; }
             if (a.SyncConfidence == null)
             {
-                Stage(JobStatus.Ingesting, 0.08, $"カメラの時間を音声で合わせています（{Path.GetFileName(a.Path)}）");
+                Stage(JobStatus.Ingesting, 0.1, $"カメラの時間を音声で合わせています（{Path.GetFileName(a.Path)}）");
                 var sync = await AudioSync.EstimateAsync(s.Ff, main.Path, a.Path, ct);
                 a = a with { SyncOffset = Math.Round(sync.Delay, 3), SyncConfidence = Math.Round(sync.Confidence, 1) };
                 s.Store.Put(Kinds.Asset, a.Id, a.ProjectId, a); used[i] = a;
@@ -158,8 +170,9 @@ public sealed class PipelineRunner(PipelineServices s)
         if (tr.Words.Count == 0 && main.Media.AudioChannels > 0 && s.Asr != null) warnings.Add("発話が検出されませんでした");
         Mark("transcribe");
 
-        Stage(JobStatus.Analyzing, 0.35, "ショット・音量・無音を解析しています");
-        var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct);
+        const string sigMsg = "ショット・音量・無音を解析しています";
+        Stage(JobStatus.Analyzing, 0.35, sigMsg);
+        var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct, Sub(JobStatus.Analyzing, 0.35, 0.43, sigMsg, "ショットの切り替わり検出"));
         var laughs = await LaughsAsync(main, tr, sig, audio, ct);
         if (preset.Planner == "switch") await AutoAssignSpeakersAsync(used, main, tr, warnings, ct);
         Mark("signals");
@@ -231,9 +244,13 @@ public sealed class PipelineRunner(PipelineServices s)
 
         for (int i = 0; i < candidates.Count; i++)
         {
-            Stage(JobStatus.Previewing, 0.65 + 0.3 * i / candidates.Count, seriesParts.Count > 0 ? $"プレビューを作成しています（{candidates[i].Series?.Label} {i + 1}/{candidates.Count}・長いので数分かかります）" : $"プレビューを作成しています（{i + 1}/{candidates.Count}）");
+            var label = seriesParts.Count > 0 ? $"{candidates[i].Series?.Label} {i + 1}/{candidates.Count}" : $"{i + 1}/{candidates.Count}";
+            var msg = seriesParts.Count > 0 ? $"プレビューを作成しています（{label}・長いので数分かかります）" : $"プレビューを作成しています（{label}）";
+            double from = 0.65 + 0.3 * i / candidates.Count, to = 0.65 + 0.3 * (i + 1) / candidates.Count;
+            Stage(JobStatus.Previewing, from, msg, 0, $"プレビュー {label}");
             var plan = s.Store.Get<EditPlan>(Kinds.EditPlan, candidates[i].EditPlanId!)!;
-            var render = await RenderAsync(plan, preview: true, ct);
+            var render = await RenderAsync(plan, preview: true, ct, progress: new SyncProgress<(double Progress, string Step)>(p =>
+                Stage(JobStatus.Previewing, from + (to - from) * p.Progress, msg, p.Progress, $"プレビュー {label}: {p.Step}")));
             candidates[i] = candidates[i] with { PreviewRenderId = render.Id };
             s.Store.Put(Kinds.Candidate, candidates[i].Id, job.Id, candidates[i]);
         }
@@ -293,9 +310,13 @@ public sealed class PipelineRunner(PipelineServices s)
     {
         var kit = BrandKit;
         if (kit is { RightsConfirmed: true } && kit.Files.Any(f => f.Kind == "card")) return kit;
-        var images = s.Store.Get<Project>(Kinds.Project, projectId)?.SceneCardImages ?? [];
+        var project = s.Store.Get<Project>(Kinds.Project, projectId);
+        if (project == null || !project.UsesSceneCardImages()) return kit;
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, projectId).Select(r => r.AssetId).ToHashSet();
-        var cards = images.Where(i => rights.Contains(i.AssetId) && File.Exists(i.Path))
+        bool Allowed(SceneCardImage i) => i.BrandPath != null
+            ? kit is { RightsConfirmed: true } && kit.Files.Any(f => f.Kind is "opening" or "closing" && string.Equals(f.Path, i.BrandPath, StringComparison.OrdinalIgnoreCase))
+            : i.AssetId != null && rights.Contains(i.AssetId);
+        var cards = project.SceneCardImages.Where(i => Allowed(i) && File.Exists(i.Path))
             .Select(i => new BrandFile { Path = i.Path, Kind = "card", Width = i.Width, Height = i.Height, ImageAssetId = i.AssetId }).ToList();
         if (cards.Count == 0) return kit;
         return (kit is { RightsConfirmed: true } ? kit : new BrandKit()) with
@@ -399,7 +420,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// When <paramref name="renderId"/> is given the caller owns that id and persists the Render itself (after adding its own outputs),
     /// so a final export is stored exactly once under the id the UI already polls.
     /// </summary>
-    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null)
+    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null, IProgress<(double Progress, string Step)>? progress = null)
     {
         var project = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)!;
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).ToDictionary(a => a.Id);
@@ -415,7 +436,10 @@ public sealed class PipelineRunner(PipelineServices s)
         var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "exports");
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
         if (!preview) EnsureInside(project.Directory, file);
-        var outp = await s.Renderer.RenderAsync(plan, preset, assets, file, preview, ct);
+        var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
+        var outp = await s.Renderer.RenderAsync(plan, preset, assets, file, preview, ct,
+            progress == null ? null : new SyncProgress<double>(v => progress.Report((0.9 * v, encodeStep))));
+        progress?.Report((0.9, "自動チェック（QA）をしています"));
         var qa = await s.Qa.RunAsync(ctx, file, preview, Path.Combine(s.DataDir, "qa", renderId), ct);
         var outputs = new Dictionary<string, string> { ["mp4"] = file };
         if (!preview)
@@ -428,6 +452,7 @@ public sealed class PipelineRunner(PipelineServices s)
                 File.Move(file, rejected, true);
                 throw new QaBlockedException(hard);
             }
+            progress?.Report((0.97, "字幕ファイルとサムネイル候補を作っています"));
             var srt = Path.ChangeExtension(file, ".srt"); await File.WriteAllTextAsync(srt, AssWriter.Srt(plan), new UTF8Encoding(false), ct); outputs["srt"] = srt;
             var epj = Path.ChangeExtension(file, ".editplan.json"); await File.WriteAllTextAsync(epj, Json.Serialize(plan, true), ct); outputs["editplan"] = epj;
             var thumbs = await s.Renderer.ThumbnailsAsync(file, plan.Duration, Path.ChangeExtension(file, null), ct, t => InsertMap.ToFinal(plan, t));
@@ -440,6 +465,7 @@ public sealed class PipelineRunner(PipelineServices s)
             FfmpegVersion = await s.Ff.VersionAsync(), Commands = outp.Commands, Qa = qa, Outputs = outputs,
         };
         if (persist) s.Store.Put(Kinds.Render, render.Id, plan.EditplanId, render);
+        progress?.Report((1, "完了しました"));
         return render;
     }
 

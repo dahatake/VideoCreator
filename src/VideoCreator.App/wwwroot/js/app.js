@@ -355,23 +355,43 @@ async function project(id) {
             <form id="kitForm" class="stack" style="margin-top:8px">
               <p class="caption">フォルダーのフルパスを指定すると、ファイル名に Opening / Closing を含む動画と、PNG / JPG 画像（カード用）を読み込みます。縦型（9:16）と横型（16:9）の両方があれば、出力に合う方を自動で使います。登録はすべてのプロジェクトで共通です。</p>
               <fluent-text-input id="kitPath" placeholder="C:\\Work\\HubRadio\\OpeningClosing" value="${esc(kitView.kit?.sources?.[0] ?? '')}" aria-label="オープニング・クロージングのフォルダー"></fluent-text-input>
-              <fluent-button id="kitBrowse" type="button" size="small">フォルダーを選ぶ（OS の画面）</fluent-button>
+              <fluent-button id="kitBrowse" type="button" size="small">フォルダーを選ぶ…</fluent-button>
               <label class="caption">カードの長さ（秒） <input class="native" type="number" id="kitCardSec" min="0.5" max="3" step="0.1" value="${esc(kitView.kit?.card_sec ?? 1)}" style="width:72px"></label>
               ${field('1080×1920 より小さい動画を高画質化する（登録時に一度だけ。AI の超解像で細部を補い、この動画で実測して元に忠実になる場合だけ使います。GPU で 1 本 1〜2 分）', `<fluent-checkbox slot="input" id="kitUpscale" ${kitView.kit?.upscale === false ? '' : 'checked'}></fluent-checkbox>`)}
               ${field('これらの動画・画像（ロゴ・音楽・イラストを含む）を使う権利を自分が持っている、または許諾を得ています', '<fluent-checkbox slot="input" id="kitRights"></fluent-checkbox>')}
               <div class="row"><fluent-button type="submit" size="small">登録</fluent-button>${kitView.registered ? '<fluent-button size="small" id="kitClear" type="button">登録を解除</fluent-button>' : ''}</div><div id="kitMsg"></div>
             </form></details>
           <div class="stack" style="margin-top:12px">
-            <b>動画から場面転換の画像を作る</b>
-            <p class="caption">登録したカード画像がない場合に使います。映像の変化・明るさ・時間分布から代表画像を選び、黒画面や似た画像を除きます。AI に動画を送らず、このプロジェクトだけに保存します。意味上の見どころを保証するものではありません。作成後に候補を生成すると反映されます。</p>
-            ${d.project.scene_card_images?.length ? `<div class="row" style="flex-wrap:wrap">${d.project.scene_card_images.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="場面転換の候補 ${i + 1}、元動画 ${esc(fmt(img.source_t))}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(assets.find(a => a.id === img.asset_id)?.path.split(/[\\/]/).pop() ?? '元動画')} · ${fmt(img.source_t)}</figcaption></figure>`).join('')}</div><p class="caption">${d.project.scene_card_images.length} 枚を作成済み。${kitView.card_images ? '共通の登録済みカード画像を優先します。' : '場面転換で順番に使います。'}既存の画像は上書きしません。</p>` : `
-              <label class="caption">画像を取り出す元動画
-                <select class="native" id="cardSource" aria-label="カード画像の元動画">${assets.filter(a => a.media.duration > 0).map(a => `<option value="${esc(a.id)}">${esc(a.path.split(/[\\/]/).pop())}${rights.has(a.id) ? '' : '（権利未確認）'}</option>`).join('')}</select>
-              </label>
-              <label class="caption">画像の枚数（最大） <input class="native" type="number" id="cardCount" min="2" max="6" step="1" value="4" style="width:72px"></label>
-              <fluent-button id="makeCards" size="small" ${!assets.length || kitView.card_images ? 'disabled' : ''}>動画からカード画像を作る</fluent-button>
-              ${!assets.length || kitView.card_images ? `<p class="caption">${kitView.card_images ? '登録済みのカード画像があるため、その画像を使用します。' : '先に元動画を追加してください。'}</p>` : ''}
-            `}
+            <b id="cardMakeLabel">動画から場面転換の画像を作る</b>
+            <p class="caption">登録したカード画像がない場合に使います。元動画かオープニング・クロージングから、映像の変化・明るさ・時間分布で代表画像を選び、黒画面や似た画像を除きます。AI に動画を送らず、このプロジェクトだけに保存します。意味上の見どころを保証するものではありません。作成後に候補を生成すると反映されます。</p>
+            ${(() => {
+              if (kitView.card_images) return '<p class="caption">登録済みのカード画像があるため、その画像を使用します。</p>';
+              const made = d.project.scene_card_images ?? [];
+              const make = d.project.make_scene_card_images ?? made.length > 0;
+              const name = (p) => esc(p.split(/[\\/]/).pop());
+              const bumpers = (kitView.kit?.files ?? []).filter(f => f.kind === 'opening' || f.kind === 'closing');
+              const videos = assets.filter(a => a.media.duration > 0);
+              const at = (t) => t < 60 ? `${t.toFixed(1)}秒` : fmt(t);
+              const origin = (img) => (img.brand_path ?? assets.find(a => a.id === img.asset_id)?.path ?? '元動画').split(/[\\/]/).pop();
+              return `<fluent-radio-group id="cardMake" orientation="horizontal" aria-labelledby="cardMakeLabel" value="${make ? 'make' : 'skip'}">
+                  ${field('作る', '<fluent-radio slot="input" value="make"></fluent-radio>')}
+                  ${field('作らない', '<fluent-radio slot="input" value="skip"></fluent-radio>')}
+                </fluent-radio-group>
+                <p class="caption" id="cardSkipNote" ${make ? 'hidden' : ''}>${made.length ? `作成済みの ${made.length} 枚は消さずに残し、候補には使いません。` : ''}場面転換は文字カード（ツッコミ）になります。</p>
+                <div class="stack" id="cardMakeBody" ${make ? '' : 'hidden'}>
+                ${made.length ? `<div class="row" style="flex-wrap:wrap">${made.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="場面転換の候補 ${i + 1}、元動画の ${esc(at(img.source_t))}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(origin(img))} · ${esc(at(img.source_t))}</figcaption></figure>`).join('')}</div><p class="caption">${made.length} 枚を作成済み。場面転換で順番に使います。既存の画像は上書きしません。</p>` : `
+                  <label class="caption">画像を取り出す元動画
+                    <select class="native" id="cardSource" aria-label="カード画像の元動画">
+                      ${videos.length ? `<optgroup label="このプロジェクトの元動画">${videos.map(a => `<option value="asset:${esc(a.id)}">${name(a.path)}${rights.has(a.id) ? '' : '（権利未確認）'}</option>`).join('')}</optgroup>` : ''}
+                      ${bumpers.length ? `<optgroup label="登録済みのオープニング・クロージング">${bumpers.map(f => `<option value="brand:${esc(f.path)}">${f.kind === 'opening' ? 'オープニング' : 'クロージング'}: ${name(f.path)}（${f.width}×${f.height}・${Number(f.duration).toFixed(1)}秒）</option>`).join('')}</optgroup>` : ''}
+                    </select>
+                  </label>
+                  <label class="caption">画像の枚数（最大） <input class="native" type="number" id="cardCount" min="2" max="6" step="1" value="4" style="width:72px"></label>
+                  <fluent-button id="makeCards" size="small" ${videos.length + bumpers.length ? '' : 'disabled'}>動画からカード画像を作る</fluent-button>
+                  ${videos.length + bumpers.length ? '' : '<p class="caption">先に元動画を追加するか、オープニング・クロージングを登録してください。</p>'}
+                `}
+                </div>`;
+            })()}
             <div id="cardImageMsg" aria-live="polite"></div>
           </div>
         </div>
@@ -466,7 +486,7 @@ async function project(id) {
   $('#kitBrowse').addEventListener('click', async () => {
     const button = $('#kitBrowse'), input = $('#kitPath'), msg = $('#kitMsg');
     button.disabled = true;
-    msg.innerHTML = info('OS のフォルダー選択画面でフォルダーを選んでください');
+    msg.innerHTML = info('開いた「フォルダーの選択」画面でフォルダーを選んでください（画面が見えないときはタスク バーを確認してください）');
     try {
       const r = await api('/api/dialogs/folder', { method: 'POST', body: { initial_path: input.value ?? '' }, signal: cardRequests.signal });
       if (r.path != null) input.value = r.path;
@@ -474,20 +494,37 @@ async function project(id) {
     } catch (e) { if (e.name !== 'AbortError') msg.innerHTML = errorBar(e); }
     finally { button.disabled = false; }
   });
+  $('#cardMake')?.addEventListener('change', async () => {
+    const group = $('#cardMake'), radios = $$('#cardMake fluent-radio');
+    const make = radios.find(r => r.checked)?.value === 'make';
+    const saved = d.project.make_scene_card_images ?? (d.project.scene_card_images?.length ?? 0) > 0;
+    if (make === saved) return;
+    radios.forEach(r => { r.disabled = true; });
+    try {
+      const p = await api(`/api/projects/${id}/scene-cards/settings`, { method: 'PUT', body: { make }, signal: cardRequests.signal });
+      d.project.make_scene_card_images = p.make_scene_card_images;
+      $('#cardMakeBody').hidden = !make; $('#cardSkipNote').hidden = make;
+      $('#cardImageMsg').innerHTML = info(make ? '作る: 動画から作った画像を場面転換で使います' : '作らない: 次に候補を生成するときから、場面転換は文字カードになります');
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      group.value = saved ? 'make' : 'skip';
+      $('#cardImageMsg').innerHTML = errorBar(e);
+    } finally { radios.forEach(r => { r.disabled = false; }); }
+  });
   $('#makeCards')?.addEventListener('click', async () => {
-    const button = $('#makeCards'), msg = $('#cardImageMsg'), assetId = $('#cardSource').value;
-    if (!rights.has(assetId)) { msg.innerHTML = info('元動画の権利確認にチェックしてください', 'warning'); return; }
+    const button = $('#makeCards'), msg = $('#cardImageMsg'), [kind, ...rest] = $('#cardSource').value.split(':'), ref = rest.join(':');
+    if (kind === 'asset' && !rights.has(ref)) { msg.innerHTML = info('元動画の権利確認にチェックしてください', 'warning'); return; }
     const count = Number($('#cardCount').value);
     if (!Number.isInteger(count) || count < 2 || count > 6) { msg.innerHTML = info('画像の枚数は 2〜6 枚の整数で指定してください', 'warning'); return; }
-    button.disabled = true; $('#gen').disabled = true;
-    msg.innerHTML = '<fluent-spinner size="small"></fluent-spinner> 元動画から代表画像を抽出しています…';
+    button.disabled = true; $('#gen').disabled = true; $$('#cardMake fluent-radio').forEach(r => { r.disabled = true; });
+    msg.innerHTML = `<fluent-spinner size="small"></fluent-spinner> ${kind === 'brand' ? 'オープニング・クロージング' : '元動画'}から代表画像を抽出しています…`;
     try {
-      const r = await api(`/api/projects/${id}/scene-cards`, { method: 'POST', body: { asset_id: assetId, count }, signal: cardRequests.signal });
+      const r = await api(`/api/projects/${id}/scene-cards`, { method: 'POST', body: kind === 'brand' ? { brand_path: ref, count } : { asset_id: ref, count }, signal: cardRequests.signal });
       opts.scene_cards = true; saveOpts();
       sessionStorage.setItem(`cardImageMessage:${id}`, r.message);
       router();
     } catch (e) { if (e.name !== 'AbortError') msg.innerHTML = errorBar(e); }
-    finally { button.disabled = false; const gen = $('#gen'); if (gen) gen.disabled = false; }
+    finally { button.disabled = false; const gen = $('#gen'); if (gen) gen.disabled = false; $$('#cardMake fluent-radio').forEach(r => { r.disabled = false; }); }
   });
   { const message = sessionStorage.getItem(`cardImageMessage:${id}`); sessionStorage.removeItem(`cardImageMessage:${id}`); if (message) $('#cardImageMsg').innerHTML = info(message, 'success'); }
   $('#kitForm').addEventListener('submit', async (ev) => {

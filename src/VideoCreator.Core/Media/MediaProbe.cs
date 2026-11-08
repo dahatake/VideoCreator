@@ -92,7 +92,7 @@ public sealed class MediaProbe(FFmpeg ff)
     }
 
     /// <summary>FR-ING-03/04: CFR 30 fps 360p analysis proxy + 16 kHz mono FLAC (for ASR/signals).</summary>
-    public async Task<(string proxy, string audio)> MakeProxyAsync(string file, MediaInfo m, string cacheDir, CancellationToken ct = default)
+    public async Task<(string proxy, string audio)> MakeProxyAsync(string file, MediaInfo m, string cacheDir, CancellationToken ct = default, IProgress<double>? progress = null)
     {
         Directory.CreateDirectory(cacheDir);
         var proxy = Path.Combine(cacheDir, "proxy.mp4");
@@ -101,7 +101,7 @@ public sealed class MediaProbe(FFmpeg ff)
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y", "-i", file,
             "-map", "0:v:0", "-vf", "scale=-2:360,fps=30", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-an", proxy + ".tmp.mp4" };
         if (m.AudioChannels > 0) args.AddRange(["-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", audio + ".tmp.flac"]);
-        await ff.RunFfmpegCheckedAsync(args, ct);
+        await ff.RunFfmpegCheckedAsync(args, ct, progress: progress, duration: m.Duration);
         File.Move(proxy + ".tmp.mp4", proxy, true);
         if (m.AudioChannels > 0) File.Move(audio + ".tmp.flac", audio, true);
         return (proxy, audio);

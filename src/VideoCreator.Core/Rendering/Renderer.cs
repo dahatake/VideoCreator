@@ -394,11 +394,17 @@ public sealed partial class Renderer(FFmpeg ff)
         : ["-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "19", "-threads", ff.Threads, "-r", "30",
            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact", "-map_metadata", "-1", output];
 
-    public async Task<RenderOutput> RenderAsync(EditPlan plan, Preset preset, IReadOnlyDictionary<string, SourceAsset> assets, string outFile, bool preview, CancellationToken ct)
+    /// <param name="progress">Measured 0..1 across all ffmpeg passes (weighted by typical cost; each pass reports real out_time).</param>
+    public async Task<RenderOutput> RenderAsync(EditPlan plan, Preset preset, IReadOnlyDictionary<string, SourceAsset> assets, string outFile, bool preview, CancellationToken ct, IProgress<double>? progress = null)
     {
         var dir = Path.GetDirectoryName(outFile)!; Directory.CreateDirectory(dir);
         var inp = ResolveInputs(plan, assets);
         var cmds = new List<string>();
+        var finalDur = InsertMap.ToFinal(plan, plan.Duration, end: true);
+        var hasBumperAudio = InsertMap.Active(plan).Any(i => i.Kind != "card" && i.HasAudio);
+        var bumperEnd = hasBumperAudio ? (preview ? 0.15 : 0.1) : 0;
+        var measureEnd = preview ? bumperEnd : bumperEnd + 0.2;
+        var encodeEnd = preview ? 1 : 0.9;
         string? ass = null;
         if (plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0))
         {
@@ -411,10 +417,10 @@ public sealed partial class Renderer(FFmpeg ff)
         try
         {
             // bumpers play at the loudness the body actually has, so the final whole-file normalisation keeps them level with the speech
-            if (InsertMap.Active(plan).Any(i => i.Kind != "card" && i.HasAudio))
+            if (hasBumperAudio)
             {
                 var body = plan with { Inserts = [] };
-                var bm = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(body, inp, "ebur128"), outFile + ".bgraph.txt", scratch), "-map", "[m]", "-f", "null", "-"], ct);
+                var bm = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(body, inp, "ebur128"), outFile + ".bgraph.txt", scratch), "-map", "[m]", "-f", "null", "-"], ct, progress: progress.Slice(0, bumperEnd), duration: plan.Duration);
                 cmds.Add(bm.CommandLine);
                 var mi = IntegratedEbuRe().Matches(bm.StdErr);
                 if (mi.Count > 0 && double.TryParse(mi[^1].Groups[1].Value, NumberStyles.Float, IC, out var bodyI) && bodyI > -70)
@@ -423,20 +429,20 @@ public sealed partial class Renderer(FFmpeg ff)
             if (!preview)
             {
                 // pass 1: measure the edited audio only (fast)
-                var m = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(plan, inp, $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:print_format=json"), outFile + ".agraph.txt", scratch), "-map", "[m]", "-f", "null", "-"], ct);
+                var m = await ff.RunFfmpegAsync(["-hide_banner", .. inArgs, .. GraphArgs(BuildAudioOnlyGraph(plan, inp, $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:print_format=json"), outFile + ".agraph.txt", scratch),                 "-map", "[m]", "-f", "null", "-"], ct, progress: progress.Slice(bumperEnd, measureEnd), duration: finalDur);
                 cmds.Add(m.CommandLine);
                 string J(string k) => Regex.Match(m.StdErr, $"\"{k}\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value;
                 if (J("input_i") is { Length: > 0 } ii && ii != "-inf")
                     ln = $"loudnorm=I={F(plan.Audio.TargetLufs)}:TP={F(plan.Audio.TruePeak)}:LRA={F(plan.Audio.Lra)}:measured_I={J("input_i")}:measured_TP={J("input_tp")}:measured_LRA={J("input_lra")}:measured_thresh={J("input_thresh")}:offset={J("target_offset")}:linear=true";
             }
             var tmp = outFile + ".part.mp4";
-            var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", .. inArgs, .. GraphArgs(BuildGraph(plan, inp, ass, ff.FontsDir, preview, ln), outFile + ".graph.txt", scratch), .. EncodeArgs(preview, tmp)], ct);
+            var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-y", .. inArgs, .. GraphArgs(BuildGraph(plan, inp, ass, ff.FontsDir, preview, ln), outFile + ".graph.txt", scratch), .. EncodeArgs(preview, tmp)], ct, progress: progress.Slice(measureEnd, encodeEnd), duration: finalDur);
             cmds.Add(r.CommandLine);
             if (r.ExitCode != 0) throw new FFmpegException("レンダリングに失敗しました: " + FFmpeg.Tail(r.StdErr));
             File.Move(tmp, outFile, true);
         }
         finally { foreach (var f in scratch) try { File.Delete(f); } catch (IOException) { } }
-        if (preview) return new RenderOutput(outFile, cmds, double.NaN, double.NaN);
+        if (preview) { progress?.Report(1); return new RenderOutput(outFile, cmds, double.NaN, double.NaN); }
 
         // loudnorm can silently fall back to dynamic mode; correct with gain + oversampled limiter (audio only, video copied)
         var (I, TP) = await MeasureLoudnessAsync(outFile, ct);
@@ -452,6 +458,7 @@ public sealed partial class Renderer(FFmpeg ff)
             File.Move(fix, outFile, true);
             (I, TP) = await MeasureLoudnessAsync(outFile, ct);
         }
+        progress?.Report(1);
         return new RenderOutput(outFile, cmds, I, TP);
     }
 

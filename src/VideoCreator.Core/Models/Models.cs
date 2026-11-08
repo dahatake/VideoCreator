@@ -9,10 +9,16 @@ public sealed record Project
     public string Language { get; init; } = "ja-JP";
     public required string Directory { get; init; }
     public List<SceneCardImage> SceneCardImages { get; init; } = [];
+    /// <summary>The user's 作る / 作らない choice for video-extracted scene-card images. Null (older projects) = use them when some exist.</summary>
+    public bool? MakeSceneCardImages { get; init; }
+    public bool UsesSceneCardImages() => MakeSceneCardImages ?? SceneCardImages.Count > 0;
 }
 
-/// <summary>A project-only card image extracted from a source frame, with provenance for rights checks.</summary>
-public sealed record SceneCardImage(string Path, int Width, int Height, string AssetId, double SourceT);
+/// <summary>
+/// A project-only card image extracted from a video frame, with provenance for rights checks: either a project source
+/// (<see cref="AssetId"/>, its rights confirmation) or a registered opening / closing video (<see cref="BrandPath"/>, the brand kit's confirmation).
+/// </summary>
+public sealed record SceneCardImage(string Path, int Width, int Height, string? AssetId, double SourceT, string? BrandPath = null);
 
 public enum AssetRole { Main, CamA, CamB, Wide, AudioMaster }
 

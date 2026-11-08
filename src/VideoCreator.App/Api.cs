@@ -28,8 +28,10 @@ public static class Api
     /// <summary>Selected absolute directory, or an explicit null when the user cancels.</summary>
     public sealed record PickFolderResponse(
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? Path);
-    /// <summary>Source video and target number of distinct project-only scene-card images (2–6).</summary>
-    public sealed record GenerateSceneCardsRequest(string AssetId, int Count = 4);
+    /// <summary>Source — a project video (<c>asset_id</c>) or a registered opening / closing video (<c>brand_path</c>), exactly one — and the target number of distinct images (2–6).</summary>
+    public sealed record GenerateSceneCardsRequest(string? AssetId, int Count = 4, string? BrandPath = null);
+    /// <summary>作る (true) / 作らない (false) for this project's video-extracted scene-card images.</summary>
+    public sealed record SceneCardSettingsRequest(bool Make);
 
     /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
@@ -275,16 +277,18 @@ public static class Api
         {
             var project = rt.Store.Get<Project>(Kinds.Project, id);
             if (project == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
-            if (string.IsNullOrWhiteSpace(req.AssetId)) return Error(422, "E-VALIDATION", "画像を取り出す元動画を選んでください");
-            var source = rt.Store.Get<SourceAsset>(Kinds.Asset, req.AssetId);
-            if (source == null || source.ProjectId != id) return Error(404, "E-NOT-FOUND", "このプロジェクトの元動画がありません");
+            var assetId = string.IsNullOrWhiteSpace(req.AssetId) ? null : req.AssetId;
+            var brandPath = string.IsNullOrWhiteSpace(req.BrandPath) ? null : req.BrandPath;
+            if ((assetId == null) == (brandPath == null)) return Error(422, "E-VALIDATION", "画像を取り出す元動画を1つ選んでください");
             if (req.Count is < 2 or > 6) return Error(422, "E-VALIDATION", "画像の枚数は 2〜6 枚で指定してください");
             try
             {
-                var images = await service.GenerateAsync(project, source, req.Count, ct);
+                var images = await service.GenerateAsync(project, assetId, brandPath, req.Count, ct);
                 ctx.Response.Headers.Location = $"/api/projects/{Uri.EscapeDataString(id)}";
                 return Results.Json(new { images, message = images.Count < req.Count ? $"類似画像・黒画面を除き、{images.Count} 枚を作成しました" : $"{images.Count} 枚を作成しました" }, Json.Options, statusCode: 201);
             }
+            catch (KeyNotFoundException ex) { return Error(404, "E-NOT-FOUND", ex.Message); }
+            catch (ArgumentException ex) { return Error(422, "E-VALIDATION", ex.Message); }
             catch (InvalidOperationException ex) { return Error(409, "E-CARD-IMAGES", ex.Message); }
             catch (IngestException ex) { return Error(422, ex.Code, ex.Message); }
             catch (Exception ex) when (ex is FFmpegException or IOException or UnauthorizedAccessException)
@@ -292,7 +296,10 @@ public static class Api
                 app.Logger.LogWarning(ex, "Scene-card generation failed for {Project}", id);
                 return Error(500, "E-CARD-IMAGES", "カード画像の作成に失敗しました。元動画と保存先の空き容量を確認してください");
             }
-        }).WithSummary("Extract distinct representative scene-card images from a project video");
+        }).WithSummary("Extract distinct representative scene-card images from a project video or a registered opening / closing video");
+        api.MapPut("/projects/{id}/scene-cards/settings", (SceneCardService service, string id, SceneCardSettingsRequest req) =>
+            service.SetMake(id, req.Make) is { } p ? Results.Json(p, Json.Options) : Error(404, "E-NOT-FOUND", "プロジェクトがありません"))
+            .WithSummary("作る / 作らない: whether this project makes and uses video-extracted scene-card images (existing images are kept)");
         api.MapGet("/projects/{id}/scene-cards/{index:int}", (Runtime rt, string id, int index) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);

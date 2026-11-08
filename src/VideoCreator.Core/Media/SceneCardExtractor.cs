@@ -10,10 +10,17 @@ public sealed class SceneCardExtractor(FFmpeg ff)
     sealed record Frame(double T, byte[] Pixels, double Score);
     static string F(double t) => t.ToString("0.######", CultureInfo.InvariantCulture);
 
-    public async Task<List<SceneCardImage>> ExtractAsync(SourceAsset source, string outputDir, int count, CancellationToken ct)
+    public Task<List<SceneCardImage>> ExtractAsync(SourceAsset source, string outputDir, int count, CancellationToken ct)
+        => ExtractAsync(source.Path, source.Id, null, outputDir, count, ct);
+
+    /// <summary>From a registered opening / closing video; its brand-kit registration is the rights basis.</summary>
+    public Task<List<SceneCardImage>> ExtractAsync(BrandFile bumper, string outputDir, int count, CancellationToken ct)
+        => ExtractAsync(bumper.Path, null, bumper.Path, outputDir, count, ct);
+
+    async Task<List<SceneCardImage>> ExtractAsync(string videoPath, string? assetId, string? brandPath, string outputDir, int count, CancellationToken ct)
     {
         if (count is < 2 or > 6) throw new ArgumentOutOfRangeException(nameof(count));
-        var media = await new MediaProbe(ff).ProbeAsync(source.Path, ct);
+        var media = await new MediaProbe(ff).ProbeAsync(videoPath, ct);
         if (!double.IsFinite(media.Duration) || media.Duration <= 0 || media.Width <= 0 || media.Height <= 0)
             throw new IngestException("E-CARD-IMAGES", "画像を抽出できる長さ・解像度の動画ではありません");
         Directory.CreateDirectory(outputDir);
@@ -25,7 +32,7 @@ public sealed class SceneCardExtractor(FFmpeg ff)
         {
             double t = Math.Min(media.Duration * (i + 0.5) / samples, lastFrame);
             using var buffer = new MemoryStream();
-            var r = await ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-ss", F(t), "-i", source.Path,
+            var r = await ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-ss", F(t), "-i", videoPath,
                 "-map", "0:v:0", "-an", "-frames:v", "1", "-vf", $"scale={W}:{H}:flags=area",
                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], ct, stdout: buffer);
             if (r.ExitCode != 0) throw new FFmpegException("カード候補の解析に失敗しました: " + FFmpeg.Tail(r.StdErr));
@@ -59,10 +66,10 @@ public sealed class SceneCardExtractor(FFmpeg ff)
         foreach (var frame in selected.OrderBy(f => f.T))
         {
             var path = Path.Combine(outputDir, $"highlight-{images.Count + 1:00}.png");
-            await ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-n", "-ss", F(frame.T), "-i", source.Path,
+            await ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-n", "-ss", F(frame.T), "-i", videoPath,
                 "-map", "0:v:0", "-an", "-frames:v", "1", "-update", "1", path], ct);
             var image = await new MediaProbe(ff).ProbeAsync(path, ct);
-            images.Add(new(path, image.Width, image.Height, source.Id, frame.T));
+            images.Add(new(path, image.Width, image.Height, assetId, frame.T, brandPath));
         }
         return images;
     }
