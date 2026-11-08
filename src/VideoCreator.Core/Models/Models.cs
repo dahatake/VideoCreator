@@ -10,10 +10,20 @@ public sealed record Project
     public required string Directory { get; init; }
     public List<ProjectProperNoun> ProperNouns { get; init; } = [];
     public ProjectGenerationSettings GenerationSettings { get; init; } = new();
+    public ProjectWorkflowState? WorkflowState { get; init; }
     public List<SceneCardImage> SceneCardImages { get; init; } = [];
     /// <summary>The user's 作る / 作らない choice for video-extracted scene-card images. Null (older projects) = use them when some exist.</summary>
     public bool? MakeSceneCardImages { get; init; }
     public bool UsesSceneCardImages() => MakeSceneCardImages ?? SceneCardImages.Count > 0;
+}
+
+public sealed record ProjectWorkflowState
+{
+    public string Step { get; init; } = "";
+    public string? JobId { get; init; }
+    public string? EditPlanId { get; init; }
+    public string? RenderId { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
 public sealed record ProjectGenerationSettings

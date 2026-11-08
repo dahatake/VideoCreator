@@ -79,7 +79,8 @@ public sealed class ProjectWorkflowResumeTests : IAsyncLifetime
         using var projectResponse = await _http.GetAsync($"/api/projects/{_id}", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, projectResponse.StatusCode);
         var project = await projectResponse.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
-        Assert.Equal(jobId, project.GetProperty("resume_job_id").GetString());
+        Assert.Equal("candidates", project.GetProperty("resume_state").GetProperty("step").GetString());
+        Assert.Equal(jobId, project.GetProperty("resume_state").GetProperty("job_id").GetString());
 
         using var candidatesResponse = await _http.GetAsync($"/api/jobs/{jobId}/candidates", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, candidatesResponse.StatusCode);
@@ -88,6 +89,87 @@ public sealed class ProjectWorkflowResumeTests : IAsyncLifetime
         Assert.Equal("保存された候補", candidates[0].GetProperty("candidate").GetProperty("headline").GetString());
 
         var restartedStore = _app.Services.GetRequiredService<Runtime>().Store;
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "project" }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedProject = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("project", savedProject.GetProperty("resume_state").GetProperty("step").GetString());
+
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "settings" }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedSettings = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("settings", savedSettings.GetProperty("resume_state").GetProperty("step").GetString());
+
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "job", job_id = jobId }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedJob = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("job", savedJob.GetProperty("resume_state").GetProperty("step").GetString());
+        Assert.Equal(jobId, savedJob.GetProperty("resume_state").GetProperty("job_id").GetString());
+
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "candidates", job_id = jobId }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedCandidates = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("candidates", savedCandidates.GetProperty("resume_state").GetProperty("step").GetString());
+
+        var planId = "ep_resume";
+        var plan = new EditPlan
+        {
+            EditplanId = planId,
+            ProjectId = _id,
+            Preset = Fixtures.Presets["P4"].Ref,
+            Audio = new AudioSpec { Master = "asset_resume" },
+        };
+        restartedStore.Put(Kinds.EditPlan, planId, _id, plan);
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "review", edit_plan_id = planId }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedReview = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("review", savedReview.GetProperty("resume_state").GetProperty("step").GetString());
+
+        var planHash = EditPlanFingerprint.Of(plan);
+        var renderPath = Path.Combine(_root, "render.mp4");
+        await File.WriteAllTextAsync(renderPath, "render", TestContext.Current.CancellationToken);
+        restartedStore.Put(Kinds.Render, "render_resume", planId, new Render
+        {
+            Id = "render_resume",
+            EditplanId = planId,
+            Kind = "final",
+            Path = renderPath,
+            PlanHash = planHash,
+            Qa = [new QaResult("H-11", QaStatus.Pass, "pass", "pass", "valid") { PlanHash = planHash }],
+        });
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new
+        {
+            step = "render",
+            edit_plan_id = planId,
+            render_id = "render_resume",
+        }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+
+        _http.Dispose();
+        await _app.DisposeAsync();
+        restartedStore.Dispose();
+        _app = CreateApp();
+        _http = _app.CreateClient();
+        _http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
+        var reopenedAtRender = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("render", reopenedAtRender.GetProperty("resume_state").GetProperty("step").GetString());
+        Assert.Equal("render_resume", reopenedAtRender.GetProperty("resume_state").GetProperty("render_id").GetString());
+
+        restartedStore = _app.Services.GetRequiredService<Runtime>().Store;
+        restartedStore.Delete([(Kinds.Render, "render_resume")]);
+        var missingRender = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("review", missingRender.GetProperty("resume_state").GetProperty("step").GetString());
+
+        restartedStore.Put(Kinds.Render, "render_resume", planId, new Render
+        {
+            Id = "render_resume",
+            EditplanId = planId,
+            Kind = "final",
+            Path = renderPath,
+            PlanHash = "outdated",
+        });
+        var staleRender = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("review", staleRender.GetProperty("resume_state").GetProperty("step").GetString());
+
         restartedStore.Put(Kinds.Job, jobId, _id, new Job
         {
             Id = jobId,
@@ -97,7 +179,7 @@ public sealed class ProjectWorkflowResumeTests : IAsyncLifetime
             CandidateIds = [candidateId],
         });
         var failedProject = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
-        Assert.False(failedProject.TryGetProperty("resume_job_id", out _));
+        Assert.Equal("review", failedProject.GetProperty("resume_state").GetProperty("step").GetString());
 
         restartedStore.Put(Kinds.Job, jobId, _id, new Job
         {
@@ -108,6 +190,20 @@ public sealed class ProjectWorkflowResumeTests : IAsyncLifetime
             CandidateIds = [candidateId],
         });
         var activeProject = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
-        Assert.Equal(jobId, activeProject.GetProperty("resume_job_id").GetString());
+        Assert.Equal("review", activeProject.GetProperty("resume_state").GetProperty("step").GetString());
+
+        using var invalidState = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new
+        {
+            step = "review",
+            edit_plan_id = "ep_from_another_project",
+        }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalidState.StatusCode);
+
+        using var invalidJobState = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new
+        {
+            step = "candidates",
+            job_id = "job_from_another_project",
+        }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalidJobState.StatusCode);
     }
 }

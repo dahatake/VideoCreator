@@ -55,6 +55,46 @@ public static class Api
     static bool Stale(Runtime rt, Render r) => RenderValidity.IsStale(r, rt.Store.Get<EditPlan>(Kinds.EditPlan, r.EditplanId));
     static IResult StaleError() => Error(409, "E-PLAN-STALE", "編集計画が変更されたため承認・QA・書き出し結果は失効しました。内容を確認して再承認してください");
 
+    static ProjectWorkflowState ResolveWorkflowState(Runtime rt, JobQueue q, Project project, List<Job> jobs)
+    {
+        var saved = project.WorkflowState;
+        if (saved != null)
+        {
+            if (saved.Step is "project" or "settings" && saved.JobId == null && saved.EditPlanId == null && saved.RenderId == null)
+                return saved;
+            if (saved.Step is "job" or "candidates" && saved.JobId is string jobId
+                && rt.Store.Get<Job>(Kinds.Job, jobId) is { ProjectId: var jobProject } job && jobProject == project.Id)
+            {
+                if (saved.Step == "job" || job.Status is JobStatus.Ready or JobStatus.Done)
+                    return saved;
+                return saved with { Step = "job", EditPlanId = null, RenderId = null };
+            }
+            if (saved.Step == "review" && saved.EditPlanId is string planId
+                && rt.Store.Get<EditPlan>(Kinds.EditPlan, planId) is { ProjectId: var planProject } && planProject == project.Id)
+                return saved;
+            if (saved.Step == "render" && saved.RenderId is string renderId)
+            {
+                var render = rt.Store.Get<Render>(Kinds.Render, renderId);
+                var export = q.Exports.TryGetValue(renderId, out var currentExport) ? currentExport : null;
+                var editPlanId = render?.EditplanId ?? export?.EditplanId ?? saved.EditPlanId;
+                var plan = editPlanId == null ? null : rt.Store.Get<EditPlan>(Kinds.EditPlan, editPlanId);
+                if (plan?.ProjectId == project.Id)
+                    return render != null && File.Exists(render.Path) && !RenderValidity.IsStale(render, plan)
+                        ? saved with { EditPlanId = editPlanId }
+                        : new ProjectWorkflowState { Step = "review", EditPlanId = editPlanId };
+            }
+        }
+
+        var resumeJob = jobs.FirstOrDefault(j => j.Status is not (JobStatus.Failed or JobStatus.Cancelled));
+        return resumeJob == null
+            ? new ProjectWorkflowState { Step = "project" }
+            : new ProjectWorkflowState
+            {
+                Step = resumeJob.Status is JobStatus.Ready or JobStatus.Done ? "candidates" : "job",
+                JobId = resumeJob.Id,
+            };
+    }
+
     /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
     {
@@ -151,19 +191,19 @@ public static class Api
             assets = rt.Store.List<SourceAsset>(Kinds.Asset, p.Id).Count,
             last_job = rt.Store.List<Job>(Kinds.Job, p.Id).FirstOrDefault(),
         }), Json.Options));
-        api.MapGet("/projects/{id}", (Runtime rt, string id) =>
+        api.MapGet("/projects/{id}", (Runtime rt, JobQueue q, string id) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             var jobs = rt.Store.List<Job>(Kinds.Job, id);
-            var resumeJobId = jobs.FirstOrDefault(j => j.Status is not (JobStatus.Failed or JobStatus.Cancelled))?.Id;
+            var resumeState = ResolveWorkflowState(rt, q, p, jobs);
             return Results.Json(new
             {
                 project = p,
                 assets = rt.Store.List<SourceAsset>(Kinds.Asset, id),
                 rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, id),
                 jobs,
-                resume_job_id = resumeJobId,
+                resume_state = resumeState,
                 rights_statement = RightsStatement.Text,
             }, Json.Options);
         });
@@ -178,22 +218,76 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
+        api.MapPut("/projects/{id}/workflow-state", (Runtime rt, JobQueue q, string id, ProjectWorkflowState? state) =>
+            rt.Store.Atomic<IResult>(() =>
+            {
+                var p = rt.Store.Get<Project>(Kinds.Project, id);
+                if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+                if (state == null) return Error(422, "E-VALIDATION", "ワークフロー状態がありません");
+
+                ProjectWorkflowState saved;
+                switch (state.Step)
+                {
+                    case "project":
+                    case "settings":
+                        if (state.JobId != null || state.EditPlanId != null || state.RenderId != null)
+                            return Error(422, "E-VALIDATION", "プロジェクト画面にリソースIDは指定できません");
+                        saved = state with { UpdatedAt = DateTimeOffset.UtcNow };
+                        break;
+                    case "job":
+                    case "candidates":
+                    {
+                        var job = state.JobId == null ? null : rt.Store.Get<Job>(Kinds.Job, state.JobId);
+                        if (job?.ProjectId != id || state.EditPlanId != null || state.RenderId != null)
+                            return Error(422, "E-VALIDATION", "このプロジェクトの生成ジョブを指定してください");
+                        if (state.Step == "candidates" && job!.Status is not (JobStatus.Ready or JobStatus.Done))
+                            return Error(422, "E-VALIDATION", "完了した生成ジョブだけ候補画面を保存できます");
+                        saved = state with { UpdatedAt = DateTimeOffset.UtcNow };
+                        break;
+                    }
+                    case "review":
+                    {
+                        var plan = state.EditPlanId == null ? null : rt.Store.Get<EditPlan>(Kinds.EditPlan, state.EditPlanId);
+                        if (plan?.ProjectId != id || state.JobId != null || state.RenderId != null)
+                            return Error(422, "E-VALIDATION", "このプロジェクトの編集計画を指定してください");
+                        saved = state with { UpdatedAt = DateTimeOffset.UtcNow };
+                        break;
+                    }
+                    case "render":
+                    {
+                        var render = state.RenderId == null ? null : rt.Store.Get<Render>(Kinds.Render, state.RenderId);
+                        var export = state.RenderId != null && q.Exports.TryGetValue(state.RenderId, out var currentExport) ? currentExport : null;
+                        var editPlanId = render?.EditplanId ?? export?.EditplanId;
+                        var plan = editPlanId == null ? null : rt.Store.Get<EditPlan>(Kinds.EditPlan, editPlanId);
+                        if (plan?.ProjectId != id || (state.EditPlanId != null && state.EditPlanId != editPlanId) || state.JobId != null)
+                            return Error(422, "E-VALIDATION", "このプロジェクトの書き出しを指定してください");
+                        saved = state with { EditPlanId = editPlanId, UpdatedAt = DateTimeOffset.UtcNow };
+                        break;
+                    }
+                    default:
+                        return Error(422, "E-VALIDATION", "ワークフローの段階が正しくありません");
+                }
+
+                rt.Store.Put(Kinds.Project, id, null, p with { WorkflowState = saved });
+                return Results.Json(saved, Json.Options);
+            }));
         api.MapPut("/projects/{id}/generation-settings", (Runtime rt, string id, ProjectGenerationSettings? settings) =>
-        {
-            var p = rt.Store.Get<Project>(Kinds.Project, id);
-            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
-            if (settings == null || settings.MaskWords == null || string.IsNullOrWhiteSpace(settings.Bgm))
-                return Error(422, "E-VALIDATION", "生成設定の形式が正しくありません");
-            if (string.IsNullOrWhiteSpace(settings.PresetId) || !rt.Presets.TryGetValue(settings.PresetId, out var preset) || !preset.Available)
-                return Error(422, "E-VALIDATION", "利用できるパターンを選んでください");
-            if (settings.Scope is not ("full" or "balanced" or "economy"))
-                return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
-            if (settings.SeriesBy is not ("parts" or "minutes"))
-                return Error(422, "E-VALIDATION", "シリーズの分け方は parts / minutes のどちらかを指定してください");
-            p = p with { GenerationSettings = settings };
-            rt.Store.Put(Kinds.Project, id, null, p);
-            return Results.Json(p.GenerationSettings, Json.Options);
-        });
+            rt.Store.Atomic<IResult>(() =>
+            {
+                var p = rt.Store.Get<Project>(Kinds.Project, id);
+                if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+                if (settings == null || settings.MaskWords == null || string.IsNullOrWhiteSpace(settings.Bgm))
+                    return Error(422, "E-VALIDATION", "生成設定の形式が正しくありません");
+                if (string.IsNullOrWhiteSpace(settings.PresetId) || !rt.Presets.TryGetValue(settings.PresetId, out var preset) || !preset.Available)
+                    return Error(422, "E-VALIDATION", "利用できるパターンを選んでください");
+                if (settings.Scope is not ("full" or "balanced" or "economy"))
+                    return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
+                if (settings.SeriesBy is not ("parts" or "minutes"))
+                    return Error(422, "E-VALIDATION", "シリーズの分け方は parts / minutes のどちらかを指定してください");
+                p = p with { GenerationSettings = settings };
+                rt.Store.Put(Kinds.Project, id, null, p);
+                return Results.Json(p.GenerationSettings, Json.Options);
+            }));
         api.MapPut("/projects/{id}/proper-nouns", (Runtime rt, string id, PutProjectProperNouns req) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
@@ -642,9 +736,19 @@ public static class Api
         }));
         api.MapGet("/renders/{id}", (Runtime rt, JobQueue q, string id) =>
         {
-            if (rt.Store.Get<Render>(Kinds.Render, id) is Render r) return Results.Json(new { state = Stale(rt, r) ? "stale" : "done", render = r,
-                qa_stale = Stale(rt, r), error_code = Stale(rt, r) ? "E-PLAN-STALE" : null, editplan_id = r.EditplanId }, Json.Options);
-            return q.Exports.TryGetValue(id, out var s) ? Results.Json(s, Json.Options) : Error(404, "E-NOT-FOUND", "書き出しがありません");
+            if (rt.Store.Get<Render>(Kinds.Render, id) is Render r)
+            {
+                var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, r.EditplanId);
+                var stale = Stale(rt, r);
+                return Results.Json(new { state = stale ? "stale" : "done", render = r,
+                    qa_stale = stale, error_code = stale ? "E-PLAN-STALE" : null, editplan_id = r.EditplanId, project_id = plan?.ProjectId }, Json.Options);
+            }
+            if (q.Exports.TryGetValue(id, out var s))
+            {
+                var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, s.EditplanId);
+                return Results.Json(new { s.RenderId, s.EditplanId, s.State, s.Message, s.Failures, s.ErrorCode, s.Progress, s.Step, s.QueuedAt, s.PlanHash, project_id = plan?.ProjectId }, Json.Options);
+            }
+            return Error(404, "E-NOT-FOUND", "書き出しがありません");
         });
         api.MapPost("/renders/{id}/cancel", (JobQueue q, string id) =>
             q.CancelExport(id) ? Results.Json(q.Exports[id], Json.Options)

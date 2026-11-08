@@ -232,6 +232,20 @@ function wireProjectsDir(pd) {
 }
 
 // ---------------- routes ----------------
+let workflowSaveChain = Promise.resolve();
+function workflowRoute(id, state) {
+  if (state.step === 'project') return `#/p/${id}`;
+  if (state.step === 'settings') return `#/p/${id}/settings`;
+  if (state.step === 'job' || state.step === 'candidates') return state.job_id ? `#/job/${state.job_id}` : null;
+  if (state.step === 'review') return state.edit_plan_id ? `#/ep/${state.edit_plan_id}` : null;
+  if (state.step === 'render') return state.render_id ? `#/render/${state.render_id}` : state.edit_plan_id ? `#/ep/${state.edit_plan_id}` : null;
+  return null;
+}
+function saveWorkflowState(projectId, state) {
+  const save = () => api(`/api/projects/${encodeURIComponent(projectId)}/workflow-state`, { method: 'PUT', body: state });
+  workflowSaveChain = workflowSaveChain.then(save, save);
+  return workflowSaveChain;
+}
 const routes = [
   [/^#?\/?$/, home],
   [/^#\/p\/([\w-]+)$/, (id) => project(id)],
@@ -316,7 +330,9 @@ function confirmDelete(p, opener) {
 // ---------------- project: assets + rights + pattern + generate ----------------
 async function project(id, showSettings = false) {
   const [d, presets, bgmList, kitView, settings] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings')]);
-  if (!showSettings && d.resume_job_id) { location.hash = `#/job/${d.resume_job_id}`; return; }
+  const resumeRoute = workflowRoute(id, d.resume_state ?? { step: 'project' });
+  if (!showSettings && resumeRoute && resumeRoute !== `#/p/${id}`) { location.hash = resumeRoute; return; }
+  await saveWorkflowState(id, { step: showSettings ? 'settings' : 'project' });
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
@@ -830,6 +846,7 @@ async function project(id, showSettings = false) {
 async function job(jobId) {
   const j = await api(`/api/jobs/${jobId}`);
   if (j.status === 'ready' || j.status === 'done') return candidates(j);
+  await saveWorkflowState(j.project_id, { step: 'job', job_id: j.id });
   setSteps(2);
   const started = Date.now();
   const skeleton = (failed, message) => {
@@ -911,6 +928,7 @@ async function job(jobId) {
 async function candidates(j) {
   setSteps(3);
   const list = await api(`/api/jobs/${j.id}/candidates`);
+  await saveWorkflowState(j.project_id, { step: 'candidates', job_id: j.id });
   if (list.length && list[0].candidate.series) return seriesView(j, list);
   const bar = (label, v) => `<span>${label}</span><span class="bar"><span style="width:${v * 10}%"></span></span><span>${Number(v).toFixed(v % 1 ? 1 : 0)}</span>`;
   main.innerHTML = `
@@ -1125,6 +1143,7 @@ function wireApprovals(j, list) {
 async function review(epId) {
   setSteps(4);
   let { plan, qa, approval, final_render_stale: finalStale } = await api(`/api/editplans/${epId}`);
+  await saveWorkflowState(plan.project_id, { step: 'review', edit_plan_id: epId });
   const job = await api(`/api/jobs/${plan.provenance.job_id}`);
   const cands = await api(`/api/jobs/${job.id}/candidates`);
   const me = cands.find(x => x.candidate.edit_plan_id === epId);
@@ -1270,9 +1289,13 @@ async function review(epId) {
 // ---------------- export ----------------
 async function exportView(renderId) {
   setSteps(5);
-  let timer = null;
+  let timer = null, workflowSaved = false;
   const poll = async () => {
     const s = await api(`/api/renders/${renderId}`);
+    if (!workflowSaved && s.project_id) {
+      await saveWorkflowState(s.project_id, { step: 'render', edit_plan_id: s.editplan_id, render_id: renderId });
+      workflowSaved = true;
+    }
     if (s.state === 'done') {
       clearInterval(timer);
       const r = s.render, files = r.outputs;
