@@ -63,7 +63,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 保存先 | PUT `/settings/projects-dir` | 同形式で実際に変更／移動 |
 | パターン | GET `/presets` | 起動時ロード済みプリセット |
 | Project | GET / POST `/projects` | 一覧／`{"name":"作業名"}` で作成 |
-| Project | GET / PATCH / DELETE `/projects/{id}` | 詳細／`{"name":"新しい名前"}`／削除 |
+| Project | GET / PATCH / DELETE `/projects/{id}` | 詳細（`resume_job_id` があれば再開先）／`{"name":"新しい名前"}`／削除 |
 | Project | PUT `/projects/{id}/generation-settings` | パターンと生成オプションをプロジェクトに保存 |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`。コピーしない |
 | Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー |

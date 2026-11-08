@@ -155,12 +155,15 @@ public static class Api
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            var jobs = rt.Store.List<Job>(Kinds.Job, id);
+            var resumeJobId = jobs.FirstOrDefault(j => j.Status is not (JobStatus.Failed or JobStatus.Cancelled))?.Id;
             return Results.Json(new
             {
                 project = p,
                 assets = rt.Store.List<SourceAsset>(Kinds.Asset, id),
                 rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, id),
-                jobs = rt.Store.List<Job>(Kinds.Job, id),
+                jobs,
+                resume_job_id = resumeJobId,
                 rights_statement = RightsStatement.Text,
             }, Json.Options);
         });

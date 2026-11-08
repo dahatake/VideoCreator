@@ -603,6 +603,7 @@ EditPlan は本システムの**中心となる成果物**である。人によ�
 | メソッド | パス | 説明 | 主なレスポンス |
 |---|---|---|---|
 | POST | `/api/projects` | プロジェクトを作成 | 201 `{id}` |
+| GET | `/api/projects/{id}` | プロジェクト詳細。再開可能な最新ジョブがあれば `resume_job_id` を返す | 200 Project・素材・ジョブ等 / 404 |
 | PATCH | `/api/projects/{id}` | プロジェクト名を変更 `{name}`（表示名のみ。保存先フォルダと保存済みのパスは変えない。以後の書き出しファイル名に反映） | 200 `Project` / 404 / 422 空・80文字超・制御文字 |
 | PUT | `/api/projects/{id}/generation-settings` | パターンと生成オプションをプロジェクトに保存 | 200 `ProjectGenerationSettings` / 404 / 422 不正なパターン・設定 |
 | DELETE | `/api/projects/{id}` | プロジェクトを削除。DB の子孫（素材・権利・ジョブ・候補・編集計画・書き出し・BGM）と派生データ（`qa/`、他プロジェクトが使っていない `cache/`）を消し、ProjectsDir 直下のアプリ作成フォルダはごみ箱へ移す（管理外のフォルダとパス指定の元動画は残す）。フォルダを消せなければ DB は変えない | 200 `{folder: removed\|missing\|kept, documents, cache_dirs}` / 404 / 409 `E-PROJECT-BUSY` 生成・書き出し中 / 409 `E-FILE-IN-USE` |

@@ -234,7 +234,8 @@ function wireProjectsDir(pd) {
 // ---------------- routes ----------------
 const routes = [
   [/^#?\/?$/, home],
-  [/^#\/p\/([\w-]+)$/, project],
+  [/^#\/p\/([\w-]+)$/, (id) => project(id)],
+  [/^#\/p\/([\w-]+)\/settings$/, (id) => project(id, true)],
   [/^#\/job\/([\w-]+)$/, job],
   [/^#\/ep\/([\w-]+)$/, review],
   [/^#\/render\/([\w-]+)$/, exportView],
@@ -313,8 +314,9 @@ function confirmDelete(p, opener) {
 }
 
 // ---------------- project: assets + rights + pattern + generate ----------------
-async function project(id) {
+async function project(id, showSettings = false) {
   const [d, presets, bgmList, kitView, settings] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings')]);
+  if (!showSettings && d.resume_job_id) { location.hash = `#/job/${d.resume_job_id}`; return; }
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
@@ -840,7 +842,7 @@ async function job(jobId) {
           <div id="stepBox" class="progress-row" hidden><span id="stepLabel" class="caption"></span><fluent-progress-bar id="stepBar" max="100" aria-label="実行中の処理の進み具合"></fluent-progress-bar><span id="stepPct" class="caption pct"></span></div>`}
           <p class="caption" style="margin-top:8px">経過 <span id="elapsed">0:00</span><span id="eta"></span>${j.cost ? ` · 推定コスト 約 ¥${j.cost.estimated_jpy.toFixed(1)}` : ''}</p>
           <div id="stages">${STAGES.map(([k, label]) => `<div class="stage" data-stage="${k}"><span class="dot"></span><span>${label}</span><span class="caption"></span></div>`).join('')}</div>
-          <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}">プロジェクトに戻る</fluent-anchor-button>` : '<fluent-button id="cancel">キャンセル</fluent-button>'}</div>
+          <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings">プロジェクトに戻る</fluent-anchor-button>` : '<fluent-button id="cancel">キャンセル</fluent-button>'}</div>
         </section>
         <section class="card"><h2>この間に行っていること</h2>
           <ul class="caption" style="line-height:20px">
@@ -913,7 +915,7 @@ async function candidates(j) {
   const bar = (label, v) => `<span>${label}</span><span class="bar"><span style="width:${v * 10}%"></span></span><span>${Number(v).toFixed(v % 1 ? 1 : 0)}</span>`;
   main.innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>候補（${list.length}件）</h1>
-      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
+      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">選定: ${esc(j.llm_model ?? '')} · プロンプト ${esc(j.prompt_version ?? '')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
     <div class="grid cols-cands">
@@ -952,7 +954,7 @@ function seriesView(j, list) {
   const total = list.reduce((a, x) => a + (x.preview?.duration ?? 0), 0);
   main.innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>シリーズ（${list.length}本）${first.series_title ? `: ${esc(first.series_title)}` : ''}</h1>
-      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
+      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">${first.requested_parts ? `${first.requested_parts}本に指定（1本あたり 約${(first.target_sec / 60).toFixed(1)}分）` : `1本あたり 約${(first.target_sec / 60).toFixed(1)}分の指定`} · 合計 ${fmt(total)} · 章分け: ${esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : '書き起こしの語彙の変化（AI なし）')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
     <div class="grid cols-cands">
