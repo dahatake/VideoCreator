@@ -9,10 +9,28 @@ public sealed record Project
     public string Language { get; init; } = "ja-JP";
     public required string Directory { get; init; }
     public List<ProjectProperNoun> ProperNouns { get; init; } = [];
+    public ProjectGenerationSettings GenerationSettings { get; init; } = new();
     public List<SceneCardImage> SceneCardImages { get; init; } = [];
     /// <summary>The user's 作る / 作らない choice for video-extracted scene-card images. Null (older projects) = use them when some exist.</summary>
     public bool? MakeSceneCardImages { get; init; }
     public bool UsesSceneCardImages() => MakeSceneCardImages ?? SceneCardImages.Count > 0;
+}
+
+public sealed record ProjectGenerationSettings
+{
+    public string PresetId { get; init; } = "P4";
+    public string Scope { get; init; } = "balanced";
+    public string Bgm { get; init; } = "auto";
+    public bool Sfx { get; init; } = true;
+    public bool Tsukkomi { get; init; }
+    public bool Series { get; init; }
+    public string SeriesBy { get; init; } = "parts";
+    public int Parts { get; init; } = 2;
+    public double PartMinutes { get; init; } = 15;
+    public bool Opening { get; init; } = true;
+    public bool Closing { get; init; } = true;
+    public bool SceneCards { get; init; }
+    public List<string> MaskWords { get; init; } = [];
 }
 
 public enum ProperNounType { Person, Place, Organization, Product, Other }

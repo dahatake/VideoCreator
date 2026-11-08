@@ -36,7 +36,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 - LLM方式の画面変更はRuntime内に反映。再起動すると起動設定に戻ります。
 - プロジェクト保存先の画面変更はStoreのsettingに永続化。起動設定より優先。
-- パターン・生成オプションの画面選択はブラウザーのsessionStorage。生成時にJob.Optionsへ記録。
+- パターン・生成オプションの画面選択はプロジェクトごとにStoreへ保存し、再起動後も復元。生成時にはJob.Optionsにも記録。
 - BrandKitは共通Store、BGMはライブラリまたはプロジェクト、画像生成の作る／作らないはProject。
 - プリセットは起動時にロード。ファイルを編集したら再起動。
 
@@ -64,6 +64,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | パターン | GET `/presets` | 起動時ロード済みプリセット |
 | Project | GET / POST `/projects` | 一覧／`{"name":"作業名"}` で作成 |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 詳細／`{"name":"新しい名前"}`／削除 |
+| Project | PUT `/projects/{id}/generation-settings` | パターンと生成オプションをプロジェクトに保存 |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`。コピーしない |
 | Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |

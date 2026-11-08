@@ -319,8 +319,8 @@ async function project(id) {
   const allRights = assets.length > 0 && assets.every(a => rights.has(a.id));
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
   const notReady = !assets.length ? '素材を追加してください' : !allRights ? '権利確認にチェックしてください' : '';
-  let selected = sessionStorage.getItem(`preset:${id}`) ?? 'P4';
-  const saved = JSON.parse(sessionStorage.getItem(`opts:${id}`) ?? '{}');
+  const saved = d.project.generation_settings ?? {};
+  let selected = saved.preset_id ?? 'P4';
   const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
   setSteps(assets.length && allRights ? 1 : 0);
@@ -401,6 +401,7 @@ async function project(id) {
       </section>
       <section class="card step-col" aria-labelledby="h-gen">
         <h2 id="h-gen">3. 生成する</h2>
+        <div id="settingsSaveMsg" aria-live="polite"></div>
         <div class="col-body stack" style="gap:16px">
         <div class="stack">
           <h3>シリーズに分ける（前編・中編・後編…）</h3>
@@ -598,7 +599,26 @@ async function project(id) {
     else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); saveName(); }
   });
 
-  const saveOpts = () => sessionStorage.setItem(`opts:${id}`, JSON.stringify(opts));
+  let saveChain = Promise.resolve(), saveRevision = 0, maskSaveTimer;
+  const saveOpts = (delay = 0) => {
+    const revision = ++saveRevision;
+    const settings = { ...opts, preset_id: selected };
+    const status = $('#settingsSaveMsg');
+    status.textContent = '設定を保存しています…';
+    const save = async () => {
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        await api(`/api/projects/${id}/generation-settings`, { method: 'PUT', body: settings });
+        if (revision === saveRevision) status.textContent = '設定を保存しました';
+        return true;
+      } catch (e) {
+        if (revision === saveRevision) status.innerHTML = errorBar(e);
+        return false;
+      }
+    };
+    saveChain = saveChain.then(save, save);
+    return saveChain;
+  };
   const showCost = () => {
     const el = $('#costLine'); if (!el || !estimate) return;
     const c = (estimate.scopes.find(s => s.scope === (opts.series ? 'full' : opts.scope)) ?? estimate.scopes[1]).cost;
@@ -644,7 +664,10 @@ async function project(id) {
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; saveOpts(); });
-  $('#maskWords').addEventListener('input', () => { opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean); saveOpts(); });
+  $('#maskWords').addEventListener('input', () => {
+    opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean);
+    clearTimeout(maskSaveTimer); maskSaveTimer = setTimeout(saveOpts, 250);
+  });
   $('#openingSw').addEventListener('change', (e) => { opts.opening = e.target.checked; saveOpts(); });
   $('#closingSw').addEventListener('change', (e) => { opts.closing = e.target.checked; saveOpts(); });
   $('#cardsSw').addEventListener('change', (e) => { opts.scene_cards = e.target.checked; saveOpts(); });
@@ -772,7 +795,7 @@ async function project(id) {
   }));
   const presetRadios = $$('#presets [role=radio]');
   const choose = (el) => {
-    selected = el.dataset.id; sessionStorage.setItem(`preset:${id}`, selected);
+    selected = el.dataset.id; saveOpts();
     presetRadios.forEach(c => { c.closest('.preset').classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); });
     // the pattern's pause threshold changes the length after jump cuts, so refresh the series preview
     if (assets.length) api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`).then(e => { estimate = e; showSeries(); }).catch(() => { });
@@ -792,7 +815,11 @@ async function project(id) {
     }
     const { series, series_by, parts, part_minutes, ...rest } = opts;
     const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null };
-    try { const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options } }); location.hash = `#/job/${r.job_id}`; }
+    try {
+      clearTimeout(maskSaveTimer);
+      if (!await saveOpts()) return;
+      const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options } }); location.hash = `#/job/${r.job_id}`;
+    }
     catch (e) { $('#genMsg').innerHTML = errorBar(e); }
   });
 }

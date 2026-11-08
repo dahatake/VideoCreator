@@ -175,6 +175,22 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
+        api.MapPut("/projects/{id}/generation-settings", (Runtime rt, string id, ProjectGenerationSettings? settings) =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (settings == null || settings.MaskWords == null || string.IsNullOrWhiteSpace(settings.Bgm))
+                return Error(422, "E-VALIDATION", "生成設定の形式が正しくありません");
+            if (string.IsNullOrWhiteSpace(settings.PresetId) || !rt.Presets.TryGetValue(settings.PresetId, out var preset) || !preset.Available)
+                return Error(422, "E-VALIDATION", "利用できるパターンを選んでください");
+            if (settings.Scope is not ("full" or "balanced" or "economy"))
+                return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
+            if (settings.SeriesBy is not ("parts" or "minutes"))
+                return Error(422, "E-VALIDATION", "シリーズの分け方は parts / minutes のどちらかを指定してください");
+            p = p with { GenerationSettings = settings };
+            rt.Store.Put(Kinds.Project, id, null, p);
+            return Results.Json(p.GenerationSettings, Json.Options);
+        });
         api.MapPut("/projects/{id}/proper-nouns", (Runtime rt, string id, PutProjectProperNouns req) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
