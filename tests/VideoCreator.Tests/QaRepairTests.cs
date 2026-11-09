@@ -315,12 +315,87 @@ public sealed class QaRepairTests
         AssertCaptionWordsPreserved(acrossCut.Plan, blocked.Plan);
     }
 
+    /// <summary>Recogniser words with explicit times (start, end, text), one speaker.</summary>
+    static Transcript Timed(params (double S, double E, string Text)[] ws)
+    {
+        var words = ws.Select((w, i) => new Word($"w{i}", w.S, w.E, w.Text, 1)).ToList();
+        return new Transcript { Provider = "fixed", Duration = 30, Words = words, Sentences = [new Sentence(0, words[0].T0, words[^1].T1, string.Concat(ws.Select(w => w.Text)), 1, 0, words.Count - 1)] };
+    }
+
+    [Fact] // S-02 with no neighbour to take words: the caption is split in two at a word boundary (FR-TEL-02 分割), the 「この項目を修復」 mark agrees
+    public async Task Long_caption_alone_is_split_in_two()
+    {
+        var tr = Timed((1, 2.2, "今日はみんなで"), (2.2, 3.4, "早速"), (3.4, 4.6, "方法を"), (4.6, 5.8, "話します"));
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 5.8, "今日はみんなで早速方法を話します", Ids(4))), tr);
+        var s02 = Check(ctx, "S-02");
+        Assert.Equal(QaStatus.Warn, s02.Status);
+        var shown = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), llm: false).Single(q => q.CheckId == "S-02");
+        Assert.Equal(("rule", 1, (string?)null), (shown.Advice!.Repair, shown.Advice.Fixable, shown.Advice.Remaining));
+        Assert.Equal("rule", Assert.Single(shown.Items!).Repair);
+
+        var r = await QaRepair.RunAsync(ctx, ["S-02"], null, Ct);
+        var c = Assert.Single(r.Changes);
+        Assert.Equal(("S-02", "rule", "今日はみんなで｜早速方法を話します"), (c.CheckId, c.Method, c.After));
+        var caps = r.Plan.Telops.OrderBy(t => t.Start).ToList();
+        Assert.Equal(["c1", "c1b"], caps.Select(t => t.Id));
+        Assert.Equal(2.2, caps[1].Start, 3);              // the second half starts with 「早速」
+        Assert.Equal(caps[0].End, caps[1].Start, 3);
+        Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "S-02").Status);
+        Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "S-01").Status);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+    }
+
+    [Fact] // a caption spoken faster than the limit, boxed in by another speaker: no rule can fix it without dropping words, so it is shown as
+           // a warning that stays (no repair button), with the measured speaking rate as the reason
+    public async Task Inherently_fast_caption_is_marked_unfixable_with_its_speaking_rate()
+    {
+        var tr = Timed((0.4, 1, "はい"), (1, 1.6, "こんにちはみなさん"), (1.6, 2.4, "どうも"));
+        var ctx = Ctx(Plan(T("c0", TelopType.Caption, 0.4, 1, "はい", "w0") with { Speaker = 2 },
+            T("c1", TelopType.Caption, 1, 1.6, "こんにちはみなさん", "w1"),
+            T("c2", TelopType.Caption, 1.6, 2.4, "どうも", "w2") with { Speaker = 2 }), tr);
+        var shown = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), llm: true).Single(q => q.CheckId == "S-01");
+        var item = Assert.Single(shown.Items!, i => i.Target == "c1");
+        Assert.Null(item.Repair);
+        Assert.Contains("話す速さ", item.Note);
+        Assert.Contains("毎秒 15.0 字", item.Note);   // 9 chars in 0.6 s
+        Assert.DoesNotContain(shown.Items!, i => i.Repair != null);
+        Assert.Equal(("none", 0), (shown.Advice!.Repair, shown.Advice.Fixable));
+        Assert.Contains("警告のまま残ります", shown.Advice.Remaining);
+
+        var r = await QaRepair.RunAsync(ctx, ["S-01"], null, Ct);
+        Assert.Empty(r.Changes);
+        Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("話す速さ"));
+        Assert.Equal(EditPlanFingerprint.Of(ctx.Plan), EditPlanFingerprint.Of(r.Plan));
+    }
+
+    [Fact] // the per-item mark predicts the repair: every item marked "rule" is cleared, every unmarked one stays
+    public async Task Assessment_agrees_with_what_the_repair_does()
+    {
+        var tr = Timed((1, 1.4, "こんにちは"), (3, 3.8, "それでは"), (5, 5.6, "今日はみんなで"), (5.6, 6, "方法を話します"), (6, 6.4, "では"));
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 1.4, "こんにちは", "w0"), T("c2", TelopType.Caption, 3, 3.8, "それでは", "w1"),
+            T("c3", TelopType.Caption, 5, 6, "今日はみんなで方法を話します", "w2", "w3") with { Speaker = 2 }, T("c4", TelopType.Caption, 6, 6.4, "では", "w4")), tr);
+        var shown = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), llm: false);
+        var r = await QaRepair.RunAsync(ctx, null, null, Ct);
+        foreach (var q in shown.Where(q => q.CheckId is "S-01" or "S-02" or "S-08" && q.Items != null))
+        {
+            var left = r.After.Single(x => x.CheckId == q.CheckId).Items?.Select(i => i.Target).ToHashSet() ?? [];
+            Assert.All(q.Items!.Where(i => i.Repair == "rule"), i => Assert.DoesNotContain(i.Target, left));
+            Assert.All(q.Items!.Where(i => i.Repair == null), i => Assert.Contains(i.Target, left));
+        }
+        Assert.Contains(shown.SelectMany(q => q.Items ?? []), i => i.Repair == "rule");
+        Assert.Contains(shown.SelectMany(q => q.Items ?? []), i => i.Repair == null);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+    }
+
     [Fact] // H-11 rule: a telop whose evidence ids are missing is re-bound to the utterance it quotes, without an LLM
     public async Task Missing_evidence_is_rebound_by_rule()
     {
         var tr = TranscriptOf(("A社は100万円", 1), ("B社は500万円", 1));
         var ctx = Ctx(Plan(T("e1", TelopType.Emphasis, 4, 6, "B社は500万円")), tr);
         Assert.Equal(QaStatus.Fail, Check(ctx, "H-11").Status);
+        // with no LLM, the rule is what will fix it: the card says so instead of 「AI で修復できます」
+        var shown = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), llm: false).Single(q => q.CheckId == "H-11");
+        Assert.Equal(("rule", 1), (shown.Advice!.Repair, shown.Advice.Fixable));
         var r = await QaRepair.RunAsync(ctx, null, null, Ct);
         var c = Assert.Single(r.Changes);
         Assert.Equal(("H-11", "rule", false), (c.CheckId, c.Method, c.NeedsApproval));

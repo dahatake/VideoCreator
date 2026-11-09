@@ -1347,7 +1347,9 @@ async function review(epId) {
   const totalDur = () => plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0) + active().reduce((a, i) => a + i.duration, 0);
   const tc = (x) => `${Math.floor(x / 60)}:${(x % 60).toFixed(1).padStart(4, '0')}`;
   const statusName = { pass: '合格', fail: '不合格', warn: '警告', not_run: '未実施' };
-  const repairName = { rule: '自動で修復できます', ai: 'AI で修復できます', manual: '手動で修正' };
+  const repairName = { rule: '自動で修復できます', ai: 'AI で修復できます', manual: '手動で修正', none: '自動では直せません' };
+  // findings 「Copilotで自動修復」 will fix (advice.fixable from the server; every item when not assessed)
+  const fixableOf = (q) => !q.advice || q.advice.repair === 'manual' || q.advice.repair === 'none' ? 0 : q.advice.fixable ?? (q.items ?? []).length;
   const targetText = (it) => {
     if (it.kind === 'telop') { const t = plan.telops.find(x => x.id === it.target); return t ? `${typeLabel[t.type] ?? t.type}「${t.text}」` : it.target; }
     if (it.kind === 'insert') { const i = (plan.inserts ?? []).find(x => x.id === it.target); return i ? `${isTsukkomiCard(i) ? 'ツッコミ' : insertName[i.kind] ?? i.kind}${i.text ? `「${i.text}」` : ''}` : it.target; }
@@ -1377,23 +1379,28 @@ async function review(epId) {
     const issues = qa.filter(q => q.status === 'fail' || q.status === 'warn').sort((a, b) => (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1));
     const passed = qa.filter(q => q.status === 'pass' || q.status === 'not_run');
     const fails = issues.filter(q => q.status === 'fail').length, warns = issues.length - fails;
-    const repairable = issues.filter(q => q.advice && q.advice.repair !== 'manual');
+    const repairable = issues.filter(q => fixableOf(q) > 0), fixTotal = repairable.reduce((s, q) => s + fixableOf(q), 0);
     const total = Math.max(0.1, totalDur());
     const markers = issues.flatMap(q => (q.items ?? []).filter(it => Number.isFinite(it.start)).map(it => {
       const left = Math.min(100, it.start / total * 100), w = Math.max(0.8, Math.min(100 - left, ((it.end ?? it.start) - it.start) / total * 100));
       return `<button type="button" class="qa-mark ${q.status}" style="left:${left.toFixed(2)}%;width:${w.toFixed(2)}%" data-time="${it.start.toFixed(3)}" data-target="${esc(it.target)}" data-kind="${esc(it.kind)}" aria-label="${esc(q.check_id)} ${tc(it.start)}: ${esc(it.detail)}" title="${esc(q.check_id)} ${tc(it.start)} ${esc(it.detail)}"></button>`;
     })).join('');
     const issueCard = (q) => {
-      const items = q.items ?? [];
-      const row = (it) => `<li class="qa-item" data-start="${it.start ?? ''}" data-end="${it.end ?? it.start ?? ''}">${seekBtn(it, q.check_id)}<span><span class="qa-target">${esc(targetText(it))}</span> <span class="caption">${esc(it.detail)}</span></span></li>`;
+      const all = q.items ?? [], n = fixableOf(q);
+      // when the server assessed each item, fixable ones come first and the rest are grouped with their reason
+      const assessed = q.advice?.fixable != null;
+      const items = assessed ? all.filter(it => it.repair) : all, stays = assessed ? all.filter(it => !it.repair) : [];
+      const row = (it) => `<li class="qa-item" data-start="${it.start ?? ''}" data-end="${it.end ?? it.start ?? ''}">${seekBtn(it, q.check_id)}<span><span class="qa-target">${esc(targetText(it))}</span> <span class="caption">${esc(it.detail)}</span>${it.note ? `<span class="caption qa-note">${esc(it.note)}</span>` : ''}</span></li>`;
       return `<li class="qa-issue ${q.status}" data-check="${esc(q.check_id)}">
         <div class="qa-issue-head"><span class="qa-status ${q.status}">${statusName[q.status]}</span><b>${esc(q.check_id)}</b><span>${esc(q.message)}</span></div>
         <p class="caption qa-measure">${esc(q.measured)}（基準 ${esc(q.threshold)}${q.stage ? `・${esc(q.stage)}` : ''}）</p>
         ${q.advice ? `<div class="qa-advice">${BULB}<div><b>推奨する修正</b> <span class="repair-tag ${esc(q.advice.repair)}">${repairName[q.advice.repair] ?? ''}</span><p>${esc(q.advice.recommendation)}</p>
-          ${q.advice.repair !== 'manual' ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}${repairing === q.check_id ? '修復しています…' : 'この項目を修復'}</fluent-button>
-            ${repairing === q.check_id ? '<fluent-progress-bar aria-label="この項目の修復の進み具合"></fluent-progress-bar>' : ''}` : ''}</div></div>` : ''}
+          ${n > 0 ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}${repairing === q.check_id ? '修復しています…' : assessed && all.length > 1 ? `この項目を修復（${n} 件が対象）` : 'この項目を修復'}</fluent-button>
+            ${repairing === q.check_id ? '<fluent-progress-bar aria-label="この項目の修復の進み具合"></fluent-progress-bar>' : ''}` : ''}
+          ${q.advice.remaining ? `<p class="caption">${esc(q.advice.remaining)}</p>` : ''}</div></div>` : ''}
         ${lastRepair && lastRepair.scope === q.check_id ? resultBlock(lastRepair) : ''}
         ${items.length ? `<ul class="qa-items">${items.slice(0, 12).map(row).join('')}</ul>${items.length > 12 ? `<details><summary class="caption">ほか ${items.length - 12} 件</summary><ul class="qa-items">${items.slice(12).map(row).join('')}</ul></details>` : ''}` : ''}
+        ${stays.length ? `<details class="qa-stays"><summary class="caption">自動では直らない ${stays.length} 件（${/^S-0[128]$/.test(q.check_id) ? '言葉を変えないため' : ''}警告のまま残ります）</summary><ul class="qa-items">${stays.map(row).join('')}</ul></details>` : ''}
       </li>`;
     };
     const r = lastRepair;
@@ -1406,7 +1413,7 @@ async function review(epId) {
       ${issues.length ? `<div class="qa-repair">
         <fluent-button appearance="primary" id="qaRepair" ${repairable.length && !repairing ? '' : 'disabled'} aria-describedby="qaRepairNote">${SPARKLE}${repairing === 'all' ? '修復しています…' : 'Copilotで自動修復'}</fluent-button>
         ${repairing === 'all' ? '<fluent-progress-bar aria-label="自動修復の進み具合"></fluent-progress-bar>' : ''}
-        <p class="caption" id="qaRepairNote">${repairable.length ? `${repairable.length} 項目が対象。` : '自動で直せる項目はありません。'}${llmDest ? `AI の修正にはテロップの文字と前後の書き起こしを ${esc(llmDest)} に送ります。` : 'LLM が未設定のため、ルールで直せる項目だけを修復します。'}</p></div>` : '<p class="pass">すべての自動チェックに合格しています。</p>'}
+        <p class="caption" id="qaRepairNote">${repairable.length ? `${repairable.length} 項目・${fixTotal} 件が対象。` : '自動で直せる項目はありません。'}${llmDest ? `AI の修正にはテロップの文字と前後の書き起こしを ${esc(llmDest)} に送ります。` : 'LLM が未設定のため、ルールで直せる項目だけを修復します。'}</p></div>` : '<p class="pass">すべての自動チェックに合格しています。</p>'}
       <div id="qaRepairMsg">${result}</div>
       ${issues.length ? `<ul class="qa-issues">${issues.map(issueCard).join('')}</ul>` : ''}
       ${passed.length ? `<details class="qa-passed"><summary class="caption">合格・未実施 ${passed.length} 件</summary>${qaList(passed)}</details>` : ''}

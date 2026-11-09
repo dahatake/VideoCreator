@@ -118,32 +118,18 @@ public sealed class QaEngine(FFmpeg ff)
         }
 
         var caps = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).ToList();
-        var fast = caps.Where(t => JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start) > p.Telop.Caption.MaxCps + 0.01).ToList();
-        res.Add(new("S-01", fast.Count == 0 ? QaStatus.Pass : QaStatus.Warn, fast.Count == 0 ? "ok" : string.Join(", ", fast.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text) / (t.End - t.Start):F1}cps")), $"≤{p.Telop.Caption.MaxCps} 文字/秒", "字幕速度")
-            { Items = fast.Select(t => TelopItem(t, $"毎秒 {JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start):F1} 字（{t.End - t.Start:F1} 秒に {JapaneseText.DisplayWidth(t.Text)} 字）")).ToList() });
-        int lineChars = AssWriter.CaptionLineChars(p, plan.Canvas.Width);
-        var wide = plan.Telops.Where(t => t.Enabled && (t.Type == TelopType.Caption ? AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width).Any(l => JapaneseText.DisplayWidth(l) > lineChars)
+        var cc = new CaptionChecks(p, plan.Canvas.Width, tr);
+        var fast = caps.Select(t => (t, why: cc.Speed(t))).Where(x => x.why != null).ToList();
+        res.Add(new("S-01", fast.Count == 0 ? QaStatus.Pass : QaStatus.Warn, fast.Count == 0 ? "ok" : string.Join(", ", fast.Take(3).Select(x => $"{x.t.Id} {JapaneseText.DisplayWidth(x.t.Text) / (x.t.End - x.t.Start):F1}cps")), $"≤{p.Telop.Caption.MaxCps} 文字/秒", "字幕速度")
+            { Items = fast.Select(x => TelopItem(x.t, x.why!)).ToList() });
+        int lineChars = cc.LineChars;
+        var wide = plan.Telops.Where(t => t.Enabled && (t.Type == TelopType.Caption ? cc.Width(t) != null
             : t.Type == TelopType.Emphasis && JapaneseText.DisplayWidth(t.Text) > p.Telop.Caption.MaxCharsPerLine)).ToList();
         res.Add(new("S-02", wide.Count == 0 ? QaStatus.Pass : QaStatus.Warn, wide.Count == 0 ? "ok" : string.Join(", ", wide.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text)}字")), $"≤{lineChars} 字/行" + (p.Telop.Caption.MaxLines > 1 ? $"・{p.Telop.Caption.MaxLines}行まで" : ""), "1行の文字数")
             { Items = wide.Select(t => TelopItem(t, $"{JapaneseText.DisplayWidth(t.Text)} 字")).ToList() });
 
         // S-08 禁則: every displayed caption line (incl. hand edits) obeys JIS X 4051 line-start/line-end rules, and a caption never starts with a particle/auxiliary of the previous caption
-        var wordIndex = new Dictionary<string, int>();
-        for (int i = 0; i < tr.Words.Count; i++) wordIndex.TryAdd(tr.Words[i].Id, i);
-        static string Bare(string s) => new(JapaneseText.NormalizeTelop(s).Where(c => !char.IsWhiteSpace(c)).ToArray());
-        string? DetachedHead(Telop t)
-        {
-            if (t.SourceWordIds.Count == 0 || t.Start <= 0.01 || !wordIndex.TryGetValue(t.SourceWordIds[0], out var i0)) return null;
-            var w0 = tr.Words[i0].Text;
-            if (JapaneseText.IsPunct(w0) || JapaneseText.CanStartLine(w0)) return null;
-            // judged on what is shown: a head the filler cleaning / a hand edit removed is not on screen
-            if (Bare(w0) is not { Length: > 0 } b0 || !Bare(t.Text).StartsWith(b0, StringComparison.Ordinal)) return null;
-            // 「。で、えっと」: a conjunction opening a new sentence, not a particle left over from the previous caption
-            if (JapaneseText.CanStartSentence(w0) && i0 > 0 && JapaneseText.EndsSentence(tr.Words[i0 - 1].Text)) return null;
-            return caps.Any(o => o.End >= t.Start - 0.05 && o.Start < t.Start && o.Speaker == t.Speaker) ? $"先頭が「{w0}」" : null;
-        }
-        var kinsoku = caps.Select(t => (t, why: JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width)).FirstOrDefault() ?? DetachedHead(t)))
-            .Where(x => x.why != null).ToList();
+        var kinsoku = caps.Select(t => (t, why: cc.Kinsoku(t, caps))).Where(x => x.why != null).ToList();
         res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則")
             { Items = kinsoku.Select(x => TelopItem(x.t, x.why!)).ToList() });
 

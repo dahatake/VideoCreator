@@ -535,10 +535,21 @@ public sealed record QaResult(string CheckId, QaStatus Status, string Measured, 
 }
 
 /// <summary>One finding. Target is a telop / insert / clip id (Kind says which); Start/End are seconds in the rendered file (inserts included).</summary>
-public sealed record QaItem(string Target, string Kind, string Detail, double? Start = null, double? End = null);
+public sealed record QaItem(string Target, string Kind, string Detail, double? Start = null, double? End = null)
+{
+    /// <summary>Set by QaRepair.Assess: "rule" when a verified rule candidate exists for this finding, "ai" when the LLM step takes it, null when nothing automatic can fix it.</summary>
+    public string? Repair { get; init; }
+    /// <summary>Why this finding stays (e.g. the speaker talks faster than the caption limit even with all the free time around it).</summary>
+    public string? Note { get; init; }
+}
 
-/// <summary>Repair: "rule" = fixed by a deterministic rule, "ai" = the LLM proposes and QA verifies, "manual" = a person has to decide (approval, rights, cut range).</summary>
-public sealed record QaAdvice(string Recommendation, string Repair);
+/// <summary>Repair: "rule" = fixed by a deterministic rule, "ai" = the LLM proposes and QA verifies, "manual" = a person has to decide (approval, rights, cut range).
+/// Fixable: findings QaRepair.Assess expects the repair to fix (null when not assessed); Remaining: why the others stay.</summary>
+public sealed record QaAdvice(string Recommendation, string Repair)
+{
+    public int? Fixable { get; init; }
+    public string? Remaining { get; init; }
+}
 
 public sealed record Render
 {

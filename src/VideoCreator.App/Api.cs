@@ -707,7 +707,7 @@ public static class Api
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
             var candidate = plan.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
             var staleFinal = rt.Store.List<Render>(Kinds.Render, id).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, plan);
-            return Results.Json(new { plan, plan_hash = EditPlanFingerprint.Of(plan), qa = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)),
+            return Results.Json(new { plan, plan_hash = EditPlanFingerprint.Of(plan), qa = ShownQa(rt, rt.CreateRunner(), plan),
                 approval = candidate == null ? null : ApprovalView(candidate, plan), final_render_stale = staleFinal, qa_stale = staleFinal, duration = plan.Duration }, Json.Options);
         });
         api.MapPatch("/editplans/{id}", async (Runtime rt, JobQueue q, string id, PatchPlan req, CancellationToken ct) =>
@@ -745,18 +745,24 @@ public static class Api
                     var c = plan.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
                     var finalStale = rt.Store.List<Render>(Kinds.Render, id).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, updated);
                     return Results.Json(new { plan = updated, plan_hash = EditPlanFingerprint.Of(updated),
-                        qa = QaEngine.PlanChecks(runner.QaContextFor(updated)), duration = updated.Duration,
+                        qa = ShownQa(rt, runner, updated), duration = updated.Duration,
                         preview_stale = EditPlanFingerprint.Of(updated) != EditPlanFingerprint.Of(plan),
                         approval = c == null ? null : ApprovalView(c, updated), qa_stale = finalStale, final_render_stale = finalStale }, Json.Options);
                 });
             }
             catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { return Error(422, "E-VALIDATION", ex.Message); }
         });
+        // plan checks as shown in 自動チェック: each finding marked with whether 「Copilotで自動修復」 will fix it
+        static List<QaResult> ShownQa(Runtime rt, PipelineRunner runner, EditPlan plan)
+        {
+            var ctx = runner.QaContextFor(plan);
+            return QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), rt.Llm != null);
+        }
         object PlanView(Runtime rt, PipelineRunner runner, EditPlan before, EditPlan updated)
         {
             var c = before.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
             var finalStale = rt.Store.List<Render>(Kinds.Render, before.EditplanId).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, updated);
-            return new { plan = updated, plan_hash = EditPlanFingerprint.Of(updated), qa = QaEngine.PlanChecks(runner.QaContextFor(updated)), duration = updated.Duration,
+            return new { plan = updated, plan_hash = EditPlanFingerprint.Of(updated), qa = ShownQa(rt, runner, updated), duration = updated.Duration,
                 preview_stale = EditPlanFingerprint.Of(updated) != EditPlanFingerprint.Of(before),
                 approval = c == null ? null : ApprovalView(c, updated), qa_stale = finalStale, final_render_stale = finalStale };
         }

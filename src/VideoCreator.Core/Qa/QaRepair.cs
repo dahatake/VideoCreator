@@ -41,6 +41,9 @@ public static class QaRepair
         var before = QaEngine.PlanChecks(ctx);
         var current = QaEngine.PlanChecks(qctx);
         var plan = ctx.Plan;
+        // repairs never touch the timeline: word times, cut points and the caption checker are computed once
+        var prep = new Prep(plan, ctx);
+        var flags = Flags(plan, prep);
         var changes = new List<QaRepairChange>(); var skipped = new List<QaRepairSkip>();
         var targets = current.Where(q => q.Status is QaStatus.Warn or QaStatus.Fail && (checkIds is not { Count: > 0 } || checkIds.Contains(q.CheckId)))
             .SelectMany(q => (q.Items ?? []).Select(i => (q.CheckId, Item: i))).ToList();
@@ -51,10 +54,11 @@ public static class QaRepair
             if (pr.CheckId != "H-10" && !CaptionsPreserved(plan, pr.Plan))
                 return "字幕の語句や発話との対応が変わるため採用しませんでした（字幕は話した言葉どおりに保持します）";
             var after = QaEngine.PlanChecks(qctx with { Plan = pr.Plan });
-            var why = Regression(current, after, pr);
+            var why = Regression(current, plan, after, pr.Plan, pr);
             if (why != null) return why;
             plan = pr.Plan with { Provenance = pr.Plan.Provenance with { Edits = [.. pr.Plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "qa_repair", pr.Item.Target, pr.Before, pr.After)] } };
             current = after;
+            flags = Flags(plan, prep);
             changes.Add(new(pr.CheckId, pr.Item.Target, pr.Item.Kind, pr.Method, pr.Before, pr.After, pr.NeedsApproval, pr.Item.Start, pr.Item.End));
             // one edit can clear other findings too (H-07 and H-11 on one telop; a merge clears both captions it joins)
             foreach (var (c, i) in targets) if (!(current.FirstOrDefault(q => q.CheckId == c)?.Items ?? []).Any(x => x.Target == i.Target)) done.Add((c, i.Target));
@@ -66,15 +70,12 @@ public static class QaRepair
         foreach (var (check, item) in targets)
         {
             if (done.Contains((check, item.Target))) continue;
-            var candidates = RuleProposals(check, plan, ctx, item).ToList();
+            var candidates = RuleProposals(check, plan, ctx, item, prep, flags).ToList();
             if (candidates.Count == 0)
             {
                 if (check is "S-01" or "S-02" or "S-08" && item.Kind == "telop")
                 {
-                    var limits = $"1 行 {AssWriter.CaptionLineChars(ctx.Preset, plan.Canvas.Width)} 字・毎秒 {ctx.Preset.Telop.Caption.MaxCps} 字";
-                    var why0 = check == "S-08"
-                        ? $"前の字幕へ移したり結合したりすると基準（{limits}）に収まらないか、話者・カットが変わります"
-                        : $"表示時間の延長や、前後の字幕への付け替え・結合では基準（{limits}）に収まりません";
+                    var why0 = Unfixable(check, plan, ctx, prep, item.Target);
                     ruleWhy[(check, item.Target)] = why0;
                     if (!AiChecks.Contains(check)) skipped.Add(new(check, item.Target, why0, item.Start));
                 }
@@ -159,22 +160,216 @@ public static class QaRepair
 
     static int Rank(QaStatus s) => s switch { QaStatus.Fail => 2, QaStatus.Warn => 1, _ => 0 };
 
-    /// <summary>Null when <paramref name="next"/> clears the proposal's finding and nothing else gets worse.</summary>
-    static string? Regression(List<QaResult> prev, List<QaResult> next, Proposal pr)
+    /// <summary>
+    /// Per finding, whether 「Copilotで自動修復」 will fix it, without running it: a rule finding counts when a candidate passes the same word-level
+    /// test the repair applies (<see cref="LocalOk"/>), an AI finding when an LLM is configured. The rest get a reason, and a check with nothing
+    /// fixable stops offering a repair button. Runs only where results are shown (PlanChecks stays fast for the repair loop itself).
+    /// </summary>
+    public static List<QaResult> Assess(QaContext ctx, List<QaResult> results, bool llm)
     {
-        if ((next.FirstOrDefault(q => q.CheckId == pr.CheckId)?.Items ?? []).Any(i => i.Target == pr.Item.Target))
-            return "修正しても指摘が消えないため採用しませんでした";
+        var plan = ctx.Plan;
+        Prep? prep = null; Dictionary<string, HashSet<string>>? flags = null;
+        var caption = plan.Telops.Where(t => t.Type == TelopType.Caption).Select(t => t.Id).ToHashSet();
+        // H-10/H-11 have few findings: their rule is checked with the full re-check the repair applies (it may make another check worse)
+        var qctx = ctx with { Approval = null };
+        List<QaResult>? current = null;
+        bool Accepted(Proposal? pr)
+        {
+            if (pr == null || pr.CheckId != "H-10" && !CaptionsPreserved(plan, pr.Plan)) return false;
+            current ??= QaEngine.PlanChecks(qctx);
+            return Regression(current, plan, QaEngine.PlanChecks(qctx with { Plan = pr.Plan }), pr.Plan, pr) == null;
+        }
+        string? Mark(string check, QaItem i)
+        {
+            bool text = i.Kind is "telop" or "insert" && !caption.Contains(i.Target);
+            switch (check)
+            {
+                case "H-10": return Accepted(MaskProposal(plan, ctx, i)) ? "rule" : null;
+                case "H-11": return Accepted(BindProposal(plan, ctx, i)) ? "rule" : text && llm ? "ai" : null;
+                case "H-07" or "S-09": return text && llm ? "ai" : null;
+                case "S-01" or "S-02" or "S-08" when caption.Contains(i.Target):
+                    prep ??= new Prep(plan, ctx); flags ??= Flags(plan, prep);
+                    return RuleProposals(check, plan, ctx, i, prep, flags).Any() ? "rule" : null;
+                case "S-02": return text && llm ? "ai" : null;
+                default: return null;
+            }
+        }
+        var res = new List<QaResult>(results.Count);
+        foreach (var q in results)
+        {
+            if (q.Advice is not { } a || q.Items is not { Count: > 0 } items || !QaAdvisor.IsRepairable(q.CheckId)) { res.Add(q); continue; }
+            var marked = items.Select(i =>
+            {
+                var m = Mark(q.CheckId, i);
+                string? note = null;
+                if (m == null && i.Kind == "telop" && caption.Contains(i.Target) && q.CheckId is "S-01" or "S-02" or "S-08")
+                {
+                    prep ??= new Prep(plan, ctx);
+                    note = Unfixable(q.CheckId, plan, ctx, prep, i.Target);
+                }
+                else if (m == null && q.CheckId is "H-07" or "H-11" or "S-02" or "S-09" && !llm && i.Kind is "telop" or "insert" && !caption.Contains(i.Target))
+                    note = "LLM が設定されていないため自動では直せません";
+                return i with { Repair = m, Note = note };
+            }).ToList();
+            int fixable = marked.Count(i => i.Repair != null);
+            var reasons = marked.Where(i => i.Repair == null && i.Note != null).GroupBy(i => Category(i.Note!)).OrderByDescending(g => g.Count())
+                .Select(g => $"{g.Count()} 件: {g.Key}").ToList();
+            var remaining = fixable == marked.Count ? null
+                : $"自動で直せない {marked.Count - fixable} 件は警告のまま残ります" + (reasons.Count > 0 ? $"（{string.Join(" / ", reasons)}）" : "");
+            var repair = fixable == 0 ? a.Repair == "manual" ? "manual" : "none"
+                : a.Repair == "ai" && !marked.Any(i => i.Repair == "ai") ? "rule" : a.Repair;
+            var advice = a with { Fixable = fixable, Remaining = remaining, Repair = repair };
+            res.Add(q with { Items = marked, Advice = advice });
+        }
+        return res;
+    }
+
+    // the reason without the per-caption numbers, to group findings
+    static string Category(string note)
+    {
+        int k = note.IndexOf('：');
+        return k > 0 ? note[..k] : note;
+    }
+
+    /// <summary>Why no rule fixes this caption finding. For S-01 the bound is computed from the words: even shown from <see cref="LeadIn"/> before
+    /// its first word to <see cref="TelopBuilder.CaptionHoldMax"/> after its last (never over the neighbours' words), is it still too fast?</summary>
+    static string Unfixable(string check, EditPlan plan, QaContext ctx, Prep prep, string id)
+    {
+        var limits = $"1 行 {prep.Checks.LineChars} 字・毎秒 {ctx.Preset.Telop.Caption.MaxCps} 字";
+        if (check == "S-02") return $"話す速さか言葉の切れ目のため、区切り直すと別の字幕が基準を超えます：基準 {limits}";
+        if (check == "S-08") return $"前の字幕へ移す・区切り直す・結合のどれでも、ほかの字幕が基準を超えるか話者・カットが変わります：基準 {limits}";
+        var caps = Caps(plan);
+        int i = caps.FindIndex(t => t.Id == id);
+        if (i < 0 || prep.Span(caps[i]) is not { } s) return $"表示時間の延長や、前後の字幕への付け替え・結合では基準に収まりません：基準 {limits}";
+        double w = JapaneseText.DisplayWidth(caps[i].Text), max = ctx.Preset.Telop.Caption.MaxCps;
+        double lo = Math.Max(0, s.First - LeadIn), hi = Math.Min(plan.Duration, s.Last + TelopBuilder.CaptionHoldMax);
+        if (i > 0 && prep.Span(caps[i - 1]) is { } a) lo = Math.Max(lo, a.Last + Gap);
+        if (i + 1 < caps.Count && prep.Span(caps[i + 1]) is { } b) hi = Math.Min(hi, b.First - Gap);
+        double spoken = w / Math.Max(0.05, s.Last - s.First), best = w / Math.Max(0.05, hi - lo);
+        return best > max + 0.01
+            ? $"話す速さが基準を超えています：発話は毎秒 {spoken:F1} 字、前後の空き時間まで表示しても毎秒 {best:F1} 字（基準 {max} 字）"
+            : $"前後の字幕も速く、表示を延ばすと隣の字幕が基準を超えます：結合や付け替えでも収まりません（基準 {limits}）";
+    }
+
+    /// <summary>S-01/S-02/S-08 are judged by the spoken words they flag, not by telop ids: a split or a merge renames captions, yet only showing
+    /// more words too fast / too wide / badly broken is a regression.</summary>
+    static readonly string[] WordChecks = ["S-01", "S-02", "S-08"];
+
+    static List<Telop> Caps(EditPlan p) => p.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
+    static IEnumerable<string> Keys(Telop t) => t.SourceWordIds.Count > 0 ? t.SourceWordIds : ["#" + t.Id];
+    static HashSet<string> TargetKeys(EditPlan plan, string target) =>
+        plan.Telops.FirstOrDefault(t => t.Id == target) is { Type: TelopType.Caption } t ? Keys(t).ToHashSet() : ["#" + target];
+
+    static HashSet<string> FlaggedKeys(List<QaResult> res, EditPlan plan, string check)
+    {
+        var set = new HashSet<string>();
+        foreach (var i in res.FirstOrDefault(q => q.CheckId == check)?.Items ?? []) set.UnionWith(TargetKeys(plan, i.Target));
+        return set;
+    }
+
+    /// <summary>Null when <paramref name="next"/> clears the proposal's finding and nothing else gets worse.</summary>
+    static string? Regression(List<QaResult> prev, EditPlan prevPlan, List<QaResult> next, EditPlan nextPlan, Proposal pr)
+    {
+        bool stays = WordChecks.Contains(pr.CheckId)
+            ? FlaggedKeys(next, nextPlan, pr.CheckId).Overlaps(TargetKeys(prevPlan, pr.Item.Target))
+            : (next.FirstOrDefault(q => q.CheckId == pr.CheckId)?.Items ?? []).Any(i => i.Target == pr.Item.Target);
+        if (stays) return "修正しても指摘が消えないため採用しませんでした";
         var worse = new List<string>();
         foreach (var n in next)
         {
             var p = prev.FirstOrDefault(q => q.CheckId == n.CheckId);
-            var old = (p?.Items ?? []).Select(i => i.Target).ToHashSet();
-            var added = (n.Items ?? []).Where(i => !old.Contains(i.Target)).ToList();
-            bool exempt = n.CheckId == "H-08" && pr.NeedsApproval && added.All(i => i.Target == pr.Item.Target);
-            if (exempt) continue;
-            if (Rank(n.Status) > Rank(p?.Status ?? QaStatus.Pass) || added.Count > 0) worse.Add(n.CheckId);
+            bool added;
+            if (WordChecks.Contains(n.CheckId))
+            {
+                var old = FlaggedKeys(prev, prevPlan, n.CheckId);
+                added = FlaggedKeys(next, nextPlan, n.CheckId).Any(k => !old.Contains(k));
+            }
+            else
+            {
+                var old = (p?.Items ?? []).Select(i => i.Target).ToHashSet();
+                var add = (n.Items ?? []).Where(i => !old.Contains(i.Target)).ToList();
+                if (n.CheckId == "H-08" && pr.NeedsApproval && add.All(i => i.Target == pr.Item.Target)) continue;
+                added = add.Count > 0;
+            }
+            if (Rank(n.Status) > Rank(p?.Status ?? QaStatus.Pass) || added) worse.Add(n.CheckId);
         }
         return worse.Count == 0 ? null : $"修正すると {string.Join("・", worse)} の指摘が増えるため採用しませんでした";
+    }
+
+    /// <summary>Precomputed per timeline (repairs never change it).</summary>
+    sealed class Prep
+    {
+        public readonly List<TelopBuilder.Mapped> MappedList;
+        public readonly Dictionary<string, TelopBuilder.Mapped> Mapped;
+        public readonly Dictionary<string, int> WordIndex = [];
+        public readonly List<double> Cuts = [];
+        public readonly CaptionChecks Checks;
+
+        public Prep(EditPlan plan, QaContext ctx)
+        {
+            MappedList = TelopBuilder.MapWords(plan.Timeline, ctx.Transcript);
+            Mapped = MappedList.GroupBy(m => m.Word.Id).ToDictionary(g => g.Key, g => g.First());
+            for (int k = 0; k < ctx.Transcript.Words.Count; k++) WordIndex.TryAdd(ctx.Transcript.Words[k].Id, k);
+            double acc = 0;
+            foreach (var c in plan.Timeline) { acc += c.Length; Cuts.Add(acc); }
+            Checks = new CaptionChecks(ctx.Preset, plan.Canvas.Width, ctx.Transcript);
+        }
+
+        /// <summary>Output time of the caption's first and last recognised word.</summary>
+        public (double First, double Last)? Span(Telop x)
+        {
+            double first = double.MaxValue, last = double.MinValue;
+            foreach (var id in x.SourceWordIds)
+                if (Mapped.TryGetValue(id, out var m)) { first = Math.Min(first, m.Start); last = Math.Max(last, m.End); }
+            return first <= last ? (first, last) : null;
+        }
+    }
+
+    // a caption can only start with a particle of a caption that is still on screen, a few captions back at most
+    static IEnumerable<Telop> Earlier(List<Telop> caps, int i) => caps.Skip(Math.Max(0, i - 4)).Take(i - Math.Max(0, i - 4));
+
+    /// <summary>Spoken words (or #id of a caption without words) flagged by S-01/S-02/S-08 in <paramref name="plan"/>.</summary>
+    static Dictionary<string, HashSet<string>> Flags(EditPlan plan, Prep prep)
+    {
+        var caps = Caps(plan);
+        var res = WordChecks.ToDictionary(c => c, _ => new HashSet<string>());
+        for (int i = 0; i < caps.Count; i++)
+            foreach (var c in WordChecks)
+                if (prep.Checks.Of(c, caps[i], Earlier(caps, i)) != null) res[c].UnionWith(Keys(caps[i]));
+        return res;
+    }
+
+    static bool Same(Telop a, Telop b) => a.Start == b.Start && a.End == b.End && a.Text == b.Text && a.SourceWordIds.SequenceEqual(b.SourceWordIds);
+
+    /// <summary>The word-level regression test of <see cref="Regression"/>, run only on the captions a candidate touches (and the one after each,
+    /// whose 「先頭が」 depends on it): the target's words leave <paramref name="check"/> and no caption check flags a word it did not flag before.</summary>
+    static bool LocalOk(EditPlan before, EditPlan after, Dictionary<string, HashSet<string>> flags, string check, string targetId, Prep prep)
+    {
+        var old = new Dictionary<string, Telop>();
+        foreach (var t in before.Telops) if (t.Enabled && t.Type == TelopType.Caption) old.TryAdd(t.Id, t);
+        var targetKeys = TargetKeys(before, targetId);
+        var caps = Caps(after);
+        var window = new SortedSet<int>();
+        for (int i = 0; i < caps.Count; i++)
+        {
+            var x = caps[i];
+            if (!old.TryGetValue(x.Id, out var o) || !Same(o, x) || Keys(x).Any(targetKeys.Contains))
+            {
+                window.Add(i);
+                if (i + 1 < caps.Count) window.Add(i + 1);
+            }
+        }
+        foreach (var i in window)
+        {
+            var keys = Keys(caps[i]).ToList();
+            foreach (var c in WordChecks)
+            {
+                if (prep.Checks.Of(c, caps[i], Earlier(caps, i)) == null) continue;
+                if (c == check && keys.Any(targetKeys.Contains)) return false;
+                if (!keys.All(flags[c].Contains)) return false;
+            }
+        }
+        return true;
     }
 
     static EditPlan SetTelop(EditPlan plan, string id, Func<Telop, Telop> f) => plan with { Telops = plan.Telops.Select(t => t.Id == id ? f(t) : t).ToList() };
@@ -215,29 +410,23 @@ public static class QaRepair
     }
 
     /// <summary>S-08 「先頭が「は」」: move the caption's leading particles/auxiliaries to the end of the previous caption, with their words and time.</summary>
-    static Proposal? KinsokuProposal(EditPlan plan, QaContext ctx, QaItem item)
+    static Proposal? KinsokuProposal(EditPlan plan, QaContext ctx, QaItem item, Prep prep)
     {
         if (!item.Detail.StartsWith("先頭が", StringComparison.Ordinal)) return null;
         var caps = plan.Telops.Where(x => x.Enabled && x.Type == TelopType.Caption).ToList();
         if (caps.FirstOrDefault(x => x.Id == item.Target) is not { } t) return null;
         var prev = caps.Where(o => o.End >= t.Start - 0.05 && o.Start < t.Start).OrderByDescending(o => o.Start).FirstOrDefault();
         if (prev == null || prev.Speaker != t.Speaker) return null;
-        double cut = 0;
-        foreach (var clip in plan.Timeline)
-        {
-            cut += clip.Length;
-            if (cut > prev.Start + 0.05 && cut < t.End - 0.05) return null;
-        }
-        var words = ctx.Transcript.Words.GroupBy(w => w.Id).ToDictionary(g => g.Key, g => g.First());
+        if (prep.Cuts.Any(cut => cut > prev.Start + 0.05 && cut < t.End - 0.05)) return null;
+        var words = ctx.Transcript.Words;
         int n = 0; var prefix = "";
-        while (n < t.SourceWordIds.Count - 1 && words.TryGetValue(t.SourceWordIds[n], out var w) && !JapaneseText.IsPunct(w.Text) && !JapaneseText.CanStartLine(w.Text)) { prefix += w.Text; n++; }
+        while (n < t.SourceWordIds.Count - 1 && prep.WordIndex.TryGetValue(t.SourceWordIds[n], out var wi) && words[wi] is var w && !JapaneseText.IsPunct(w.Text) && !JapaneseText.CanStartLine(w.Text)) { prefix += w.Text; n++; }
         if (n == 0 || !t.Text.StartsWith(prefix, StringComparison.Ordinal)) return null;
         var rest = t.Text[prefix.Length..].TrimStart();
         var joined = prev.Text + prefix;
         if (rest.Length == 0 || joined.Length > PlanEditor.MaxTelopLength) return null;
-        var mapped = TelopBuilder.MapWords(plan.Timeline, ctx.Transcript);
-        var lastMoved = mapped.FirstOrDefault(m => m.Word.Id == t.SourceWordIds[n - 1]);
-        var nextWord = mapped.FirstOrDefault(m => m.Word.Id == t.SourceWordIds[n]);
+        var lastMoved = prep.Mapped.GetValueOrDefault(t.SourceWordIds[n - 1]);
+        var nextWord = prep.Mapped.GetValueOrDefault(t.SourceWordIds[n]);
         if (lastMoved == null) return null;
         double start = Math.Round(Math.Max(t.Start, nextWord?.Start ?? lastMoved.End), 3);
         if (start > t.End - 0.3) return null;
@@ -249,41 +438,41 @@ public static class QaRepair
 
     static IEnumerable<Proposal> One(Proposal? p) => p == null ? [] : [p];
 
-    /// <summary>Rule candidates for one finding, least invasive first. Captions keep the speaker's exact words: only time, grouping and word boundaries move.</summary>
-    static IEnumerable<Proposal> RuleProposals(string check, EditPlan plan, QaContext ctx, QaItem item) => check switch
+    /// <summary>Rule candidates for one finding, least invasive first. Captions keep the speaker's exact words: only time, grouping and word boundaries move.
+    /// Caption candidates must pass <see cref="LocalOk"/> (the cheap form of the word-level re-check) before the full re-check sees them.</summary>
+    static IEnumerable<Proposal> RuleProposals(string check, EditPlan plan, QaContext ctx, QaItem item, Prep prep, Dictionary<string, HashSet<string>> flags)
     {
-        "H-10" => One(MaskProposal(plan, ctx, item)),
-        "H-11" => One(BindProposal(plan, ctx, item)),
-        "S-08" => One(KinsokuProposal(plan, ctx, item)).Concat(Resegment(plan, ctx, item, check)),
-        "S-01" => One(TimingProposal(plan, ctx, item)).Concat(Resegment(plan, ctx, item, check)),
-        "S-02" => Resegment(plan, ctx, item, check),
-        _ => [],
-    };
+        var all = check switch
+        {
+            "H-10" => One(MaskProposal(plan, ctx, item)),
+            "H-11" => One(BindProposal(plan, ctx, item)),
+            "S-08" => One(KinsokuProposal(plan, ctx, item, prep)).Concat(Resegment(plan, ctx, item, check, prep)),
+            "S-01" => One(TimingProposal(plan, ctx, item, prep)).Concat(Resegment(plan, ctx, item, check, prep)),
+            "S-02" => Resegment(plan, ctx, item, check, prep),
+            _ => [],
+        };
+        return WordChecks.Contains(check) ? all.Where(pr => LocalOk(plan, pr.Plan, flags, check, item.Target, prep)) : all;
+    }
 
     /// <summary>S-01 by timing, before touching words: show the caption longer, into the free time around it
     /// (≤ <see cref="TelopBuilder.CaptionHoldMax"/> after its last word, ≤ <see cref="LeadIn"/> before its first, 2-frame gap to the neighbouring captions).
     /// The previous caption gives up its hold after its last word when it can still be read in the time left.</summary>
-    static Proposal? TimingProposal(EditPlan plan, QaContext ctx, QaItem item)
+    static Proposal? TimingProposal(EditPlan plan, QaContext ctx, QaItem item, Prep prep)
     {
         if (plan.Telops.FirstOrDefault(x => x.Id == item.Target) is not { Enabled: true, Type: TelopType.Caption } t) return null;
-        if (Stretch(plan, ctx, t.Id, TelopBuilder.MapWords(plan.Timeline, ctx.Transcript)) is not { } s) return null;
+        if (Stretch(plan, ctx, t.Id, prep) is not { } s) return null;
         return new("S-01", item, "rule", s.Plan, $"表示 {t.End - t.Start:F2} 秒", $"表示 {s.End - s.Start:F2} 秒{s.Note}", false);
     }
 
     /// <summary>The caption <paramref name="id"/> shown long enough to read, within the free time around it; null when it already is or cannot be.</summary>
-    static (EditPlan Plan, double Start, double End, string Note)? Stretch(EditPlan plan, QaContext ctx, string id, List<TelopBuilder.Mapped> mapped)
+    static (EditPlan Plan, double Start, double End, string Note)? Stretch(EditPlan plan, QaContext ctx, string id, Prep prep)
     {
         var caps = plan.Telops.Where(x => x.Enabled && x.Type == TelopType.Caption).ToList();
         if (caps.FirstOrDefault(x => x.Id == id) is not { } t) return null;
         double cps = ctx.Preset.Telop.Caption.MaxCps;
         double need = JapaneseText.DisplayWidth(t.Text) / cps + 0.02;
         if (t.End - t.Start >= need) return null;
-        (double First, double Last) Span(Telop x)
-        {
-            var ids = x.SourceWordIds.ToHashSet();
-            var own = mapped.Where(m => ids.Contains(m.Word.Id)).ToList();
-            return own.Count > 0 ? (own.Min(m => m.Start), own.Max(m => m.End)) : (x.Start, x.End);
-        }
+        (double First, double Last) Span(Telop x) => prep.Span(x) ?? (x.Start, x.End);
         var (first, last) = Span(t);
         double nextStart = caps.Where(o => o.Id != t.Id && o.Start >= t.End - 1e-3).Select(o => o.Start).DefaultIfEmpty(double.MaxValue).Min();
         var prev = caps.Where(o => o.Id != t.Id && o.End <= t.Start + 1e-3).OrderByDescending(o => o.End).FirstOrDefault();
@@ -317,30 +506,25 @@ public static class QaRepair
     /// flickering 「はい」), or move words across the boundary (「…ですね｜で」, an over-long line handing its tail to the next caption).
     /// Never across a speaker change, a cut, or a pause longer than <see cref="MaxJoinGap"/>; the re-check decides what is kept.
     /// </summary>
-    static IEnumerable<Proposal> Resegment(EditPlan plan, QaContext ctx, QaItem item, string check)
+    static IEnumerable<Proposal> Resegment(EditPlan plan, QaContext ctx, QaItem item, string check, Prep prep)
     {
         var caps = plan.Telops.Where(x => x.Enabled && x.Type == TelopType.Caption).OrderBy(x => x.Start).ToList();
         int i = caps.FindIndex(x => x.Id == item.Target);
         if (i < 0) yield break;
         var t = caps[i];
-        var cuts = new List<double>(); double acc = 0;
-        foreach (var c in plan.Timeline) { acc += c.Length; cuts.Add(acc); }
-        bool Joinable(Telop a, Telop b) => b.Start - a.End <= MaxJoinGap && a.Speaker == b.Speaker && !cuts.Any(c => c > a.Start + 0.05 && c < b.End - 0.05);
+        bool Joinable(Telop a, Telop b) => b.Start - a.End <= MaxJoinGap && a.Speaker == b.Speaker && !prep.Cuts.Any(c => c > a.Start + 0.05 && c < b.End - 0.05);
         var prev = i > 0 && Joinable(caps[i - 1], t) ? caps[i - 1] : null;
         var next = i + 1 < caps.Count && Joinable(t, caps[i + 1]) ? caps[i + 1] : null;
         var p = ctx.Preset.Telop.Caption;
         double maxWidth = AssWriter.CaptionLineChars(ctx.Preset, plan.Canvas.Width) * Math.Max(1, p.MaxLines);
-        // cheap pre-check before the full re-check: every caption the candidate produces is readable and fits
-        bool Fits(params Telop[] xs) => xs.All(x => JapaneseText.DisplayWidth(x.Text) <= maxWidth && x.End - x.Start >= 0.2
-            && JapaneseText.DisplayWidth(x.Text) / (x.End - x.Start) <= p.MaxCps + 0.01);
-        var wordIndex = new Dictionary<string, int>();
-        for (int k = 0; k < ctx.Transcript.Words.Count; k++) wordIndex.TryAdd(ctx.Transcript.Words[k].Id, k);
-        var mappedList = TelopBuilder.MapWords(plan.Timeline, ctx.Transcript);
-        var mapped = mappedList.GroupBy(m => m.Word.Id).ToDictionary(g => g.Key, g => g.First());
+        // cheap pre-check: every caption the candidate produces fits on screen and stays up long enough to see (speed is judged by LocalOk)
+        bool Fits(params Telop[] xs) => xs.All(x => JapaneseText.DisplayWidth(x.Text) <= maxWidth && x.End - x.Start >= 0.2);
+        var wordIndex = prep.WordIndex;
+        var mapped = prep.Mapped;
         // the regrouped captions then take the free time around them (as the timing rule does); the pre-check runs on the result
         EditPlan? Settle(EditPlan p2, params string[] ids)
         {
-            foreach (var id in ids) if (Stretch(p2, ctx, id, mappedList) is { } s) p2 = s.Plan;
+            foreach (var id in ids) if (Stretch(p2, ctx, id, prep) is { } s) p2 = s.Plan;
             return Fits([.. p2.Telops.Where(x => ids.Contains(x.Id))]) ? p2 : null;
         }
 
@@ -390,11 +574,49 @@ public static class QaRepair
             }
         }
 
+        // FR-TEL-02 分割: an over-long caption becomes two at its best word boundary (a pause or a clause break first, then the more even halves);
+        // the first keeps the id, the second gets a new one and starts where its first word is spoken
+        IEnumerable<Proposal> Splits(Telop x)
+        {
+            if (Words(x) is not { Count: >= 2 } ws || x.End - x.Start < 0.4) yield break;
+            var ids = plan.Telops.Select(o => o.Id).ToHashSet();
+            var newId = x.Id + "b";
+            for (int n = 2; ids.Contains(newId); n++) newId = $"{x.Id}b{n}";
+            var options = Enumerable.Range(1, ws.Count - 1)
+                .Where(k => !JapaneseText.IsPunct(ws[k].Word.Text))
+                .Select(k => (k, cost: JapaneseText.TokenBreakCost(ws[k - 1].Word.Text, ws[k].Word.Text)))
+                .Where(o => o.cost < JapaneseText.Detached)
+                .Select(o =>
+                {
+                    var ta = JapaneseText.NormalizeTelop(string.Concat(ws.Take(o.k).Select(w => w.Word.Text)));
+                    var tb = JapaneseText.NormalizeTelop(string.Concat(ws.Skip(o.k).Select(w => w.Word.Text)));
+                    bool pause = ws[o.k].Start - ws[o.k - 1].End >= 0.25;
+                    double score = (pause ? 0 : o.cost) + Math.Abs(JapaneseText.DisplayWidth(ta) - JapaneseText.DisplayWidth(tb)) * 0.5;
+                    return (o.k, ta, tb, score);
+                })
+                .Where(o => o.ta.Length > 0 && o.tb.Length > 0 && JapaneseText.DisplayWidth(o.ta) <= maxWidth && JapaneseText.DisplayWidth(o.tb) <= maxWidth)
+                .OrderBy(o => o.score).Take(4);
+            foreach (var (k, ta, tb, _) in options)
+            {
+                double boundary = Math.Round(Math.Clamp(ws[k].Start, x.Start + 0.2, x.End - 0.2), 3);
+                var a = x with { Text = ta, End = boundary, SourceWordIds = ws.Take(k).Select(w => w.Word.Id).ToList() };
+                var b = x with { Id = newId, Text = tb, Start = boundary, SourceWordIds = ws.Skip(k).Select(w => w.Word.Id).ToList() };
+                var telops = plan.Telops.SelectMany(o => o.Id == x.Id ? new[] { a, b } : [o]).ToList();
+                if (Settle(plan with { Telops = telops }, a.Id, b.Id) is not { } p2) continue;
+                yield return new(check, item, "rule", p2, x.Text, $"{ta}｜{tb}", false);
+            }
+        }
+
         var merges = new[] { prev != null ? Merge(prev, t) : null, next != null ? Merge(t, next) : null };
         var moves = (prev != null ? Moves(prev, t) : []).Concat(next != null ? Moves(t, next) : []);
         var last = prev != null && next != null ? Merge(prev, t, next) : null;
-        // a flickering caption is best joined; an over-long or badly-started one is best re-split
-        var ordered = check == "S-01" ? merges.Concat(moves).Append(last) : moves.Concat(merges).Append(last);
+        // a flickering caption is best joined; an over-long one is best re-split; a badly-started one takes its head from / gives it to a neighbour
+        IEnumerable<Proposal?> ordered = check switch
+        {
+            "S-01" => merges.Concat(moves).Append(last),
+            "S-02" => moves.Concat(Splits(t)).Concat(merges).Append(last),
+            _ => moves.Concat(merges).Append(last).Concat(Splits(t)),
+        };
         foreach (var pr in ordered) if (pr != null) yield return pr;
     }
 

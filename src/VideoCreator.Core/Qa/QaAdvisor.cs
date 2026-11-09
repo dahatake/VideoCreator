@@ -2,7 +2,8 @@ using VideoCreator.Models;
 
 namespace VideoCreator.Qa;
 
-/// <summary>Recommended fix for each QA check. Repair "rule"/"ai" checks can be fixed by QaRepair (verified by re-running QaEngine.PlanChecks); "manual" needs a person.</summary>
+/// <summary>Recommended fix for each QA check. Repair "rule"/"ai" checks can be fixed by QaRepair (verified by re-running QaEngine.PlanChecks); "manual" needs a person;
+/// "none" (set by QaRepair.Assess) = a repairable check none of whose findings can be fixed without changing the spoken words.</summary>
 public static class QaAdvisor
 {
     static readonly Dictionary<string, (string Recommendation, string Repair)> Table = new()
@@ -19,13 +20,13 @@ public static class QaAdvisor
         ["H-10"] = ("テロップ・カードに残った伏せ語を「●」で伏せます。音声が残っている場合は伏せ字を設定し直して作り直してください。", "rule"),
         ["H-11"] = ("区間内の発話から根拠の単語を結び付けます。結び付けられない場合は、根拠発話どおりの文言に書き換えます。", "ai"),
         ["S-01"] = ("字幕は話した言葉どおりに保持します。前後の空き時間へ表示を延ばし（発話の終わりから 0.5 秒・始まりの 0.25 秒前まで）、足りなければ隣の字幕と結合するか単語を付け替えます。語句は省略せず、解消できない速度の警告は残します。", "rule"),
-        ["S-02"] = ("字幕は語句を省略せず、はみ出した単語を隣の字幕へ付け替えるなど区切りを調整します。解消できない警告は残します。強調テロップは見た目を優先し、根拠発話に沿って AI が短くします（要承認）。", "ai"),
+        ["S-02"] = ("字幕は語句を省略せず、言葉の切れ目で 2 つに分けるか、はみ出した単語を隣の字幕へ付け替えて区切りを調整します。解消できない警告は残します。強調テロップは見た目を優先し、根拠発話に沿って AI が短くします（要承認）。", "ai"),
         ["S-03"] = ("見どころを冒頭に先出しするか、オープニングを無効にしてください。", "manual"),
         ["S-04"] = ("短すぎるショットは「区間の調整」で前後とつなげるか、条件を変えて作り直してください。", "manual"),
         ["S-05"] = ("顔に重なるテロップを短くするか無効にしてください。", "manual"),
         ["S-06"] = ("黒画面・フリーズの箇所を確認し、必要なら区間を調整してください。", "manual"),
         ["S-07"] = ("「区間の調整」で冒頭を指示語（これ・それ など）の前の文脈から始めてください。", "manual"),
-        ["S-08"] = ("字幕の先頭にある助詞・助動詞を前の字幕の末尾へ移します。入りきらないときは字幕の区切りを付け替えるか、前の字幕と結合します。", "rule"),
+        ["S-08"] = ("字幕の先頭にある助詞・助動詞を前の字幕の末尾へ移します。入りきらないときや行頭に置けない文字で始まるときは、字幕の区切りを付け替えるか、前後の字幕と結合します。", "rule"),
         ["S-09"] = ("根拠発話の否定（〜ない など）をテロップに戻します。", "ai"),
         ["S-11"] = ("1 本あたりの長さを短くして作り直してください。", "manual"),
         ["S-12"] = ("オープニング・クロージングには出力と同じ解像度（1080×1920）以上の素材を使ってください。", "manual"),
@@ -43,8 +44,6 @@ public static class QaAdvisor
         if (q.CheckId == "H-10" && q.Items is { Count: > 0 } items && items.All(i => i.Kind == "audio")) repair = "manual";
         if (q.CheckId == "S-02" && q.Items is { Count: > 0 } wide && plan != null
             && wide.All(i => plan.Telops.Any(t => t.Id == i.Target && t.Type == TelopType.Caption))) repair = "rule";
-        // S-08 line-wrap violations inside one caption have no safe automatic fix
-        if (q.CheckId == "S-08" && q.Items is { Count: > 0 } k && k.All(i => !i.Detail.StartsWith("先頭が", StringComparison.Ordinal))) repair = "manual";
         // H-08 only fails for a stale approval when nothing is unapproved
         var rec = q.CheckId == "H-08" && q.Items is { Count: 0 } ? "編集後に候補の承認が失効しています。内容を確認して承認し直してください。" : a.Recommendation;
         return q with { Advice = new QaAdvice(rec, repair) };

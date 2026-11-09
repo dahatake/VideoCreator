@@ -201,7 +201,8 @@ ul.qa-issues, ul.qa-items, ul.qa-changes { list-style: none; margin: 0; padding:
 .repair-tag { display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px; font-weight: 600; }
 .repair-tag.rule { background: #e0f2f1; color: #00594f; }
 .repair-tag.ai { background: #f1f0fe; color: #3b2d9e; }
-.repair-tag.manual { background: #f0f0f0; color: #424242; }
+.repair-tag.manual, .repair-tag.none { background: #f0f0f0; color: #424242; }
+.qa-note { display: block; }
 .qa-items li, .qa-changes li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: var(--s8); padding: 2px var(--s4); border-radius: var(--borderRadiusMedium, 4px); overflow-wrap: anywhere; }
 .qa-items li.now { background: var(--colorBrandBackground2, #ebf3fc); }
 .qa-target { font-weight: 600; }
