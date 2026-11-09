@@ -14,7 +14,7 @@ public sealed partial class SignalExtractor(FFmpeg ff)
     {
         var shotsTask = DetectShotsAsync(proxyVideo, ct, progress, duration);
         var loud = audio != null ? await LoudnessSeriesAsync(audio, ct) : [];
-        var shots = await shotsTask;
+        var (shots, blacks) = await shotsTask;
         var voiced = loud.Where(d => d > -60).OrderBy(d => d).ToList();
         var median = voiced.Count > 0 ? voiced[voiced.Count / 2] : -60;
         return new SignalSet
@@ -24,14 +24,19 @@ public sealed partial class SignalExtractor(FFmpeg ff)
             Silences = FindSilences(loud, minSilence),
             Events = FindPeaks(loud, median),
             MedianLoudness = Math.Round(median, 1),
+            Blacks = blacks,
         };
     }
 
-    public async Task<List<double>> DetectShotsAsync(string video, CancellationToken ct, IProgress<double>? progress = null, double duration = 0)
+    /// <summary>Hard cuts (scdet) and black frames (blackdetect: fade-outs and dip-to-black transitions, which scdet misses) in one decode.</summary>
+    public async Task<(List<double> Shots, List<Interval> Blacks)> DetectShotsAsync(string video, CancellationToken ct, IProgress<double>? progress = null, double duration = 0)
     {
-        var r = await ff.RunFfmpegAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0", "-f", "null", "-"], ct, progress: progress, duration: duration);
-        return ScdetRegex().Matches(r.StdErr).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).Distinct().OrderBy(x => x).ToList();
+        var r = await ff.RunFfmpegAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0,blackdetect=d=0.2:pix_th=0.10", "-f", "null", "-"], ct, progress: progress, duration: duration);
+        return (ScdetRegex().Matches(r.StdErr).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).Distinct().OrderBy(x => x).ToList(), ParseBlacks(r.StdErr));
     }
+
+    public static List<Interval> ParseBlacks(string stderr) =>
+        BlackRegex().Matches(stderr).Select(m => new Interval(double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture))).OrderBy(b => b.T0).ToList();
 
     public async Task<List<double>> LoudnessSeriesAsync(string audio, CancellationToken ct)
     {
@@ -95,4 +100,7 @@ public sealed partial class SignalExtractor(FFmpeg ff)
 
     [GeneratedRegex(@"lavfi\.scd\.time:\s*([\d.]+)")]
     private static partial Regex ScdetRegex();
+
+    [GeneratedRegex(@"black_start:\s*([\d.]+)\s+black_end:\s*([\d.]+)")]
+    private static partial Regex BlackRegex();
 }

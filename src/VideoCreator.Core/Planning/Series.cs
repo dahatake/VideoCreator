@@ -10,7 +10,7 @@ using VideoCreator.Signals;
 namespace VideoCreator.Planning;
 
 /// <summary>A topic (chapter) start in the SOURCE transcript, by sentence index. SplitScore -1 = unknown (window edge of a chunked AI call).</summary>
-public sealed record ChapterMark(int Start, string Title, int SplitScore, int Highlight, List<string> Emphasis);
+public sealed record ChapterMark(int Start, string Title, int SplitScore, int Highlight, List<string> Emphasis, bool Major = true);
 
 public sealed record ChapterOutline(string SeriesTitle, List<ChapterMark> Chapters, string Source, int InputChars = 0, int OutputChars = 0);
 
@@ -68,8 +68,37 @@ public static partial class SeriesPlanner
 
     // ---------------- topic boundaries without AI: TextTiling (Hearst 1997) on content-word bigrams ----------------
 
-    static readonly string[] Markers = ["続いて", "続きまして", "次は", "次に", "次の", "さて", "ところで", "最後に", "それでは", "では、", "まず", "改めて", "話は変わ", "本日は", "今日は"];
+    static readonly string[] Markers = ["続いて", "続きまして", "次は", "次に", "次の", "さて", "ところで", "最後に", "それでは", "では、", "まず", "改めて", "話は変わ", "本日は", "今日は",
+        "あともう", "あと、もう", "もう一個", "もう一つ", "ということで", "というわけで"];
     public static bool IsTopicMarker(string sentence) { var t = sentence.TrimStart('　', ' '); return Markers.Any(m => t.StartsWith(m, StringComparison.Ordinal)); }
+    // continuation phrases (「あともう一個」「ということで」) also occur inside a topic: only a weak hint of a scene change
+    static readonly string[] WeakMarkers = ["あともう", "あと、もう", "もう一個", "もう一つ", "ということで", "というわけで"];
+    static bool IsWeakMarker(string sentence) { var t = sentence.TrimStart('　', ' '); return WeakMarkers.Any(m => t.StartsWith(m, StringComparison.Ordinal)); }
+
+    /// <summary>A boundary counts as a scene (subject) change from this strength on; the same bar FallbackOutline uses for a chapter.</summary>
+    public const double SceneThreshold = 0.45;
+    /// <summary>With scene-only cuts a part may be this far from the balanced length (fraction of it), never below <see cref="MinPartSec"/>.</summary>
+    public const double SceneTolerance = 0.7;
+
+    /// <summary>
+    /// Evidence that the SUBJECT changes before sentence i — and nothing else: vocabulary shift (TextTiling depth), announcing phrases, the AI's chapter starts,
+    /// a fade through black. Pauses, finished endings, laughter and cut-away shots say how to cut, not whether this is a scene change, so they are not counted.
+    /// </summary>
+    public static double[] SceneStrength(Transcript tr, double[] depth, ChapterOutline outline, SplitCue[]? cues = null)
+    {
+        var s = tr.Sentences; int n = s.Count;
+        var strength = new double[n + 1];
+        var marks = outline.Chapters.ToDictionary(c => c.Start);
+        // with the AI's reading of the subject, vocabulary alone only counts when it is very strong: the AI's sub-sections (major=false) must not become scenes
+        bool ai = outline.Source == "llm";
+        for (int i = 1; i < n; i++)
+        {
+            double lex = ai ? (depth[i] >= 0.85 ? 0.5 : 0) : depth[i];
+            strength[i] = lex + (IsWeakMarker(s[i].Text) ? 0.25 : IsTopicMarker(s[i].Text) ? 0.6 : 0)
+                + (marks.TryGetValue(i, out var m) ? (!m.Major ? 0.1 : m.SplitScore < 0 ? 0.3 : 0.6) : 0) + (cues != null && cues[i].Fade ? 0.3 : 0);
+        }
+        return strength;
+    }
 
     [GeneratedRegex(@"[\p{IsCJKUnifiedIdeographs}々]+|[ァ-ヴー]{2,}|[A-Za-z][A-Za-z0-9]+")]
     private static partial Regex ContentRun();
@@ -97,35 +126,42 @@ public static partial class SeriesPlanner
         return dot / (na * nb);
     }
 
-    /// <summary>Normalised (0..1) TextTiling depth score for the boundary before each sentence (index 0 and n are 0).</summary>
-    public static double[] Depth(Transcript tr, double windowSec = 45)
+    /// <summary>Normalised (0..1) TextTiling depth score for the boundary before each sentence (index 0 and n are 0). Averaged over several window sizes:
+    /// a short window alone mistakes a few unlucky words for a change of subject; a long one blurs the position.</summary>
+    public static double[] Depth(Transcript tr) => Depth(tr, [30, 60, 90]);
+
+    public static double[] Depth(Transcript tr, double[] windowsSec, bool normalize = true)
     {
         var s = tr.Sentences; int n = s.Count;
         var depth = new double[n + 1];
         if (n < 3) return depth;
         var terms = s.Select(x => Terms(x.Text)).ToList();
-        var sim = new double[n + 1];
-        for (int i = 1; i < n; i++)
+        foreach (var windowSec in windowsSec)
         {
-            var left = new Dictionary<string, int>(); var right = new Dictionary<string, int>();
-            for (int j = i - 1; j >= 0 && (j == i - 1 || s[i].T0 - s[j].T0 <= windowSec); j--) foreach (var (k, v) in terms[j]) left[k] = left.GetValueOrDefault(k) + v;
-            for (int j = i; j < n && (j == i || s[j].T1 - s[i].T0 <= windowSec); j++) foreach (var (k, v) in terms[j]) right[k] = right.GetValueOrDefault(k) + v;
-            sim[i] = Cosine(left, right);
+            var sim = new double[n + 1];
+            for (int i = 1; i < n; i++)
+            {
+                var left = new Dictionary<string, int>(); var right = new Dictionary<string, int>();
+                for (int j = i - 1; j >= 0 && (j == i - 1 || s[i].T0 - s[j].T0 <= windowSec); j--) foreach (var (k, v) in terms[j]) left[k] = left.GetValueOrDefault(k) + v;
+                for (int j = i; j < n && (j == i || s[j].T1 - s[i].T0 <= windowSec); j++) foreach (var (k, v) in terms[j]) right[k] = right.GetValueOrDefault(k) + v;
+                sim[i] = Cosine(left, right);
+            }
+            for (int i = 1; i < n; i++)
+            {
+                double lp = sim[i], rp = sim[i];
+                for (int j = i - 1; j >= 1 && sim[j] >= lp; j--) lp = sim[j];
+                for (int j = i + 1; j < n && sim[j] >= rp; j++) rp = sim[j];
+                depth[i] += (lp - sim[i] + rp - sim[i]) / windowsSec.Length;
+            }
         }
-        for (int i = 1; i < n; i++)
-        {
-            double lp = sim[i], rp = sim[i];
-            for (int j = i - 1; j >= 1 && sim[j] >= lp; j--) lp = sim[j];
-            for (int j = i + 1; j < n && sim[j] >= rp; j++) rp = sim[j];
-            depth[i] = lp - sim[i] + rp - sim[i];
-        }
-        double max = depth.Max();
+        double max = normalize ? depth.Max() : 0;
         if (max > 0) for (int i = 0; i <= n; i++) depth[i] /= max;
         return depth;
     }
 
-    /// <summary>How good a split before sentence i is: lexical shift, pause, topic-change words, speaker change, and the AI's chapter judgement.</summary>
-    public static double[] BoundaryScores(Transcript tr, double[] depth, ChapterOutline outline)
+    /// <summary>How good a split before sentence i is: lexical shift, pause, topic-change words, speaker change, the AI's chapter judgement,
+    /// and (when given) the <see cref="SplitCues"/> — whether the previous part ends on a finished utterance, laughter, shot cuts and fades.</summary>
+    public static double[] BoundaryScores(Transcript tr, double[] depth, ChapterOutline outline, SplitCue[]? cues = null)
     {
         var s = tr.Sentences; int n = s.Count;
         var score = new double[n + 1];
@@ -135,16 +171,17 @@ public static partial class SeriesPlanner
             double gap = Math.Max(0, s[i].T0 - s[i - 1].T1);
             score[i] = depth[i] + 0.5 * Math.Min(1, gap / 1.5) + (IsTopicMarker(s[i].Text) ? 0.6 : 0) + (s[i].Speaker != s[i - 1].Speaker ? 0.1 : 0);
             if (marks.TryGetValue(i, out var m)) score[i] += m.SplitScore < 0 ? 0.2 : 0.4 + 0.12 * m.SplitScore;
+            if (cues != null) score[i] += cues[i].Score;
         }
         return score;
     }
 
     /// <summary>Chapters without AI: the strongest TextTiling/marker boundaries at least <see cref="MinChapterSec"/> apart. Titles are taken from the transcript (grounded by construction).</summary>
-    public static ChapterOutline FallbackOutline(Transcript tr, SignalSet sig)
+    public static ChapterOutline FallbackOutline(Transcript tr, SignalSet sig, double[]? semanticDepth = null)
     {
         var s = tr.Sentences; int n = s.Count;
         if (n == 0) return new ChapterOutline("", [], "text");
-        var depth = Depth(tr);
+        var depth = TopicEmbedding.Blend(Depth(tr), semanticDepth);
         var cand = Enumerable.Range(1, Math.Max(0, n - 1)).Select(i => (i, v: depth[i] + (IsTopicMarker(s[i].Text) ? 0.6 : 0))).Where(x => x.v >= 0.45).OrderByDescending(x => x.v).ToList();
         var starts = new List<(int i, double v)> { (0, 1) };
         foreach (var c in cand)
@@ -197,9 +234,10 @@ public static partial class SeriesPlanner
     public const string OutlineSchema = """
 {"type":"object","additionalProperties":false,"required":["series_title","chapters"],"properties":{
  "series_title":{"type":"string","description":"title of the whole video, max 20 Japanese characters, only facts from the transcript"},
- "chapters":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["start","title","split_score","highlight","emphasis_words"],"properties":{
+ "chapters":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["start","title","major","split_score","highlight","emphasis_words"],"properties":{
   "start":{"type":"integer","description":"line number (#) of the chapter's first line"},
   "title":{"type":"string","description":"chapter headline, max 16 Japanese characters"},
+  "major":{"type":"boolean","description":"true = the subject of the conversation changes here; false = a sub-section inside the same subject"},
   "split_score":{"type":"integer","description":"0-10"},
   "highlight":{"type":"integer","description":"line number of the chapter's most watchable line"},
   "emphasis_words":{"type":"array","items":{"type":"string"},"description":"max 3 phrases copied verbatim"}}}}}}
@@ -207,13 +245,16 @@ public static partial class SeriesPlanner
 
     public static string OutlineSystem(int first) => $"""
 あなたは YouTube / TikTok の長尺動画の構成作家です。行番号付きの書き起こしを、話題のまとまり（チャプター）に分けてください。
+動画の種類は問いません（雑談・対談・インタビュー・解説・バラエティ・日常・趣味・仕事・技術など）。何について話しているか（主題）だけを見て、言葉の専門性には左右されないこと。
 結果は、動画を「前編・後編」のような連続したパートに分ける位置の判断と、章の見出しテロップに使います。
 規則:
 - chapters は時系列順。start はそのチャプターの最初の行の番号（#）。最初のチャプターの start は {first}
 - 1つのチャプターはおおむね {MinChapterSec:0} 秒以上。話題・企画・場面が変わる行で区切る
+- major: 会話の主題（何について話しているか）が変わる行は true。同じ主題の中の小見出し・エピソードの切り替え・話の展開の区切りは false。迷ったら false
 - title は16字以内の見出し。書き起こしの内容だけに基づき、書き起こしにない数字・固有名詞を書かない
-- split_score（0〜10）: その行の直前で動画を別のパートに分けたとき、前のパートが自然に区切れ、かつ視聴者が次のパートを見たくなるか。話題が変わり、次への期待が高まる位置は高く、話やオチの途中で切れてしまう位置は低く
-- highlight: そのチャプターで最も見どころになる1行の番号（冒頭の先出しや次回予告に使う。単体で意味が通る短い発言）
+- split_score（0〜10）: その行の直前で動画を別のパートに分けたとき、前のパートが自然に区切れ、かつ視聴者が次のパートを見たくなるか。話題が変わり、次への期待が高まる位置は高く、話やオチの途中で切れてしまう位置は低く。
+  高くしてよいのは、直前の行が言い切り（「〜です」「〜ました」）や問いかけで話が完結し、かつその行が前の話を受けずに単体で始まる（「それ」「その」「で、」「だから」で始まらない）位置だけ。
+  直前の行が「〜けど」「〜て」「〜で」「これ」「ちょっと」などで途切れている位置、オチ・笑いの前、質問の答えの途中は 0〜2- highlight: そのチャプターで最も見どころになる1行の番号（冒頭の先出しや次回予告に使う。単体で意味が通る短い発言）
 - emphasis_words: 強調テロップにする語句を最大3つ、書き起こしから原文どおりに抜き出す
 - series_title: 動画全体のタイトル（20字以内、書き起こしにある内容のみ）
 """;
@@ -268,10 +309,12 @@ public static partial class SeriesPlanner
         var root = doc.RootElement;
         var s = tr.Sentences;
         var raw = new List<(int start, string title, int score, int hl, List<string> emph)>();
+        var minor = new HashSet<int>();
         foreach (var c in root.GetProperty("chapters").EnumerateArray())
         {
             int st = c.GetProperty("start").GetInt32();
             if (st < first || st > last) continue;
+            if (c.TryGetProperty("major", out var mj) && mj.ValueKind == JsonValueKind.False) minor.Add(st);
             raw.Add((st, c.GetProperty("title").GetString() ?? "", Math.Clamp(c.GetProperty("split_score").GetInt32(), 0, 10), c.GetProperty("highlight").GetInt32(),
                 c.GetProperty("emphasis_words").EnumerateArray().Select(e => e.GetString() ?? "").ToList()));
         }
@@ -290,7 +333,7 @@ public static partial class SeriesPlanner
                 .Distinct().Take(CandidateValidator.MaxEmphasis).ToList();
             // the first chapter of a later window starts at the window edge, not necessarily at a topic change
             int sc = k == 0 && first > 0 ? -1 : score;
-            res.Add(new ChapterMark(a, title, sc, hl >= a && hl <= b ? hl : -1, words));
+            res.Add(new ChapterMark(a, title, sc, hl >= a && hl <= b ? hl : -1, words, !minor.Contains(a)));
         }
         var seriesTitle = Fit(JapaneseText.NormalizeTelop((root.GetProperty("series_title").GetString() ?? "").Trim()), 20);
         return new ChapterOutline(seriesTitle, res, "llm");
@@ -336,17 +379,22 @@ public static partial class SeriesPlanner
     public const double MinPartSec = 60;
     public const int MaxParts = 20;
 
+    /// <summary>Ablation switch for evaluations (spikes/16-split-cues.cs): false = the boundary score without <see cref="SplitCues"/>.</summary>
+    public static bool CuesEnabled { get; set; } = true;
+    /// <summary>Ablation switch for tests: false = the earlier duration-first behaviour (no scene-only tier).</summary>
+    public static bool SceneFirst { get; set; } = true;
+
     /// <summary>The largest part count the material allows (each part ≥ <see cref="MinPartSec"/> of edited video and at least two sentences).</summary>
     public static int MaxPartsFor(double editedSec, int sentences) => Math.Max(0, Math.Min(MaxParts, Math.Min((int)Math.Floor(editedSec / MinPartSec), sentences / 2)));
 
-    public static List<SeriesPart> Split(Transcript tr, SignalSet sig, Preset p, double duration, double targetSec, ChapterOutline outline, List<string> notes) =>
-        Split(tr, sig, p, duration, targetSec, null, outline, notes);
+    public static List<SeriesPart> Split(Transcript tr, SignalSet sig, Preset p, double duration, double targetSec, ChapterOutline outline, List<string> notes, IReadOnlyList<Interval>? laughs = null, double[]? semanticDepth = null) =>
+        Split(tr, sig, p, duration, targetSec, null, outline, notes, laughs, semanticDepth);
 
     /// <summary>
     /// Chooses the part count — exactly <paramref name="requestedParts"/> when the user picked one, otherwise round(edited length / target) —
     /// and the split positions that minimise Σ duration deviation from the balanced length + Σ (−boundary quality). Splits are only ever placed between sentences.
     /// </summary>
-    public static List<SeriesPart> Split(Transcript tr, SignalSet sig, Preset p, double duration, double? targetSec, int? requestedParts, ChapterOutline outline, List<string> notes)
+    public static List<SeriesPart> Split(Transcript tr, SignalSet sig, Preset p, double duration, double? targetSec, int? requestedParts, ChapterOutline outline,     List<string> notes, IReadOnlyList<Interval>? laughs = null, double[]? semanticDepth = null)
     {
         var s = tr.Sentences; int n = s.Count;
         if (n < 4) throw new PlanException("E-SERIES-SHORT", "発話が少なすぎるため、前編・後編に分けられません");
@@ -373,17 +421,31 @@ public static partial class SeriesPlanner
         double Extras(int k) => 4 + (k > 0 ? 5 : 0) + (k < parts - 1 ? 4 : 0);
         double target = (total + Enumerable.Range(0, parts).Sum(Extras)) / parts;
         var labels = Labels(parts);
-        var depth = Depth(tr);
-        var score = BoundaryScores(tr, depth, outline);
+        var depth = TopicEmbedding.Blend(Depth(tr), semanticDepth);
+        var cues = SplitCues.Compute(tr, sig, CuesEnabled ? laughs : null, CuesEnabled ? sig.Blacks : null);
+        var score = BoundaryScores(tr, depth, outline, CuesEnabled ? cues : null);
 
+        // 1) cut only at a change of subject, even when that leaves the parts unequal; 2) only when the material has too few of them, fall back to the
+        // duration-first tiers (which then cut mid-topic, and say so below)
+        var strength = SceneStrength(tr, depth, outline, CuesEnabled ? cues : null);
+        var scene = strength.Select((v, i) => i is > 0 && i < n && v >= SceneThreshold).ToArray();
         List<int>? cuts = null; double usedTol = 0;
-        foreach (var tol in Tolerances)
+        if (SceneFirst && scene.Count(x => x) >= parts - 1)
         {
-            cuts = Dp(n, parts, (a, b, k) => len.Of(a, b) + Extras(k), score, target, tol);
-            if (cuts != null) { usedTol = tol; break; }
+            cuts = Dp(n, parts, (a, b, k) => len.Of(a, b) + Extras(k), score, target, SceneTolerance, scene);
+            if (cuts != null) usedTol = SceneTolerance;
         }
+        if (cuts == null)
+            foreach (var tol in Tolerances)
+            {
+                cuts = Dp(n, parts, (a, b, k) => len.Of(a, b) + Extras(k), score, target, tol, null);
+                if (cuts != null) { usedTol = tol; break; }
+            }
         if (cuts == null) throw new PlanException("E-SERIES-SHORT", "指定に近い長さのパートに分けられませんでした。本数か1本あたりの長さを変えてください");
-        if (usedTol > Tolerances[0]) notes.Add($"話題の切れ目を優先したため、各パートの長さの差が目安（±{Tolerances[0]:P0}）を超えています");
+        var edges = new List<int> { 0 }; edges.AddRange(cuts); edges.Add(n);
+        double spread = Enumerable.Range(0, parts).Max(k => Math.Abs(len.Of(edges[k], edges[k + 1] - 1) + Extras(k) - target) / target);
+        double qaTol = Math.Max(QaTolerance, Math.Ceiling(spread * 20) / 20);
+        if (spread > Tolerances[0]) notes.Add($"話題の切れ目を優先したため、各パートの長さの差が目安（±{Tolerances[0]:P0}）を超えています（最大 {spread:P0}）");
 
         var bounds = new List<int> { 0 }; bounds.AddRange(cuts); bounds.Add(n);
         var marks = outline.Chapters.OrderBy(c => c.Start).ToList();
@@ -404,7 +466,7 @@ public static partial class SeriesPlanner
                 Index = k, Count = parts, Label = labels[k], Labels = labels, SeriesTitle = outline.SeriesTitle,
                 First = a, Last = b, Body = new Interval(0, 0), Teaser = teaser is int t ? (t, t) : null,
                 Chapters = chapters, Emphasis = emphasis, TargetSec = Math.Round(targetSec ?? target, 1), RequestedParts = requestedParts,
-                MinSec = Math.Round(target * (1 - QaTolerance), 1), MaxSec = Math.Round(target * (1 + QaTolerance), 1), EstSec = Math.Round(len.Of(a, b) + Extras(k), 1),
+                MinSec = Math.Round(target * (1 - qaTol), 1), MaxSec = Math.Round(target * (1 + qaTol), 1), EstSec = Math.Round(len.Of(a, b) + Extras(k), 1),
             });
         }
         // bodies: cut inside the pause between the last word of one part and the first word of the next, so every word is in exactly one body
@@ -421,22 +483,24 @@ public static partial class SeriesPlanner
             var sp = specs[k];
             (int, int)? recap = k > 0 ? RecapRange(tr, specs[k - 1].First, specs[k - 1].Last) : null;
             var next = k + 1 < parts ? specs[k + 1].Teaser : null;
-            string boundary = k + 1 < parts ? Describe(tr, depth, outline, bounds[k + 1], labels[k + 1]) : "最後のパート";
+            string boundary = k + 1 < parts ? Describe(tr, depth, outline, cues, bounds[k + 1], labels[k + 1]) : "最後のパート";
             specs[k] = sp with { Recap = recap, Next = next, Boundary = boundary };
         }
         var how = requestedParts != null ? $"指定の {parts} 本（{string.Join("・", labels)}、1本あたり約{total / parts / 60:F1}分）" : $"指定の {targetSec!.Value / 60:0.#}分に近い {parts} 本（{string.Join("・", labels)}）";
         notes.Add($"編集後の合計 約{total / 60:F1}分を、{how}に分けました。分け目は話題の切れ目から選んでいます（{(outline.Source == "llm" ? "AI の章分け" : "書き起こしの語彙の変化")}＋間＋話題転換語）");
         // a split that is not at a topic change (not a chapter start, no topic-change words) means the requested count outran the material's topics
-        var starts = outline.Chapters.Where(c => c.SplitScore >= 0).Select(c => c.Start).ToHashSet();
-        var mid = cuts.Select((c, k) => (c, k)).Where(x => !starts.Contains(x.c) && !IsTopicMarker(s[x.c].Text)).ToList();
+        var mid = cuts.Select((c, k) => (c, k)).Where(x => !scene[x.c]).ToList();
         if (mid.Count > 0)
             notes.Add($"話題の切れ目が足りないため、{string.Join("、", mid.Select(x => $"{labels[x.k]}と{labels[x.k + 1]}の間（{(int)(s[x.c].T0 / 60)}:{(int)(s[x.c].T0 % 60):D2}）"))}は話題の途中で分けています（文の切れ目では分けています）。本数を減らすと話題の切れ目で分けやすくなります");
+        var dangling = cuts.Select((c, k) => (c, k)).Where(x => cues[x.c].MidThought).ToList();
+        if (dangling.Count > 0)
+            notes.Add($"{string.Join("、", dangling.Select(x => $"{labels[x.k]}の終わり（「{Trunc(s[x.c - 1].Text, 16)}」）"))}は、長さの指定に合う範囲に言い切りの区切りが無いため、話の途中で終わっています。本数か1本あたりの長さを変えると改善できます");
         return specs;
     }
 
-    static List<int>? Dp(int n, int parts, Func<int, int, int, double> length, double[] score, double target, double tol)
+    static List<int>? Dp(int n, int parts, Func<int, int, int, double> length, double[] score, double target, double tol, bool[]? allowed)
     {
-        double lo = target * (1 - tol), hi = target * (1 + tol);
+        double lo = Math.Max(target * (1 - tol), allowed != null ? MinPartSec : 0), hi = target * (1 + tol);
         var dp = new double[parts + 1, n + 1]; var from = new int[parts + 1, n + 1];
         for (int k = 0; k <= parts; k++) for (int i = 0; i <= n; i++) dp[k, i] = double.PositiveInfinity;
         dp[0, 0] = 0;
@@ -447,6 +511,7 @@ public static partial class SeriesPlanner
                 for (int j = i - 1; j >= k - 1; j--)
                 {
                     if (double.IsInfinity(dp[k - 1, j])) continue;
+                    if (allowed != null && j > 0 && !allowed[j]) continue;
                     double l = length(j, i - 1, k - 1);
                     if (l > hi) break;          // longer as j decreases
                     if (l < lo) continue;
@@ -476,7 +541,7 @@ public static partial class SeriesPlanner
         return null;
     }
 
-    static string Describe(Transcript tr, double[] depth, ChapterOutline outline, int i, string nextLabel)
+    static string Describe(Transcript tr, double[] depth, ChapterOutline outline, SplitCue[] cues, int i, string nextLabel)
     {
         var s = tr.Sentences;
         var why = new List<string>();
@@ -486,6 +551,7 @@ public static partial class SeriesPlanner
         double gap = Math.Max(0, s[i].T0 - s[i - 1].T1);
         if (gap >= 0.5) why.Add($"間 {gap:F1}秒");
         if (depth[i] >= 0.5) why.Add("語彙が大きく変わる位置");
+        why.AddRange(SplitCues.Describe(cues[i]));
         var head = s[i].Text.Length > 24 ? s[i].Text[..24] + "…" : s[i].Text;
         return $"{(int)(s[i].T0 / 60)}:{(int)(s[i].T0 % 60):D2}「{head}」から{nextLabel}" + (why.Count > 0 ? $"（{string.Join("・", why)}）" : "");
     }

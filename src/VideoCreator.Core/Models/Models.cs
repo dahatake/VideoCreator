@@ -168,6 +168,7 @@ public sealed record SignalSet
     public List<Interval> Silences { get; init; } = [];
     public List<SignalEvent> Events { get; init; } = [];      // loudness peaks etc.
     public double MedianLoudness { get; init; }
+    public List<Interval> Blacks { get; init; } = [];         // black frames (fade-outs / dip-to-black transitions)
 }
 
 // ---- Candidates (FR-SEL) ----

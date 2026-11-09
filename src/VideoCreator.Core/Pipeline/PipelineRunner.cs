@@ -33,6 +33,7 @@ public sealed class PipelineServices
     public required string DataDir { get; init; }
     public ITranscriber? Asr { get; init; }
     public IHighlightSelector? Llm { get; init; }
+    public ITextEmbedder? Embedder { get; init; }
     public Pricing Pricing { get; init; } = new();
     public List<string> Dictionary { get; init; } = [];
     public int SelectionCharBudget { get; init; } = SelectionService.DefaultCharBudget;
@@ -109,7 +110,7 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public async Task<SignalSet> SignalsAsync(SourceAsset a, string proxy, string? audio, CancellationToken ct, IProgress<double>? progress = null)
     {
-        var file = Path.Combine(CacheDir(a), "signals.json");
+        var file = Path.Combine(CacheDir(a), SignalsFile);
         if (File.Exists(file)) return Json.Deserialize<SignalSet>(await File.ReadAllTextAsync(file, ct));
         var sig = await s.Signals.ExtractAsync(proxy, audio, 0.5, ct, progress, a.Media.Duration);
         await File.WriteAllTextAsync(file, Json.Serialize(sig), ct);
@@ -210,6 +211,8 @@ public sealed class PipelineRunner(PipelineServices s)
         try { tr = await TranscriptAsync(main, audio, ct); }
         catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message); }
         if (tr.Words.Count == 0 && main.Media.AudioChannels > 0 && s.Asr != null) warnings.Add("発話が検出されませんでした");
+        // series cuts are placed between sentences: restore sentence ends the recogniser ran together (「…と思います　あともう一個…」)
+        if (job.Options.IsSeries) tr = SplitCues.Resegment(tr);
         Mark("transcribe");
 
         const string sigMsg = "ショット・音量・無音を解析しています";
@@ -243,7 +246,7 @@ public sealed class PipelineRunner(PipelineServices s)
         var seriesParts = new Dictionary<string, SeriesPart>();
         if (job.Options.IsSeries)
         {
-            var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, job.Options.PartMinutes, job.Options.Parts, warnings, ct);
+            var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, job.Options.PartMinutes, job.Options.Parts, await laughsTask, warnings, ct);
             outcome = o; seriesParts = partsById;
         }
         else if (preset.Planner == "speed")
@@ -328,10 +331,10 @@ public sealed class PipelineRunner(PipelineServices s)
         };
     }
 
-    public const string SeriesPromptVersion = "series-1.0.0";
+    public const string SeriesPromptVersion = "series-1.1.0";
 
     /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into exactly <paramref name="parts"/> parts, or parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
-    async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double? partMinutes, int? parts0, List<string> warnings, CancellationToken ct)
+    async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double? partMinutes, int? parts0, IReadOnlyList<Interval> laughs, List<string> warnings, CancellationToken ct)
     {
         if (preset.Planner is not ("speech" or "switch" or "screen")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
         if (tr.Sentences.Count == 0) throw new PipelineException("E-SERIES-NOSPEECH", "前編・後編の分割は、話の切れ目を書き起こしから探します。発話のある動画を選んでください");
@@ -342,10 +345,21 @@ public sealed class PipelineRunner(PipelineServices s)
             catch (Exception ex) when (ex is not OperationCanceledException) { s.Log("series outline failed: " + ex.Message); }
             if (outline == null) warnings.Add("AI による章分けに失敗したため、書き起こしの語彙の変化と間から話題の切れ目を探しました");
         }
-        outline ??= SeriesPlanner.FallbackOutline(tr, sig);
+        double[]? semantic = null;
+        if (s.Embedder != null)
+        {
+            try
+            {
+                var vecs = await TopicEmbedding.LoadOrEmbedAsync(s.Embedder, tr, Path.Combine(CacheDir(main), "topic_embed.json"), ct);
+                if (vecs != null) semantic = TopicEmbedding.Depth(tr, vecs);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { s.Log("topic embedding failed: " + ex.Message); }
+            if (semantic == null) warnings.Add("話の意味の変化の解析に失敗したため、語彙の変化と間から話題の切れ目を探しました");
+        }
+        outline ??= SeriesPlanner.FallbackOutline(tr, sig, semantic);
         var notes = new List<string>();
         List<SeriesPart> parts;
-        try { parts = SeriesPlanner.Split(tr, sig, preset, main.Media.Duration, partMinutes * 60, parts0, outline, notes); }
+        try { parts = SeriesPlanner.Split(tr, sig, preset, main.Media.Duration, partMinutes * 60, parts0, outline, notes, laughs, semantic); }
         catch (PlanException ex) { throw new PipelineException(ex.Code, ex.Message); }
         warnings.AddRange(notes);
         var cands = parts.Select(pt => new Candidate
@@ -525,9 +539,12 @@ public sealed class PipelineRunner(PipelineServices s)
         return res;
     }
 
+    /// <summary>Signal cache name; bumped when the extracted signals change (v2: black frames) so older caches are recomputed.</summary>
+    public const string SignalsFile = "signals.v2.json";
+
     public SignalSet LoadSignals(SourceAsset a)
     {
-        var f = Path.Combine(CacheDir(a), "signals.json");
+        var f = Path.Combine(CacheDir(a), SignalsFile);
         return File.Exists(f) ? Json.Deserialize<SignalSet>(File.ReadAllText(f)) : new SignalSet();
     }
 

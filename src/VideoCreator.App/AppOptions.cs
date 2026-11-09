@@ -37,6 +37,8 @@ public sealed class LlmOptions
     public string Provider { get; set; } = "azure-openai";   // azure-openai | copilot | none
     public string Endpoint { get; set; } = "";               // https://<resource>.cognitiveservices.azure.com/openai/v1
     public string Deployment { get; set; } = "gpt-chat-latest";
+    /// <summary>Embedding deployment used to find where the subject changes (series split). Empty = vocabulary-only detection.</summary>
+    public string EmbeddingDeployment { get; set; } = "text-embedding-3-large";
     public string? CopilotCliPath { get; set; }
     public string? CopilotModel { get; set; }
     public int SingleCallCharBudget { get; set; } = VideoCreator.Selection.SelectionService.DefaultCharBudget;

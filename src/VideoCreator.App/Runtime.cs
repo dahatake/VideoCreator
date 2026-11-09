@@ -5,6 +5,7 @@ using VideoCreator.Audio;
 using VideoCreator.Faces;
 using VideoCreator.Media;
 using VideoCreator.Pipeline;
+using VideoCreator.Planning;
 using VideoCreator.Presets;
 using VideoCreator.Selection;
 using VideoCreator.Storage;
@@ -93,9 +94,13 @@ public sealed class Runtime
         _ => null,
     };
 
+    /// <summary>Meaning-level topic detection; same Azure OpenAI resource as the chat model, so nothing new leaves the machine's configured destination.</summary>
+    public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && !string.IsNullOrWhiteSpace(_o.Llm.Endpoint) && !string.IsNullOrWhiteSpace(_o.Llm.EmbeddingDeployment)
+        ? new AzureOpenAIEmbedder(new Uri(_o.Llm.Endpoint), _o.Llm.EmbeddingDeployment, _cred.Value) : null;
+
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {
-        Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, Llm = Llm, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
+        Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
         Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces,
     });
 }

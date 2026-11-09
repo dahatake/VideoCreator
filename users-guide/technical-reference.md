@@ -57,7 +57,7 @@ AppとTestsは `net10.0-windows`、Coreは `net10.0`。[Appのcsproj](../src/Vid
 
 StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document storeです。JSONは共有の `Json.Options` によるsnake_caseと文字列enumです。フォルダーのファイルとDBは別であり、出力JSONだけでプロジェクト全体をインポートするAPIはありません。
 
-キャッシュはDataDirの `cache\<素材SHA-256の先頭16文字>`。書き起こしキーはASRのNameと辞書、信号は `signals.json`、ほかに顔・画面解析等があります。**ASRのエンドポイント・localeを変えるだけで必ず書き起こしキャッシュが無効になるとは限りません。** 新プロバイダーや解析アルゴリズムを追加する際は、既存キーとの衝突・互換性・無効化方針をテストしてください。
+キャッシュはDataDirの `cache\<素材SHA-256の先頭16文字>`。書き起こしキーはASRのNameと辞書、信号は `signals.v2.json`（ショット境界・暗転・音量など）、ほかに顔・画面解析等があります。**ASRのエンドポイント・localeを変えるだけで必ず書き起こしキャッシュが無効になるとは限りません。** 新プロバイダーや解析アルゴリズムを追加する際は、既存キーとの衝突・互換性・無効化方針をテストしてください。
 
 素材の絶対パス変更は[StorePaths](../src/VideoCreator.Core/Storage/StorePaths.cs)による再ルート処理を使います。移動は同一ドライブでrename、別ドライブでcopy・ファイル数/サイズ照合を行い、JSON参照をトランザクションで更新します。これは全ファイル内容の暗号学的照合と同義ではありません。
 
