@@ -63,7 +63,8 @@ public sealed class FaceService(FFmpeg ff, string modelPath)
 
     sealed record Cache(List<Interval> Covered, List<FaceSample> Samples);
 
-    public async Task<List<FaceSample>> AnalyzeAsync(string proxy, IReadOnlyList<Interval> ranges, string cacheFile, CancellationToken ct)
+    /// <param name="refresh">Detect again inside <paramref name="ranges"/> even when covered; samples cached for other ranges are kept.</param>
+    public async Task<List<FaceSample>> AnalyzeAsync(string proxy, IReadOnlyList<Interval> ranges, string cacheFile, CancellationToken ct, bool refresh = false)
     {
         await _gate.WaitAsync(ct);
         try
@@ -73,7 +74,7 @@ public sealed class FaceService(FFmpeg ff, string modelPath)
             foreach (var r0 in ranges)
             {
                 var r = new Interval(Math.Max(0, r0.T0 - 0.5), r0.T1 + 0.5);
-                if (cache.Covered.Any(c => c.T0 <= r.T0 + 1e-6 && c.T1 >= r.T1 - 1e-6)) continue;
+                if (!refresh && cache.Covered.Any(c => c.T0 <= r.T0 + 1e-6 && c.T1 >= r.T1 - 1e-6)) continue;
                 _det ??= new FaceDetector(modelPath);
                 using var ms = new MemoryStream();
                 var res = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", r.T0.ToString("0.###", CultureInfo.InvariantCulture), "-t", r.Length.ToString("0.###", CultureInfo.InvariantCulture),

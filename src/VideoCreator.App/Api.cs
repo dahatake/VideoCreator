@@ -385,7 +385,10 @@ public static class Api
                 edited_sec = edited,
                 max_parts = Planning.SeriesPlanner.MaxPartsFor(edited ?? main.Media.Duration, tr.Sentences.Count > 0 ? tr.Sentences.Count : int.MaxValue),
             };
-            return Results.Json(new { cost = runner.EstimateCost(main), scopes = runner.EstimateScopes(main), duration = main.Media.Duration, series }, Json.Options);
+            var (transcriptCached, analyzedAt) = runner.CachedAnalysis(main);
+            // reuse = what the default run costs (a cached transcript is free); redo = the same with the transcript made and paid for again
+            var analysis = new { cached = analyzedAt != null, transcript_cached = transcriptCached, updated_at = analyzedAt, redo_scopes = runner.EstimateScopes(main, reuseAnalysis: false) };
+            return Results.Json(new { cost = runner.EstimateCost(main), scopes = runner.EstimateScopes(main), duration = main.Media.Duration, series, analysis }, Json.Options);
         });
 
         api.MapPatch("/assets/{id}", (Runtime rt, string id, PatchAsset req) =>
@@ -647,7 +650,8 @@ public static class Api
             var prev = rt.Store.Get<Job>(Kinds.Job, jobId);
             if (prev == null) return Error(404, "E-NOT-FOUND", "ジョブがありません");
             var exclude = (req.ExcludeCandidateIds ?? []).Concat(prev.ExcludeCandidateIds).Concat(prev.CandidateIds).Distinct().ToList();
-            return StartGeneration(rt, q, prev.ProjectId, prev.PresetIds, req.Instruction, exclude, prev.Options, derivedFrom: prev.Id);
+            // "別の候補を出す" always reuses the analysis: redoing it is a one-off choice made when starting a generation
+            return StartGeneration(rt, q, prev.ProjectId, prev.PresetIds, req.Instruction, exclude, prev.Options with { ReuseAnalysis = true }, derivedFrom: prev.Id);
         });
 
         // ---- patterns: every generation (job) of a project, kept side by side ----
@@ -869,7 +873,7 @@ public static class Api
         var job = new Job
         {
             Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = presetIds, Instruction = instruction, Options = options,
-            ExcludeCandidateIds = exclude, DerivedFromJobId = derivedFrom, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope),
+            ExcludeCandidateIds = exclude, DerivedFromJobId = derivedFrom, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope, options.ReuseAnalysis),
         };
         q.EnqueueJob(job);
         return Results.Json(new { job_id = job.Id, cost = job.Cost }, Json.Options, statusCode: 202);

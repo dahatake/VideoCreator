@@ -442,7 +442,7 @@ async function project(id, showSettings = false) {
           <div class="grid" id="scopes" role="radiogroup" aria-label="長尺の絞り込み">
             ${(estimate?.scopes ?? [{ scope: 'economy' }, { scope: 'balanced' }, { scope: 'full' }]).map(s => `
               <div class="card selectable ${s.scope === opts.scope ? 'selected' : ''}" role="radio" aria-checked="${s.scope === opts.scope}" tabindex="-1" data-scope="${s.scope}" style="padding:12px">
-                <div class="card-head"><b>${scopeLabel[s.scope][0]}</b>${s.cost ? `<span class="badges"><fluent-badge appearance="tint" color="informative">AI に送る量 約${Math.round(s.share * 100)}%</fluent-badge><fluent-badge appearance="tint" color="brand">約 ${jpy(s.cost)}</fluent-badge></span>` : ''}</div>
+                <div class="card-head"><b>${scopeLabel[s.scope][0]}</b>${s.cost ? `<span class="badges"><fluent-badge appearance="tint" color="informative">AI に送る量 約${Math.round(s.share * 100)}%</fluent-badge><fluent-badge appearance="tint" color="brand" class="scope-cost">約 ${jpy(s.cost)}</fluent-badge></span>` : ''}</div>
                 <div class="caption">${scopeLabel[s.scope][1]}</div>
               </div>`).join('')}
           </div>
@@ -525,6 +525,14 @@ async function project(id, showSettings = false) {
             })()}
             <div id="cardImageMsg" aria-live="polite"></div>
           </div>
+        </div>
+        <div class="stack" id="analysisBox">
+          <h3 id="analysisLabel">前回の解析結果（他のパターンで作ったもの）</h3>
+          <fluent-radio-group id="analysisReuse" orientation="vertical" aria-labelledby="analysisLabel" aria-describedby="analysisInfo" value="reuse">
+            ${field('流用する（おすすめ・速い）', '<fluent-radio slot="input" value="reuse"></fluent-radio>')}
+            ${field('流用せず、最初の解析からやり直す（アプリを更新したときなど）', '<fluent-radio slot="input" value="redo"></fluent-radio>')}
+          </fluent-radio-group>
+          <p class="caption" id="analysisInfo" aria-live="polite"></p>
         </div>
         </div>
         <div class="col-foot">
@@ -651,12 +659,32 @@ async function project(id, showSettings = false) {
     saveChain = saveChain.then(save, save);
     return saveChain;
   };
+  // not saved with the settings: redoing the analysis costs time (and the transcript again), so every generation starts from "reuse"
+  let reuseAnalysis = true;
+  const scopeCost = (list) => (list.find(s => s.scope === (opts.series ? 'full' : opts.scope)) ?? list[1]).cost;
+  const showAnalysis = () => {
+    const el = $('#analysisInfo'); if (!el) return;
+    const a = estimate?.analysis;
+    if (!a?.cached) { el.textContent = '素材をまだ解析していないため、どちらを選んでも最初から解析します。'; return; }
+    const when = new Date(a.updated_at).toLocaleString('ja-JP');
+    const extra = scopeCost(a.redo_scopes).estimated_jpy - scopeCost(estimate.scopes).estimated_jpy;
+    el.textContent = reuseAnalysis
+      ? `この素材は ${when} に解析済みです。解析用プロキシ・書き起こし・ショット/音量/無音・笑い・顔・画面の判定・カメラの自動同期をそのまま使います。AI のハイライト選定・編集計画・プレビューは毎回行います。`
+      : `${when} の解析結果を使わず、すべて作り直します（時間がかかります${extra > 0.05 ? `。書き起こしの費用 約 ¥${extra.toFixed(1)} が増えます` : ''}）。${a.transcript_cached ? '確認画面で直した書き起こしは、新しい書き起こしで置き換わります。' : ''}手入力した「ずれ(秒)」と「話者」はそのまま使います。`;
+  };
   const showCost = () => {
+    showAnalysis();
     const el = $('#costLine'); if (!el || !estimate) return;
-    const c = (estimate.scopes.find(s => s.scope === (opts.series ? 'full' : opts.scope)) ?? estimate.scopes[1]).cost;
-    el.textContent = `推定コスト: 約 ${jpy(c)}（書き起こし ${c.asr_minutes} 分、AI 入力 約 ${c.llm_input_tokens.toLocaleString()} トークン）— ${c.basis}`;
+    const list = reuseAnalysis || !estimate.analysis ? estimate.scopes : estimate.analysis.redo_scopes;
+    $$('#scopes [data-scope]').forEach(card => { const b = $('.scope-cost', card), sc = list.find(s => s.scope === card.dataset.scope); if (b && sc) b.textContent = `約 ${jpy(sc.cost)}`; });
+    const c = scopeCost(list);
+    el.textContent = `推定コスト: 約 ${jpy(c)}（書き起こし ${c.asr_minutes} 分${reuseAnalysis && estimate.analysis?.transcript_cached ? '・前回の結果を流用' : ''}、AI 入力 約 ${c.llm_input_tokens.toLocaleString()} トークン）— ${c.basis}`;
   };
   showCost();
+  $('#analysisReuse').addEventListener('change', () => {
+    reuseAnalysis = $$('#analysisReuse fluent-radio').find(r => r.checked)?.value !== 'redo';
+    showCost();
+  });
   const seriesLabels = (n) => n === 2 ? ['前編', '後編'] : n === 3 ? ['前編', '中編', '後編'] : Array.from({ length: n }, (_, i) => `第${i + 1}話`);
   const showSeries = () => {
     const on = opts.series, byParts = opts.series_by === 'parts', min = Number(opts.part_minutes), parts = Number(opts.parts);
@@ -846,7 +874,7 @@ async function project(id, showSettings = false) {
       return;
     }
     const { series, series_by, parts, part_minutes, ...rest } = opts;
-    const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null };
+    const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null, reuse_analysis: reuseAnalysis };
     try {
       clearTimeout(maskSaveTimer);
       if (!await saveOpts()) return;
@@ -869,6 +897,7 @@ function patternSummary(j, presets) {
   if (o.scene_cards) bits.push('ツッコミカード'); if (o.tsukkomi) bits.push('ツッコミ');
   if (o.mask_words?.length) bits.push(`伏せ字 ${o.mask_words.length} 語`);
   if (j.instruction) bits.push(`追加指示: ${j.instruction}`);
+  if (o.reuse_analysis === false) bits.push('解析を最初からやり直し');
   return bits.join(' · ');
 }
 async function loadPatterns(projectId, presets) {
@@ -943,7 +972,7 @@ async function job(jobId) {
           ${failed ? errorBar(failed) : `<p id="jobMsg" aria-live="polite">${esc(message)}</p>`}
           ${failed ? '' : `<div class="progress-row"><span class="caption">全体</span><fluent-progress-bar id="jobBar" max="100" value="0" aria-label="全体の進み具合"></fluent-progress-bar><span id="jobPct" class="caption pct">0%</span></div>
           <div id="stepBox" class="progress-row" hidden><span id="stepLabel" class="caption"></span><fluent-progress-bar id="stepBar" max="100" aria-label="実行中の処理の進み具合"></fluent-progress-bar><span id="stepPct" class="caption pct"></span></div>`}
-          <p class="caption" style="margin-top:8px">経過 <span id="elapsed">0:00</span><span id="eta"></span>${j.cost ? ` · 推定コスト 約 ¥${j.cost.estimated_jpy.toFixed(1)}` : ''}</p>
+          <p class="caption" style="margin-top:8px">経過 <span id="elapsed">0:00</span><span id="eta"></span>${j.cost ? ` · 推定コスト 約 ¥${j.cost.estimated_jpy.toFixed(1)}` : ''} · ${j.options?.reuse_analysis === false ? '解析を最初からやり直しています' : '前回の解析結果があれば流用します'}</p>
           <div id="stages">${STAGES.map(([k, label]) => `<div class="stage" data-stage="${k}"><span class="dot"></span><span>${label}</span><span class="caption"></span></div>`).join('')}</div>
           <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings">プロジェクトに戻る</fluent-anchor-button>` : '<fluent-button id="cancel">キャンセル</fluent-button>'}</div>
         </section>

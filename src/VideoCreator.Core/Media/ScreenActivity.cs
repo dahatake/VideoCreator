@@ -34,9 +34,9 @@ public static class ScreenActivity
     /// <summary>≈ 12 px of 640×360 = one typed character of a 14–34 px font (measured: 19–50 px per character on a 1080p screen); a still screen: 0–2 px.</summary>
     public const double ActiveFraction = 0.00005;
 
-    public static async Task<ScreenAnalysis> AnalyzeAsync(FFmpeg ff, string video, string cacheFile, CancellationToken ct)
+    public static async Task<ScreenAnalysis> AnalyzeAsync(FFmpeg ff, string video, string cacheFile, CancellationToken ct, bool refresh = false)
     {
-        if (File.Exists(cacheFile)) return Json.Deserialize<ScreenAnalysis>(await File.ReadAllTextAsync(cacheFile, ct));
+        if (!refresh && File.Exists(cacheFile)) return Json.Deserialize<ScreenAnalysis>(await File.ReadAllTextAsync(cacheFile, ct));
         var sink = new FrameSink();
         var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-nostdin", "-i", video, "-an",
             "-vf", $"fps={Fps.ToString(CultureInfo.InvariantCulture)},scale={W}:{H}:flags=area,format=gray", "-f", "rawvideo", "-pix_fmt", "gray", "-"], ct, stdout: sink);

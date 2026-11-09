@@ -59,12 +59,12 @@ public static class TopicEmbedding
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())))[..16];
     }
 
-    public static async Task<float[][]?> LoadOrEmbedAsync(ITextEmbedder embedder, Transcript tr, string cacheFile, CancellationToken ct)
+    public static async Task<float[][]?> LoadOrEmbedAsync(ITextEmbedder embedder, Transcript tr, string cacheFile, CancellationToken ct, bool refresh = false)
     {
         var key = Key(tr, embedder.Model);
         try
         {
-            if (File.Exists(cacheFile))
+            if (!refresh && File.Exists(cacheFile))
             {
                 var c = Json.Deserialize<EmbeddingCache>(File.ReadAllText(cacheFile));
                 if (c.Key == key && c.Vectors.Length == tr.Sentences.Count) return c.Vectors;

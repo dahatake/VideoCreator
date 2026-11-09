@@ -92,12 +92,13 @@ public sealed class MediaProbe(FFmpeg ff)
     }
 
     /// <summary>FR-ING-03/04: CFR 30 fps 360p analysis proxy + 16 kHz mono FLAC (for ASR/signals).</summary>
-    public async Task<(string proxy, string audio)> MakeProxyAsync(string file, MediaInfo m, string cacheDir, CancellationToken ct = default, IProgress<double>? progress = null)
+    /// <param name="refresh">Make them again even when cached (the old files are replaced only once the new ones are complete).</param>
+    public async Task<(string proxy, string audio)> MakeProxyAsync(string file, MediaInfo m, string cacheDir, CancellationToken ct = default, IProgress<double>? progress = null, bool refresh = false)
     {
         Directory.CreateDirectory(cacheDir);
         var proxy = Path.Combine(cacheDir, "proxy.mp4");
         var audio = Path.Combine(cacheDir, "audio16k.flac");
-        if (File.Exists(proxy) && (m.AudioChannels == 0 || File.Exists(audio))) return (proxy, audio);
+        if (!refresh && File.Exists(proxy) && (m.AudioChannels == 0 || File.Exists(audio))) return (proxy, audio);
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y", "-i", file,
             "-map", "0:v:0", "-vf", "scale=-2:360,fps=30", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-an", proxy + ".tmp.mp4" };
         // timestamp-true audio (a late-starting stream is padded): transcript times then equal the file times that atrim/trim cut on

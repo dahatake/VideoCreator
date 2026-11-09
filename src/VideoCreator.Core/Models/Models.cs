@@ -484,6 +484,11 @@ public sealed record JobOptions
     public bool SceneCards { get; init; }
     /// <summary>伏せ字: words hidden as ● in every telop/SRT/card, with the dialogue under them replaced by a tone (Planning.Masking).</summary>
     public List<string> MaskWords { get; init; } = [];
+    /// <summary>
+    /// True (default): reuse the analysis made for the same source by an earlier run (proxy, transcript, signals, laughter, faces, screen activity,
+    /// topic vectors, automatic sync). False: redo all of it from the source (e.g. after an app update); manual sync offsets and speakers are kept.
+    /// </summary>
+    public bool ReuseAnalysis { get; init; } = true;
 }
 
 public sealed record Job

@@ -55,9 +55,35 @@ public sealed class PipelineRunner(PipelineServices s)
 {
     string CacheDir(SourceAsset a) => Path.Combine(s.DataDir, "cache", a.Sha256[..16]);
 
-    public CostEstimate EstimateCost(SourceAsset main, string scope = "balanced")
+    // JobOptions.ReuseAnalysis = false: every cached analysis is made again once in this run; the files rebuilt so far are reused within the run
+    HashSet<string>? _redo;
+    int _asrCalls;
+    bool Cached(string file) => File.Exists(file) && (_redo == null || _redo.Contains(file));
+    bool Redo(string file) => _redo != null && _redo.Add(file);
+    string ProxyFile(SourceAsset a) => Path.Combine(CacheDir(a), "proxy.mp4");
+    Task<(string proxy, string audio)> ProxyAsync(SourceAsset a, CancellationToken ct, IProgress<double>? progress = null) =>
+        s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct, progress, Redo(ProxyFile(a)));
+
+    /// <summary>Cache files are replaced whole, so a reader never sees a half-written file while a run makes them again.</summary>
+    static async Task WriteCacheAsync(string file, string json, CancellationToken ct)
     {
-        double minutes = main.Media.AudioChannels > 0 && s.Asr != null ? main.Media.Duration / 60 : 0;
+        var tmp = file + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct);
+        File.Move(tmp, file, true);
+    }
+
+    /// <summary>What an earlier run left for this source: whether the transcript (the paid step) is cached, and when the analysis was last made.</summary>
+    public (bool TranscriptCached, DateTimeOffset? UpdatedAt) CachedAnalysis(SourceAsset a)
+    {
+        var files = new[] { ProxyFile(a), Path.Combine(CacheDir(a), SignalsFile), TranscriptFile(a, DictionaryFor(a.ProjectId)) }.Where(File.Exists).ToList();
+        bool transcript = a.Media.AudioChannels > 0 && s.Asr != null && File.Exists(TranscriptFile(a, DictionaryFor(a.ProjectId)));
+        return (transcript, files.Count == 0 ? null : new DateTimeOffset(files.Max(File.GetLastWriteTimeUtc), TimeSpan.Zero));
+    }
+
+    /// <param name="reuseAnalysis">False = the transcript is made again, so it is paid for even when cached.</param>
+    public CostEstimate EstimateCost(SourceAsset main, string scope = "balanced", bool reuseAnalysis = true)
+    {
+        double minutes = main.Media.AudioChannels > 0 && s.Asr != null && !(reuseAnalysis && CachedAnalysis(main).TranscriptCached) ? main.Media.Duration / 60 : 0;
         int chars = SelectionService.EstimateSent(main.Media.Duration, scope, s.SelectionCharBudget).chars;
         int inTok = s.Llm == null ? 0 : Pricing.EstimateTokens(chars), outTok = s.Llm == null ? 0 : 2500;
         double jpy = minutes / 60 * s.Pricing.AsrJpyPerHour + inTok / 1e6 * s.Pricing.LlmInJpyPer1M + outTok / 1e6 * s.Pricing.LlmOutJpyPer1M;
@@ -65,10 +91,10 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     /// <summary>Per-scope estimate for the "長尺の絞り込み" choice (FR-SEL-10).</summary>
-    public IReadOnlyList<object> EstimateScopes(SourceAsset main) => new[] { "economy", "balanced", "full" }.Select(sc =>
+    public IReadOnlyList<object> EstimateScopes(SourceAsset main, bool reuseAnalysis = true) => new[] { "economy", "balanced", "full" }.Select(sc =>
     {
         var (chars, share) = SelectionService.EstimateSent(main.Media.Duration, sc, s.SelectionCharBudget);
-        var c = EstimateCost(main, sc);
+        var c = EstimateCost(main, sc, reuseAnalysis);
         return (object)new { scope = sc, sent_chars = chars, share = Math.Round(share, 2), cost = c };
     }).ToList();
 
@@ -79,7 +105,7 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<BgmTrack> AnalyzedBgmAsync(BgmTrack t, CancellationToken ct)
     {
         var key = t.Path + "|" + File.GetLastWriteTimeUtc(t.Path).Ticks;
-        if (!TempoCache.TryGetValue(key, out var tp)) { tp = await TempoEstimator.AnalyzeFileAsync(s.Ff, t.Path, ct); TempoCache[key] = tp; }
+        if (_redo != null || !TempoCache.TryGetValue(key, out var tp)) { tp = await TempoEstimator.AnalyzeFileAsync(s.Ff, t.Path, ct); TempoCache[key] = tp; }
         return t with { Bpm = t.Source == "library" && t.Bpm > 0 ? t.Bpm : tp.Bpm, Phase = tp.Phase };
     }
 
@@ -88,9 +114,11 @@ public sealed class PipelineRunner(PipelineServices s)
         if (a.Media.AudioChannels == 0 || s.Asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration };
         var phrases = DictionaryFor(a.ProjectId);
         var file = TranscriptFile(a, phrases);
-        if (File.Exists(file)) return Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
+        if (Cached(file)) return Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
+        _asrCalls++;
         var tr = await s.Asr.TranscribeAsync(audio, a.Media.Duration, phrases, 4, ct);
-        await File.WriteAllTextAsync(file, Json.Serialize(tr), ct);
+        await WriteCacheAsync(file, Json.Serialize(tr), ct);
+        _redo?.Add(file);
         return tr;
     }
 
@@ -111,14 +139,23 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<SignalSet> SignalsAsync(SourceAsset a, string proxy, string? audio, CancellationToken ct, IProgress<double>? progress = null)
     {
         var file = Path.Combine(CacheDir(a), SignalsFile);
-        if (File.Exists(file)) return Json.Deserialize<SignalSet>(await File.ReadAllTextAsync(file, ct));
+        if (Cached(file)) return Json.Deserialize<SignalSet>(await File.ReadAllTextAsync(file, ct));
         var sig = await s.Signals.ExtractAsync(proxy, audio, 0.5, ct, progress, a.Media.Duration);
-        await File.WriteAllTextAsync(file, Json.Serialize(sig), ct);
+        await WriteCacheAsync(file, Json.Serialize(sig), ct);
+        _redo?.Add(file);
         return sig;
     }
 
     /// <summary>Generate candidates + previews for a job (FR-SEL, FR-SOL, FR-TEL, FR-RND-02).</summary>
     public async Task<Job> GenerateAsync(Job job, IProgress<JobUpdate> progress, CancellationToken ct)
+    {
+        _redo = job.Options.ReuseAnalysis ? null : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _asrCalls = 0;
+        try { return await GenerateCoreAsync(job, progress, ct); }
+        finally { _redo = null; }
+    }
+
+    async Task<Job> GenerateCoreAsync(Job job, IProgress<JobUpdate> progress, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew(); var stageTimes = new Dictionary<string, double>();
         double overall = 0; var loggedTenth = -1;
@@ -157,16 +194,20 @@ public sealed class PipelineRunner(PipelineServices s)
             throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure AI Speech）が設定されていません。設定を確認してください。");
 
         const string proxyMsg = "解析用のプロキシを作成しています";
-        Stage(JobStatus.Ingesting, 0.02, proxyMsg);
-        var (proxy, audio) = await s.Probe.MakeProxyAsync(main.Path, main.Media, CacheDir(main), ct, Sub(JobStatus.Ingesting, 0.02, 0.1, proxyMsg, "360p プロキシと 16kHz 音声の作成"));
+        bool reuse = _redo == null;
+        s.Log($"[{job.Id}] analysis: {(reuse ? "reuse the cached results of earlier runs" : "redo every step from the source")}");
+        bool proxyCached = reuse && File.Exists(ProxyFile(main)) && (main.Media.AudioChannels == 0 || File.Exists(Path.Combine(CacheDir(main), "audio16k.flac")));
+        Stage(JobStatus.Ingesting, 0.02, proxyCached ? "解析用のプロキシは前回の結果を使います" : proxyMsg);
+        var (proxy, audio) = await ProxyAsync(main, ct, Sub(JobStatus.Ingesting, 0.02, 0.1, proxyMsg, "360p プロキシと 16kHz 音声の作成"));
         // multi-source: align every other recording to the master audio (full-length search + drift fit, FR-SWT-01 / FR-ING-05)
         for (int i = 0; i < used.Count; i++)
         {
             var a = used[i];
             if (a.Id == main.Id) continue;
             string name = Path.GetFileName(a.Path);
-            // older versions measured one 90 s window (no drift, no late-start search) → measure again; manual offsets are kept
-            if (a.SyncConfidence == null || a.SyncMethod == null && a.SyncConfidence != SyncResult.Manual)
+            // older versions measured one 90 s window (no drift, no late-start search) → measure again; manual offsets are kept (also when redoing the analysis)
+            bool manual = a.SyncMethod == "manual" || a.SyncMethod == null && a.SyncConfidence == SyncResult.Manual;
+            if (!manual && (a.SyncConfidence == null || a.SyncMethod == null || !reuse))
             {
                 Stage(JobStatus.Ingesting, 0.1, $"素材の時間を音声で合わせています（{name}）");
                 SyncFit fit;
@@ -206,7 +247,8 @@ public sealed class PipelineRunner(PipelineServices s)
         if (preset.Planner == "switch" && used.Count < 2) throw new PipelineException("E-SWT-SYNC", "カメラの音声を同期できませんでした。同じ場面を撮影した素材を選んでください");
         Mark("ingest");
 
-        Stage(JobStatus.Transcribing, 0.15, s.Asr == null ? "書き起こしは無効です" : "書き起こしています（Azure AI Speech）");
+        bool trCached = reuse && main.Media.AudioChannels > 0 && s.Asr != null && File.Exists(TranscriptFile(main, DictionaryFor(project.Id)));
+        Stage(JobStatus.Transcribing, 0.15, s.Asr == null ? "書き起こしは無効です" : trCached ? "書き起こしは前回の結果を使います（費用はかかりません）" : "書き起こしています（Azure AI Speech）");
         Transcript tr;
         try { tr = await TranscriptAsync(main, audio, ct); }
         catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message); }
@@ -216,7 +258,7 @@ public sealed class PipelineRunner(PipelineServices s)
         Mark("transcribe");
 
         const string sigMsg = "ショット・音量・無音を解析しています";
-        Stage(JobStatus.Analyzing, 0.35, sigMsg);
+        Stage(JobStatus.Analyzing, 0.35, reuse && File.Exists(Path.Combine(CacheDir(main), SignalsFile)) ? "ショット・音量・無音は前回の解析結果を使います" : sigMsg);
         var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct, Sub(JobStatus.Analyzing, 0.35, 0.43, sigMsg, "ショットの切り替わり検出"));
         // laughter is only needed when planning; an external detector (minutes) runs while the AI selects
         var laughsTask = LaughsAsync(main, tr, sig, audio, ct);
@@ -270,8 +312,8 @@ public sealed class PipelineRunner(PipelineServices s)
             foreach (var a in used.Where(a => a.Media.Aspect >= 0.9 && a.Media.Width > 0 && a.Id != screen?.ScreenAssetId))
             {
                 var ranges = outcome.Candidates.SelectMany(c => c.Segments).Select(x => new Interval(Math.Max(0, a.CameraTime(x.T0, main.Id)), a.CameraTime(x.T1, main.Id))).ToList();
-                var apx = a.Id == main.Id ? proxy : (await s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct)).Item1;
-                faces[a.Id] = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct);
+                var apx = a.Id == main.Id ? proxy : (await ProxyAsync(a, ct)).Item1;
+                faces[a.Id] = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct, refresh: !reuse);
             }
             Mark("faces");
         }
@@ -318,8 +360,8 @@ public sealed class PipelineRunner(PipelineServices s)
         }
         Mark("preview");
 
-        var cost = new CostEstimate(Math.Round(tr.Duration / 60, 1), outcome.InputTokens, outcome.OutputTokens,
-            Math.Round(tr.Duration / 3600 * s.Pricing.AsrJpyPerHour + outcome.InputTokens / 1e6 * s.Pricing.LlmInJpyPer1M + outcome.OutputTokens / 1e6 * s.Pricing.LlmOutJpyPer1M, 2),
+        var cost = new CostEstimate(_asrCalls > 0 ? Math.Round(tr.Duration / 60, 1) : 0, outcome.InputTokens, outcome.OutputTokens,
+            Math.Round((_asrCalls > 0 ? tr.Duration / 3600 * s.Pricing.AsrJpyPerHour : 0) + outcome.InputTokens / 1e6 * s.Pricing.LlmInJpyPer1M + outcome.OutputTokens / 1e6 * s.Pricing.LlmOutJpyPer1M, 2),
             Pricing.Basis + "（実績）");
         if (outcome.FullTextChars > 0 && outcome.SentChars > 0)
             s.Log($"[{job.Id}] LLM input chars {outcome.SentChars}/{outcome.FullTextChars} ({100.0 * outcome.SentChars / outcome.FullTextChars:F0}%)");
@@ -350,7 +392,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             try
             {
-                var vecs = await TopicEmbedding.LoadOrEmbedAsync(s.Embedder, tr, Path.Combine(CacheDir(main), "topic_embed.json"), ct);
+                var vecs = await TopicEmbedding.LoadOrEmbedAsync(s.Embedder, tr, Path.Combine(CacheDir(main), "topic_embed.json"), ct, Redo(Path.Combine(CacheDir(main), "topic_embed.json")));
                 if (vecs != null) semantic = TopicEmbedding.Depth(tr, vecs);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { s.Log("topic embedding failed: " + ex.Message); }
@@ -387,15 +429,15 @@ public sealed class PipelineRunner(PipelineServices s)
         var profiles = new Dictionary<string, SourceProfile>(); var activity = new Dictionary<string, ScreenAnalysis>();
         foreach (var a in used)
         {
-            var apx = a.Id == main.Id ? mainProxy : (await s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct)).Item1;
-            var act = await ScreenActivity.AnalyzeAsync(s.Ff, apx, Path.Combine(CacheDir(a), ScreenActivityFile), ct);
+            var apx = a.Id == main.Id ? mainProxy : (await ProxyAsync(a, ct)).Item1;
+            var act = await ScreenActivity.AnalyzeAsync(s.Ff, apx, Path.Combine(CacheDir(a), ScreenActivityFile), ct, Redo(Path.Combine(CacheDir(a), ScreenActivityFile)));
             activity[a.Id] = act;
             double faceRatio = -1;
             if (s.Faces is { Available: true } fs)
             {
                 double d = a.Media.Duration;
                 var ranges = Enumerable.Range(0, 6).Select(k => d * (k + 0.5) / 6).Select(t => new Interval(Math.Max(0, t - 2), Math.Min(d, t + 2))).ToList();
-                var samples = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct);
+                var samples = await fs.AnalyzeAsync(apx, ranges, Path.Combine(CacheDir(a), "faces.json"), ct, refresh: _redo != null);
                 var inside = samples.Where(x => ranges.Any(r => x.T >= r.T0 && x.T <= r.T1)).ToList();
                 faceRatio = inside.Count == 0 ? 0 : inside.Count(x => x.Boxes.Count > 0) / (double)inside.Count;
             }
@@ -471,9 +513,10 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<List<Interval>> LaughsAsync(SourceAsset a, Transcript tr, SignalSet sig, string audio, CancellationToken ct)
     {
         var file = LocalLaughsFile(a);
-        if (File.Exists(file)) return Json.Deserialize<List<Interval>>(await File.ReadAllTextAsync(file, ct));
+        if (Cached(file)) return Json.Deserialize<List<Interval>>(await File.ReadAllTextAsync(file, ct));
         var res = a.Media.AudioChannels > 0 && File.Exists(audio) ? await LaughDetector.DetectAsync(s.Ff, audio, NonSpeech.Bursts(sig, tr), ct) : [];
-        await File.WriteAllTextAsync(file, Json.Serialize(res), ct);
+        await WriteCacheAsync(file, Json.Serialize(res), ct);
+        _redo?.Add(file);
         return res;
     }
 
