@@ -524,7 +524,7 @@ public static class Api
             if (!req.RightsConfirmed) return Error(422, "E-RIGHTS-REQUIRED", "オープニング・クロージング・カード画像を使う権利（著作権・ロゴ・肖像の利用許諾）の確認にチェックしてください");
             var paths = (req.Paths ?? []).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
             if (paths.Count == 0) return Error(422, "E-VALIDATION", "フォルダーかファイルのフルパスを指定してください");
-            var (kit, problems) = await Planning.BrandKitService.ScanAsync(rt.Ff, paths, true, req.CardSec ?? 1.0, ct);
+            var (kit, problems) = await Planning.BrandKitService.ScanAsync(rt.Ff, paths, true, req.CardSec ?? 2.5, ct);
             if (kit.Files.Count == 0) return Error(422, "E-BRANDKIT", "使えるファイルが見つかりませんでした" + (problems.Count > 0 ? ": " + string.Join(" / ", problems) : "（ファイル名に Opening / Closing を含む動画か、PNG/JPG 画像を置いてください）"));
             kit = kit with { Upscale = req.Upscale ?? true };
             rt.Store.Put(Kinds.BrandKit, PipelineRunner.BrandKitId, null, kit);

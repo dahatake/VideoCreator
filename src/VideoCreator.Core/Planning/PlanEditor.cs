@@ -25,6 +25,7 @@ public static class PlanEditor
                 "approve_all_tsukkomi" => plan with
                 {
                     Telops = plan.Telops.Select(t => t.Type == TelopType.Tsukkomi ? t with { Approved = true } : t).ToList(),
+                    Inserts = plan.Inserts.Select(i => i.Kind == "card" && i.Id.StartsWith("tsukkomi", StringComparison.Ordinal) ? i with { Approved = true } : i).ToList(),
                     Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "approve_all_tsukkomi", "tsukkomi", null, "true")] },
                 },
                 "set_bgm" => plan with
@@ -56,7 +57,7 @@ public static class PlanEditor
     static EditPlan ReplaceCardText(EditPlan plan, string target, string text)
     {
         text = text.Replace("\r", "").Replace("\n", " ").Trim();
-        if (text.Length > MaxCardTextLength) throw new ArgumentException($"カードの文字は{MaxCardTextLength}文字以内にしてください（1秒で読める長さ）");
+        if (text.Length > MaxCardTextLength) throw new ArgumentException($"カードの文字は{MaxCardTextLength}文字以内にしてください（2〜3秒で読める長さ）");
         var old = plan.Inserts.FirstOrDefault(i => i.Id == target);
         if (old?.Kind != "card") throw new KeyNotFoundException($"card {target} not found");
         // text the user typed is the user's own words: no AI approval needed (an emptied text leaves an image-only / silent still)

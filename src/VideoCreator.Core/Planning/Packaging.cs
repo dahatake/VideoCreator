@@ -61,7 +61,7 @@ public static partial class BrandKitService
 {
     public static readonly string[] VideoExt = [".mp4", ".mov", ".m4v", ".mkv", ".webm"];
     public static readonly string[] ImageExt = [".png", ".jpg", ".jpeg", ".webp"];
-    public const double MinBumperSec = 0.5, MaxBumperSec = 60, MinCardSec = 0.5, MaxCardSec = 3.0;
+    public const double MinBumperSec = 0.5, MaxBumperSec = 60, MinCardSec = 2.0, MaxCardSec = 3.0;
 
     [GeneratedRegex(@"[^\p{L}\p{N}]+")]
     private static partial Regex TokenSplit();
@@ -255,18 +255,75 @@ public static class InsertPlanner
             double near = 0; var nearest = double.MaxValue;
             for (int i = 0; i < res.Count; i++) { nearest = Math.Min(nearest, Math.Abs(near - ch.Start)); near += res[i].Length; }
             if (nearest <= SnapSec) continue;
-            var c = res[idx]; double rel = ch.Start - off, src = Math.Round(c.SrcIn + rel * c.Speed, 3);
-            ReframeSpec Shift(ReframeSpec r)
-            {
-                if (r.Track is not { Count: > 0 } tr) return r;
-                double x = tr.Count == 1 || rel <= tr[0].T ? tr[0].X : rel >= tr[^1].T ? tr[^1].X
-                    : tr.Zip(tr.Skip(1)).Where(p => rel >= p.First.T && rel <= p.Second.T).Select(p => p.First.X + (p.Second.X - p.First.X) * (rel - p.First.T) / Math.Max(1e-6, p.Second.T - p.First.T)).First();
-                return r with { Track = [new TrackPoint(0, x), .. tr.Where(p => p.T > rel).Select(p => p with { T = Math.Round(p.T - rel, 3) })] };
-            }
-            res[idx] = c with { SrcOut = src };
-            res.Insert(idx + 1, c with { ClipId = c.ClipId + "s", SrcIn = src, AudioIn = c.AudioIn is double a ? Math.Round(a + rel * c.Speed, 3) : null, Reframe = Shift(c.Reframe), TransitionSec = 0 });
+            SplitAt(res, ch.Start);
         }
         return res;
+    }
+
+    /// <summary>Split at body time without removing source frames or shifting camera/audio/PiP tracks.</summary>
+    public static void SplitAt(List<Clip> clips, double at)
+    {
+        double off = 0;
+        for (int i = 0; i < clips.Count; i++)
+        {
+            var c = clips[i]; double rel = at - off;
+            if (rel > 0.001 && rel < c.Length - 0.001)
+            {
+                double src = c.SrcIn + rel * c.Speed;
+                List<TrackPoint>? Shift(List<TrackPoint>? tr)
+                {
+                    if (tr is not { Count: > 0 }) return tr;
+                    double x = tr.Count == 1 || rel <= tr[0].T ? tr[0].X : rel >= tr[^1].T ? tr[^1].X
+                        : tr.Zip(tr.Skip(1)).Where(p => rel >= p.First.T && rel <= p.Second.T).Select(p => p.First.X + (p.Second.X - p.First.X) * (rel - p.First.T) / (p.Second.T - p.First.T)).First();
+                    return [new TrackPoint(0, x), .. tr.Where(p => p.T > rel).Select(p => p with { T = p.T - rel })];
+                }
+                clips[i] = c with { SrcOut = src };
+                clips.Insert(i + 1, c with
+                {
+                    ClipId = c.ClipId + "s", SrcIn = src, TransitionSec = 0,
+                    AudioIn = c.AudioIn is double a ? a + rel * c.Speed : null,
+                    Reframe = c.Reframe with { Track = Shift(c.Reframe.Track), TrackY = Shift(c.Reframe.TrackY) },
+                    Pip = c.Pip is { } pip ? pip with { SrcIn = pip.SrcIn + rel * c.Speed } : null,
+                });
+                return;
+            }
+            off += c.Length;
+        }
+    }
+
+    public static double CardDuration(BrandKit? kit, Canvas canvas) =>
+        Math.Round(Math.Clamp(kit?.CardSec ?? 2.5, BrandKitService.MinCardSec, BrandKitService.MaxCardSec) * canvas.Fps) / canvas.Fps;
+
+    public static void AddTsukkomi(List<Clip> clips, List<Insert> inserts, IEnumerable<(double At, string Text)> suggestions, BrandKit? kit, Canvas canvas, List<string> notes)
+    {
+        var image = kit is { RightsConfirmed: true } ? BrandKitService.Pick(kit.Files, "card", canvas) : null;
+        foreach (var (at, text) in suggestions.OrderBy(x => x.At))
+        {
+            if (at <= 0 || at >= clips.Sum(c => c.Length) - 0.001) { notes.Add($"ツッコミ「{text}」は本編の端にあるため挿入しません"); continue; }
+            if (inserts.Any(i => i.Kind == "card" && Math.Abs(i.At - at) < 1.5)) { notes.Add($"ツッコミ「{text}」は近接するカードがあるため挿入しません"); continue; }
+            SplitAt(clips, at);
+            double off = 0, sourceT = 0;
+            for (int k = 0; k < clips.Count; k++)
+            {
+                var c = clips[k];
+                off += c.Length;
+                if (Math.Abs(off - at) < 0.001)
+                {
+                    sourceT = c.MasterOut;
+                    if (k + 1 < clips.Count) clips[k + 1] = clips[k + 1] with { TransitionSec = 0 };
+                    break;
+                }
+            }
+            inserts.Add(new Insert
+            {
+                Id = $"tsukkomi{inserts.Count + 1}", Kind = "card", At = at, Duration = CardDuration(kit, canvas),
+                Text = text, TextSource = "ai", Approved = false, SourceT = sourceT, Sfx = CardSfx,
+                Path = image?.Path, Width = image?.Width ?? 0, Height = image?.Height ?? 0,
+                RightsConfirmed = image != null, ImageAssetId = image?.ImageAssetId,
+            });
+        }
+        int count = inserts.Count(i => i.Id.StartsWith("tsukkomi", StringComparison.Ordinal));
+        if (count > 0) notes.Add($"ツッコミを {count} 枚の停止カードとして提案しました（承認するまで書き出せません）");
     }
 
     public static (List<Clip> Clips, List<Insert> Inserts) Plan(List<Clip> clips, JobOptions o, BrandKit? kit, Canvas canvas, double targetLufs, SeriesInfo? series, List<string> notes)
@@ -302,7 +359,7 @@ public static class InsertPlanner
         {
             var bounds = SceneChanges(clips, series);
             var images = kit is { RightsConfirmed: true } ? kit.Files.Where(f => f.Kind == "card").ToList() : [];
-            double sec = Math.Round((kit?.CardSec ?? 1.0) * canvas.Fps) / canvas.Fps;
+            double sec = CardDuration(kit, canvas);
             int k = 0, faded = 0;
             foreach (var b in bounds)
             {
@@ -311,7 +368,7 @@ public static class InsertPlanner
                 {
                     Id = $"card{k + 1}", Kind = "card", At = Math.Round(b.At, 3), Duration = sec, Path = img?.Path, Width = img?.Width ?? 0, Height = img?.Height ?? 0, RightsConfirmed = img != null,
                     ImageAssetId = img?.ImageAssetId,
-                    Text = img != null ? "" : FixedPhrases[k % FixedPhrases.Length], TextSource = img != null ? "" : "fixed", SourceT = Math.Round(b.SourceT, 3), Sfx = CardSfx,
+                    Text = FixedPhrases[k % FixedPhrases.Length], TextSource = "fixed", SourceT = Math.Round(b.SourceT, 3), Sfx = CardSfx,
                 });
                 if (clips[b.ClipIndex].TransitionSec > 0) { clips[b.ClipIndex] = clips[b.ClipIndex] with { TransitionSec = 0 }; faded++; }
                 k++;
@@ -325,10 +382,10 @@ public static class InsertPlanner
 
     public const string CardSchema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["card_id","text"],"properties":{"card_id":{"type":"string"},"text":{"type":"string"}}}}}}""";
     const string CardSystem = """
-あなたは日本のバラエティ系 YouTube の編集者です。話題が切り替わる所に1秒だけ挟む「ツッコミ」カードの文字を作ります。
+あなたは日本のバラエティ系 YouTube の編集者です。映像を一時停止するように2〜3秒挟む「ツッコミ」カードの文字を作ります。
 各カードについて、直前の場面の字幕を読み、その場面への短いツッコミ（例:「いや長い！」「結局どっち？」「話それすぎ」）を1つ書きます。
 規則:
-- 14字以内の口語。1秒で読める短さにする
+- 14字以内の口語。2〜3秒で読める短さにする
 - card_id は与えられた ID をそのまま使う
 - 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない
 - 人や集団を傷つける、侮辱する、差別的な内容は書かない。ツッコミの対象は「発言の内容」や「状況」にする
@@ -338,7 +395,7 @@ public static class InsertPlanner
     /// <summary>AI tsukkomi text for text cards. Filtered in code like tsukkomi telops and created unapproved (H-08). Returns how many cards got AI text.</summary>
     public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct)
     {
-        var cards = inserts.Where(i => i.Kind == "card" && i.Path == null).ToList();
+        var cards = inserts.Where(i => i.Kind == "card" && i.TextSource != "ai").ToList();
         if (cards.Count == 0) return 0;
         var caps = telops.Where(t => t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
         var blocks = new List<string>();

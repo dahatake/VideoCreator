@@ -192,8 +192,9 @@ public static class AssWriter
     {
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(Planning.InsertMap.Active(plan)).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width, c.MarginR);
-            int x = (MarginL + plan.Canvas.Width - c.MarginR) / 2, y = (int)(plan.Canvas.Height * (card.Path != null ? 0.62 : 0.42));
+            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width - (card.Bgm != null ? Math.Abs(c.MarginR - MarginL) : 0), c.MarginR);
+            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
+            int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
             sb.AppendLine($@"Dialogue: {layer},{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
         }
@@ -247,8 +248,9 @@ public static class AssWriter
         }
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width, c.MarginR);
-            int x = (MarginL + plan.Canvas.Width - c.MarginR) / 2, y = (int)(plan.Canvas.Height * (card.Path != null ? 0.62 : 0.42));
+            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width - (card.Bgm != null ? Math.Abs(c.MarginR - MarginL) : 0), c.MarginR);
+            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
+            int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
             sb.AppendLine($@"Dialogue: 3,{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
         }

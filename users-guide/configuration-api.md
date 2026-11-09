@@ -107,7 +107,7 @@ BGM multipartの権利確認等は[Api.csの実装](../src/VideoCreator.App/Api.
 |---|---|
 | scope | economy / balanced / full（既定balanced） |
 | bgm | auto / none / 曲ID |
-| sfx / tsukkomi | bool。AIツッコミはP3で使用 |
+| sfx / tsukkomi | bool。AIツッコミはP3で使用。発言直後に2〜3秒の停止カード（画像／パネル＋文字＋専用BGM）を挿入 |
 | parts / part_minutes | 本数2〜20 **か** 1本の分数1〜60。互いに排他。両方nullならショート |
 | opening / closing / scene_cards | bool。使用可能な共通登録等を確認 |
 | mask_words | 伏せる語の配列 |

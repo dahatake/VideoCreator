@@ -350,7 +350,10 @@ public class V11Tests : IAsyncLifetime
         var cand = new Candidate { Id = "c1", Segments = [new Interval(8.8, 40)], HookText = "1万円で帰れない", Headline = "100円だけ" };
         var tsu = new JsonLlm("""{"items":[{"caption_id":"CAP","text":"そこ？"}]}""") { CaptionFromPrompt = true };
         var (plan, _) = await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, tsu), Ct);
-        var t = Assert.Single(plan.Telops, x => x.Type == TelopType.Tsukkomi);
+        Assert.DoesNotContain(plan.Telops, x => x.Type == TelopType.Tsukkomi);
+        var t = Assert.Single(plan.Inserts, x => x.Kind == "card");
+        Assert.InRange(t.Duration, 2, 3);
+        Assert.Equal("upbeat", t.Bgm);
         Assert.False(t.Approved);
         Assert.Contains(QaEngine.PlanChecks(new QaContext(plan, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Fail);   // export blocked until approved
         var approved = PlanEditor.Apply(plan, [new PlanOp("approve_all_tsukkomi")]);

@@ -111,6 +111,7 @@ public static class PlanBuilder
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("字幕の短縮に失敗しました: " + ex.Message); }
         }
         int n = telops.Count + 100;
+        var tsukkomi = new List<(double At, string Text)>();
         var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
         if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n));
@@ -127,8 +128,7 @@ public static class PlanBuilder
                     foreach (var (id, text) in items)
                     {
                         var cap = caps.First(c => c.Id == id);
-                        if (telops.Any(t => t.Type == TelopType.Tsukkomi && Math.Abs(t.Start - cap.End) < 1.5)) continue;
-                        telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Tsukkomi, Start = cap.End, End = Math.Round(Math.Min(total, cap.End + 1.4), 3), Text = text, Style = "Tsukkomi", Animation = "pop", Approved = false });
+                        tsukkomi.Add((cap.End, text));
                     }
                     notes.Add(items.Count > 0 ? $"ツッコミテロップ {items.Count} 件を提案しました（承認するまで書き出せません）" : "ツッコミテロップは提案できませんでした");
                 }
@@ -152,7 +152,9 @@ public static class PlanBuilder
         };
         var canvas = new Canvas();
         var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
-        if (r.Llm != null && inserts.Any(i => i.Kind == "card" && i.Path == null))
+        InsertPlanner.AddTsukkomi(packed, inserts, tsukkomi, r.Kit, canvas, notes);
+        inserts = inserts.Select(i => i.Kind == "card" ? i with { Bgm = "upbeat", GainDb = p.Audio.BgmDb } : i).ToList();
+        if (r.Llm != null && inserts.Any(i => i.Kind == "card" && i.TextSource != "ai"))
         {
             try
             {

@@ -372,7 +372,7 @@ public sealed record EditPlan
     public double TotalDuration => Duration + Inserts.Where(i => i.Enabled).Sum(i => i.Duration);
 }
 
-/// <summary>Something played between timeline clips: an opening / closing video (bumper) or a ~1 s scene-change card.</summary>
+/// <summary>Something played between timeline clips: an opening / closing video (bumper) or a 2–3 s tsukkomi card.</summary>
 public sealed record Insert
 {
     public required string Id { get; init; }
@@ -405,6 +405,8 @@ public sealed record Insert
     /// <summary>Card: master time of the cut it covers (used to keep user edits when the plan is rebuilt).</summary>
     public double? SourceT { get; init; }
     public string? Sfx { get; init; }
+    /// <summary>Card-only music, independent of the body's BGM choice. Null preserves older plans' audio.</summary>
+    public string? Bgm { get; init; }
 }
 
 // ---- Brand kit: the channel's opening / closing videos and card images (registered once, used by every project) ----
@@ -452,7 +454,7 @@ public sealed record BrandKit
     public string ConfirmedBy { get; init; } = Environment.UserName;
     public DateTimeOffset ConfirmedAt { get; init; } = DateTimeOffset.UtcNow;
     /// <summary>Scene-change card length (seconds).</summary>
-    public double CardSec { get; init; } = 1.0;
+    public double CardSec { get; init; } = 2.5;
     /// <summary>Upscale opening / closing videos smaller than the output once, at registration (kept only where it measurably helps).</summary>
     public bool Upscale { get; init; } = true;
 }
@@ -480,7 +482,7 @@ public sealed record JobOptions
     public bool Opening { get; init; }
     /// <summary>Play the registered closing video at the end.</summary>
     public bool Closing { get; init; }
-    /// <summary>~1 s tsukkomi cards at scene changes.</summary>
+    /// <summary>2–3 s tsukkomi cards at scene changes.</summary>
     public bool SceneCards { get; init; }
     /// <summary>伏せ字: words hidden as ● in every telop/SRT/card, with the dialogue under them replaced by a tone (Planning.Masking).</summary>
     public List<string> MaskWords { get; init; } = [];

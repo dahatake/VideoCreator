@@ -273,6 +273,7 @@ public sealed class PipelineRunner(PipelineServices s)
 
         BgmTrack? bgm = null;
         var bgmId = PlanBuilder.ResolveBgmId(preset, job.Options);
+        if (s.Audio != null && (job.Options.SceneCards || job.Options.Tsukkomi)) await s.Audio.EnsureAsync(ct);
         if (bgmId != null)
         {
             if (s.Audio != null) await s.Audio.EnsureAsync(ct);

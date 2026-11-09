@@ -455,7 +455,7 @@ async function project(id, showSettings = false) {
             ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>${esc(b.name)}${b.source === 'user' ? '（自分の曲）' : ''}${b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''}</option>`).join('')}
           </select></label>
           ${field('効果音（ポン・ピンポン・ドーン など）', `<fluent-switch slot="input" id="sfx" ${opts.sfx ? 'checked' : ''}></fluent-switch>`)}
-          ${field('ツッコミテロップを AI に提案させる（P3 のみ。承認するまで書き出せません）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
+          ${field('映像を2〜3秒止めるツッコミカードを AI に提案させる（P3 のみ。画像＋文字＋BGM。承認が必要）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
           <label class="caption">伏せる語（読点・カンマ区切り。字幕・テロップでは ● になり、音声はピー音になります）<input type="text" class="native" id="maskWords" maxlength="400" style="display:block;width:100%;margin-top:4px" value="${esc(opts.mask_words.join('、'))}" placeholder="例: 店の名前、人の名前"></label>
           <details><summary class="caption">自分の BGM を追加する</summary>
             <form id="bgmForm" class="stack" style="margin-top:8px">
@@ -481,13 +481,13 @@ async function project(id, showSettings = false) {
           })()}
           ${field('オープニングを入れる（先出しの見どころのあと）', `<fluent-switch slot="input" id="openingSw" ${opts.opening ? 'checked' : ''} ${kitView.opening ? '' : 'disabled'}></fluent-switch>`)}
           ${field('クロージングを入れる（最後）', `<fluent-switch slot="input" id="closingSw" ${opts.closing ? 'checked' : ''} ${kitView.closing ? '' : 'disabled'}></fluent-switch>`)}
-          ${field('場面が変わる所に約1秒の「ツッコミ」カードを入れる（AI の文は承認するまで書き出せません）', `<fluent-switch slot="input" id="cardsSw" ${opts.scene_cards ? 'checked' : ''}></fluent-switch>`)}
+          ${field('場面が変わる所に2〜3秒の「ツッコミ」カードを入れる（画像＋文字＋BGM。AI の文は承認が必要）', `<fluent-switch slot="input" id="cardsSw" ${opts.scene_cards ? 'checked' : ''}></fluent-switch>`)}
           <details ${kitView.registered ? '' : 'open'}><summary class="caption">${kitView.registered ? '登録し直す・解除する' : 'オープニング・クロージングを登録する'}</summary>
             <form id="kitForm" class="stack" style="margin-top:8px">
               <p class="caption">フォルダーのフルパスを指定すると、ファイル名に Opening / Closing を含む動画と、PNG / JPG 画像（カード用）を読み込みます。縦型（9:16）と横型（16:9）の両方があれば、出力に合う方を自動で使います。登録はすべてのプロジェクトで共通です。</p>
               <fluent-text-input id="kitPath" placeholder="C:\\Work\\HubRadio\\OpeningClosing" value="${esc(kitView.kit?.sources?.[0] ?? '')}" aria-label="オープニング・クロージングのフォルダー"></fluent-text-input>
               <fluent-button id="kitBrowse" type="button" size="small">フォルダーを選ぶ…</fluent-button>
-              <label class="caption">カードの長さ（秒） <input class="native" type="number" id="kitCardSec" min="0.5" max="3" step="0.1" value="${esc(kitView.kit?.card_sec ?? 1)}" style="width:72px"></label>
+              <label class="caption">カードの長さ（秒） <input class="native" type="number" id="kitCardSec" min="2" max="3" step="0.1" value="${esc(Math.max(2, Math.min(3, kitView.kit?.card_sec ?? 2.5)))}" style="width:72px"></label>
               ${field('1080×1920 より小さい動画を高画質化する（登録時に一度だけ。AI の超解像で細部を補い、この動画で実測して元に忠実になる場合だけ使います。GPU で 1 本 1〜2 分）', `<fluent-checkbox slot="input" id="kitUpscale" ${kitView.kit?.upscale === false ? '' : 'checked'}></fluent-checkbox>`)}
               ${field('これらの動画・画像（ロゴ・音楽・イラストを含む）を使う権利を自分が持っている、または許諾を得ています', '<fluent-checkbox slot="input" id="kitRights"></fluent-checkbox>')}
               <div class="row"><fluent-button type="submit" size="small">登録</fluent-button>${kitView.registered ? '<fluent-button size="small" id="kitClear" type="button">登録を解除</fluent-button>' : ''}</div><div id="kitMsg"></div>
@@ -782,7 +782,7 @@ async function project(id, showSettings = false) {
     if (!$('#kitRights').checked) { $('#kitMsg').innerHTML = info('使う権利の確認にチェックしてください', 'warning'); $('#kitRights').focus(); return; }
     $('#kitMsg').innerHTML = '<fluent-spinner size="small"></fluent-spinner> 読み込んで音量を測っています…';
     try {
-      const r = await api('/api/brandkit', { method: 'PUT', body: { paths: [$('#kitPath').value ?? ''], rights_confirmed: true, card_sec: Number($('#kitCardSec').value) || 1, upscale: !!$('#kitUpscale').checked } });
+      const r = await api('/api/brandkit', { method: 'PUT', body: { paths: [$('#kitPath').value ?? ''], rights_confirmed: true, card_sec: Number($('#kitCardSec').value) || 2.5, upscale: !!$('#kitUpscale').checked } });
       opts.opening = !!r.opening; opts.closing = !!r.closing; saveOpts();
       sessionStorage.setItem('kitProblems', JSON.stringify(r.problems ?? []));
       router();

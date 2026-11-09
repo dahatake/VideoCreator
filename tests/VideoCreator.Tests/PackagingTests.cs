@@ -8,7 +8,7 @@ using VideoCreator.Selection;
 
 namespace VideoCreator.Tests;
 
-/// <summary>Opening / closing videos and ~1 s scene-change (tsukkomi) cards: timeline mapping, placement, QA, editing, and a real FFmpeg render.</summary>
+/// <summary>Opening / closing videos and tsukkomi pause cards: timeline mapping, placement, QA, editing, and a real FFmpeg render.</summary>
 public class PackagingTests : IAsyncLifetime
 {
     static readonly Transcript Tr = Fixtures.Talk;
@@ -40,6 +40,35 @@ public class PackagingTests : IAsyncLifetime
         Assert.Equal([(20.1, 22.1), (23.1, 25.1)], InsertMap.Span(ins, 8, 12).Select(x => (Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList());
         var spans = InsertMap.InsertSpans(ins);
         Assert.Equal([0, 22.1, 43.1], spans.Select(s => Math.Round(s.Start, 3)).ToList());
+    }
+
+    [Fact]
+    public void Pause_cards_clamp_duration_and_split_synced_sources_without_loss()
+    {
+        Assert.Equal(2.5, InsertPlanner.CardDuration(null, new Canvas()));
+        Assert.Equal(2, InsertPlanner.CardDuration(new BrandKit { CardSec = 1 }, new Canvas()));
+        Assert.Equal(3, InsertPlanner.CardDuration(new BrandKit { CardSec = 10 }, new Canvas()));
+        var clips = new List<Clip>
+        {
+            C("c", 10, 12) with
+            {
+                Speed = 2, AudioIn = 8,
+                Pip = new PipSpec { AssetId = "p", SrcIn = 15 },
+                Reframe = new ReframeSpec { Track = [new(0, 100), new(6, 160)], TrackY = [new(0, 0), new(6, 60)] },
+            },
+        };
+        var inserts = new List<Insert>();
+        InsertPlanner.AddTsukkomi(clips, inserts, [(2.5, "そこ？"), (2.6, "近すぎ！")], null, new Canvas(), []);
+        var card = Assert.Single(inserts);
+        Assert.False(card.Approved);
+        Assert.Equal(2.5, card.At);
+        Assert.Equal(13, card.SourceT);
+        Assert.Equal(6, clips.Sum(c => c.Length));
+        Assert.Equal(clips[0].SrcOut, clips[1].SrcIn);
+        Assert.Equal(clips[0].MasterOut, clips[1].MasterIn);
+        Assert.Equal(20, clips[1].Pip!.SrcIn);
+        Assert.Equal(new TrackPoint(0, 125), clips[1].Reframe.Track![0]);
+        Assert.Equal(new TrackPoint(0, 25), clips[1].Reframe.TrackY![0]);
     }
 
     [Fact]
@@ -228,6 +257,88 @@ public class PackagingTests : IAsyncLifetime
         var r = await Ff.RunFfmpegAsync(["-hide_banner", "-ss", t0.ToString("0.###", IC), "-t", (t1 - t0).ToString("0.###", IC), "-i", file, "-vn", "-af", "ebur128", "-f", "null", "-"], Ct);
         var m = System.Text.RegularExpressions.Regex.Matches(r.StdErr, @"I:\s+(-?[\d.]+) LUFS");
         return double.Parse(m[^1].Groups[1].Value, IC);
+    }
+
+    async Task<byte[]> FrameAsync(string file, double t)
+    {
+        using var ms = new MemoryStream();
+        var result = await Ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", t.ToString(IC), "-i", file, "-frames:v", "1",
+            "-vf", "crop=540:120:0:0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], Ct, stdout: ms);
+        Assert.True(result.ExitCode == 0, result.StdErr);
+        return ms.ToArray();
+    }
+
+    async Task<double> ToneDbAsync(string file, double start, double frequency)
+    {
+        using var ms = new MemoryStream();
+        var r = await Ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", start.ToString(IC), "-i", file, "-t", "0.5",
+            "-vn", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"], Ct, stdout: ms);
+        Assert.True(r.ExitCode == 0, r.StdErr);
+        var pcm = ms.ToArray(); int count = pcm.Length / 4;
+        Assert.Equal(24000, count);
+        double sin = 0, cos = 0;
+        for (int i = 0; i < count; i++)
+        {
+            double phase = 2 * Math.PI * frequency * i / 48000;
+            float sample = BitConverter.ToSingle(pcm, i * 4);
+            sin += sample * Math.Sin(phase); cos += sample * Math.Cos(phase);
+        }
+        return 20 * Math.Log10(Math.Max(1e-12, Math.Sqrt(2 * (sin * sin + cos * cos)) / count));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pause_card_has_music_text_and_exact_resume_with_or_without_registered_image(bool image)
+    {
+        var src = await MakeAsync("pause-source.mp4", "testsrc2=s=540x960:r=30", 330, 0.8, 8, "hue=s=0");
+        var music = Path.Combine(_dir, "music.wav");
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=880:d=4", music], Ct);
+        string? picture = null;
+        if (image)
+        {
+            picture = Path.Combine(_dir, "card.png");
+            await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=540x360",
+                "-frames:v", "1", picture], Ct);
+        }
+        var p = Fixtures.Presets["P4"];
+        var clips = new List<Clip> { C("body", 0, 8) with { Reframe = new ReframeSpec { Mode = "fit" } } };
+        var original = new EditPlan
+        {
+            EditplanId = "pause", ProjectId = "p", Preset = p.Ref, Canvas = new Canvas(540, 960),
+            Timeline = clips.ToList(), Audio = new AudioSpec { Master = "a1", Bgm = null, SfxEnabled = false },
+        };
+        InsertPlanner.SplitAt(clips, 4);
+        var plan = original with
+        {
+            Timeline = clips,
+            Inserts = [new Insert { Id = "pause", Kind = "card", At = 4, Duration = 2.5, Text = "そこ？", Bgm = "upbeat",
+                Path = picture, Width = image ? 540 : 0, Height = image ? 360 : 0, RightsConfirmed = image, GainDb = 0 }],
+        };
+        var assets = new Dictionary<string, SourceAsset> { ["a1"] = new() { Id = "a1", ProjectId = "p", Path = src, Sha256 = "x",
+            Media = new MediaInfo { Duration = 8, Width = 540, Height = 960, Fps = 30, AudioChannels = 1 } } };
+        var renderer = new Renderer(Ff) { BgmResolver = _ => music };
+        var baseline = await renderer.RenderAsync(original, p, assets, Path.Combine(_dir, "baseline.mp4"), preview: false, Ct);
+        var output = await renderer.RenderAsync(plan, p, assets, Path.Combine(_dir, "pause.mp4"), preview: false, Ct);
+        var probe = await Ff.RunProbeAsync(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "csv=p=0", output.Path], Ct);
+        Assert.InRange(double.Parse(probe.StdOut.Trim(), IC), 10.5 - 1.0 / 30, 10.5 + 1.0 / 30);
+        static double Error(byte[] a, byte[] b)
+        {
+            Assert.NotEmpty(a); Assert.Equal(a.Length, b.Length);
+            return a.Zip(b).Average(x => Math.Abs(x.First - x.Second));
+        }
+        Assert.True(Error(await FrameAsync(output.Path, 4.3), await FrameAsync(output.Path, 6.2)) < 2, "source is frozen throughout the card");
+        Assert.True(Error(await FrameAsync(output.Path, 6.7), await FrameAsync(baseline.Path, 4.2)) < 3, "resume at the original frame without skipping content");
+        Assert.True(await YellowShareAsync(output.Path, 5.2, "432:200:54:300") > 0.01, "text is on the image/panel");
+        Assert.True(await ToneDbAsync(output.Path, 5, 880) > -35, "card BGM plays even when body BGM is none");
+        Assert.True(await ToneDbAsync(output.Path, 5, 330) < -45, "source dialogue is paused");
+        Assert.True(await ToneDbAsync(output.Path, 3, 330) > -35, "dialogue before the card");
+        Assert.True(await ToneDbAsync(output.Path, 7, 330) > -35, "dialogue resumes after the card");
+        Assert.True(await ToneDbAsync(output.Path, 7, 880) < -45, "card BGM stops on resume");
+        Assert.Contains(new Interval(4, 6.5), Renderer.FinalAudio(plan).BgmMutes);
+        var disabled = PlanEditor.Apply(plan, [new PlanOp("set_insert_enabled", "pause", Enabled: false)]);
+        Assert.Equal(8, disabled.TotalDuration);
+        Assert.Throws<FFmpegException>(() => new Renderer(Ff).ResolveInputs(plan, assets));
     }
 
     [Fact] // real FFmpeg: register a kit like C:\Work\HubRadio\OpeningClosing (720p, 96 kHz, both shapes), render opening + card + closing, verify by measurement

@@ -99,6 +99,12 @@ public sealed partial class Renderer(FFmpeg ff)
                 if (path == null || !File.Exists(path)) continue;
                 idx["sfx:" + kind] = args.Count; args.Add(["-i", path]);
             }
+        foreach (var cardBgm in InsertMap.Active(plan).Where(i => i.Kind == "card" && i.Bgm != null).Select(i => i.Bgm!).Distinct())
+        {
+            var path = BgmResolver?.Invoke(cardBgm) ?? throw new FFmpegException($"カード BGM {cardBgm} が見つかりません");
+            if (!File.Exists(path)) throw new FFmpegException($"カード BGM ファイルがありません: {path}");
+            idx["cardbgm:" + cardBgm] = args.Count; args.Add(["-stream_loop", "-1", "-i", path]);
+        }
         foreach (var ins in InsertMap.Active(plan).Where(i => i.Path != null))
         {
             // an upscaled cache that has been deleted falls back to the registered file (the scale chain fits any size)
@@ -121,7 +127,7 @@ public sealed partial class Renderer(FFmpeg ff)
         var spans = InsertMap.InsertSpans(ins);
         sfx.AddRange(spans.Where(x => x.Insert.Kind == "card" && x.Insert.Sfx != null).Select(x => new SfxEvent(x.Insert.Sfx!, Math.Round(x.Start, 3), -3)));
         var mutes = plan.Audio.BgmMutes.SelectMany(m => InsertMap.Span(ins, m.T0, m.T1)).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList();
-        mutes.AddRange(spans.Where(x => x.Insert.Kind != "card").Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))));
+        mutes.AddRange(spans.Where(x => x.Insert.Kind != "card" || x.Insert.Bgm != null).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))));
         var bleeps = plan.Audio.Bleeps.SelectMany(m => InsertMap.Span(ins, m.T0, m.T1)).Select(x => new Interval(Math.Round(x.Start, 3), Math.Round(x.End, 3))).ToList();
         return plan.Audio with { Sfx = sfx.OrderBy(s => s.T).ToList(), BgmMutes = mutes.OrderBy(m => m.T0).ToList(), Bleeps = bleeps };
     }
@@ -284,13 +290,15 @@ public sealed partial class Renderer(FFmpeg ff)
         // freeze source: the clip just before the card (or the first frame of the next one when the card opens the video)
         int prev = seq.Take(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).Last();
         int ci = prev >= 0 ? prev : seq.Skip(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).First();
-        string bg = ins.Path != null ? $"cb{j}" : $"iv{j}";
+        string bg = ins.Path != null || ins.Bgm != null ? $"cb{j}" : $"iv{j}";
         if (ci < 0) g.Append($"color=c=0x202020:s={W}x{H}:r={fps}:d={D},setsar=1{fix}[{bg}];");
         else
         {
             var c = plan.Timeline[ci]; var (k, off) = inp.Video[ci];
-            double at = prev >= 0 ? Math.Max(c.SrcIn, c.SrcOut - 0.1) : c.SrcIn;
-            var still = c with { Reframe = c.Reframe.Track is { Count: > 0 } tr ? c.Reframe with { Track = [new TrackPoint(0, prev >= 0 ? tr[^1].X : tr[0].X)] } : c.Reframe };
+            double at = prev >= 0 ? Math.Max(c.SrcIn, c.SrcOut - (ins.Bgm != null ? c.Speed / fps : 0.1)) : c.SrcIn;
+            List<TrackPoint>? Hold(List<TrackPoint>? tr) => tr is { Count: > 0 }
+                ? [new TrackPoint(0, FaceTrack.XAt(tr, prev >= 0 ? c.Length : 0))] : tr;
+            var still = c with { Reframe = c.Reframe with { Track = Hold(c.Reframe.Track), TrackY = Hold(c.Reframe.TrackY) } };
             AppendVideo(g, $"[{k}:v]trim=start={F(at - off)}:end={F(at + 0.1 - off)},setpts=PTS-STARTPTS,fps={fps},trim=end_frame=1", still, W, H, half, $"z{j}", bg,
                 $",eq=saturation=0.55:brightness=-0.06,tpad=stop_mode=clone:stop_duration={D}{fix}");
         }
@@ -300,6 +308,9 @@ public sealed partial class Renderer(FFmpeg ff)
             g.Append($"[{k}:v]scale=w={W * 4 / 5}:h={H / 2}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=rgba[ci{j}];" +
                      $"[{bg}][ci{j}]overlay=(W-w)/2:(H-h)/2-{H / 12}:eof_action=repeat,setsar=1{fix}[iv{j}];");
         }
+        else if (ins.Bgm != null)
+            g.Append($"[{bg}]drawbox=x=iw/10:y=ih*0.25:w=iw*0.8:h=ih/3:color=0x352044:t=fill," +
+                     $"drawbox=x=iw/10:y=ih*0.25:w=iw*0.8:h=ih/3:color=0xFFE600:t={Math.Max(2, W / 180)}[iv{j}];");
     }
 
     static string Silence(long samples, string label) => $"anullsrc=r=48000:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[{label}];";
@@ -311,7 +322,15 @@ public sealed partial class Renderer(FFmpeg ff)
     /// </summary>
     static string InsertAudio(EditPlan plan, Inputs inp, Insert ins, string label, long samples)
     {
-        if (ins.Kind == "card" || !ins.HasAudio || !inp.Index.TryGetValue("ins:" + ins.Id, out var k)) return Silence(samples, label);
+        if (ins.Kind == "card")
+        {
+            if (ins.Bgm == null) return Silence(samples, label);
+            int bk = inp.Index["cardbgm:" + ins.Bgm];
+            return $"[{bk}:a]atrim=duration={F(ins.Duration)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo," +
+                   $"volume={F(ins.GainDb - plan.Audio.DialogueGainDb)}dB,afade=t=in:d=0.08,afade=t=out:st={F(ins.Duration - 0.15)}:d=0.15," +
+                   $"asetpts=N/SR/TB,apad=whole_len={samples},atrim=end_sample={samples}[{label}];";
+        }
+        if (!ins.HasAudio || !inp.Index.TryGetValue("ins:" + ins.Id, out var k)) return Silence(samples, label);
         return $"[{k}:a]atrim=duration={F(ins.Duration)},asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={F(ins.GainDb - plan.Audio.DialogueGainDb)}dB," +
                $"asetpts=N/SR/TB,apad=whole_len={samples},atrim=end_sample={samples}[{label}];";
     }
