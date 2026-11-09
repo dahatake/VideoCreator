@@ -1,6 +1,6 @@
 @echo off
 rem VideoCreator launcher.
-rem   run.cmd                  first run: install/configure everything, then start the app (later runs: start only)
+rem   run.cmd                  first run: install/configure everything, then build and start the app
 rem   run.cmd --setup          run the setup again (installs what is missing, re-checks Azure), then start
 rem   run.cmd --check          report what is installed / configured, change nothing
 rem   options: --with-copilot (also install GitHub Copilot CLI)  --assign-roles (assign missing Azure roles)
@@ -61,8 +61,16 @@ call "tools\setup-env.cmd"
 
 :start
 if defined NO_START exit /b 0
+echo Building VideoCreator from the current source...
+dotnet build src\VideoCreator.App -c Release
+set "RC=%errorlevel%"
+if not "%RC%"=="0" (
+  echo [ERROR] Build failed with code %RC%. VideoCreator was not started.
+  pause
+  exit /b %RC%
+)
 echo Starting VideoCreator at http://127.0.0.1:8765/  (close this window or press Ctrl+C to stop)
-dotnet run --project src\VideoCreator.App -c Release
+dotnet run --project src\VideoCreator.App -c Release --no-build
 set "RC=%errorlevel%"
 if not "%RC%"=="0" (
   echo [ERROR] VideoCreator exited with code %RC%. To diagnose: run.cmd --check
