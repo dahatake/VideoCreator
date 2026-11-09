@@ -504,6 +504,8 @@ public sealed record Job
     public JobOptions Options { get; init; } = new();
     public List<string> ExcludeCandidateIds { get; init; } = [];
     public List<string> CandidateIds { get; init; } = [];
+    /// <summary>The job this one was made from ("別の候補を出す" / "この設定で作り直す"); informational, survives the parent's deletion.</summary>
+    public string? DerivedFromJobId { get; init; }
     public Dictionary<string, double> StageSeconds { get; init; } = [];
     public CostEstimate? Cost { get; init; }
     public List<string> Warnings { get; init; } = [];

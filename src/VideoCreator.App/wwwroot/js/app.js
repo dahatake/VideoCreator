@@ -38,8 +38,15 @@ function errorBar(e) {
   return `<fluent-message-bar intent="error" layout="multiline"><b>${esc(e.message)}</b>${hint ? `<br>${esc(hint)}` : ''}${e.code ? `<span class="caption"> (${esc(e.code)})</span>` : ''}</fluent-message-bar>`;
 }
 function info(msg, intent = 'info') { return `<fluent-message-bar intent="${intent}" layout="multiline">${esc(msg)}</fluent-message-bar>`; }
-function setSteps(current, done = current) {
-  $('#steps').innerHTML = current < 0 ? '' : STEPS.map((s, i) => `<span class="step ${i === current ? 'current' : i < done ? 'done' : ''}" ${i === current ? 'aria-current="step"' : ''}><span class="n">${i < done && i !== current ? '✓' : i + 1}</span>${s}</span>`).join('');
+function setSteps(current, done = current, links = {}) {
+  $('#steps').innerHTML = current < 0 ? '' : STEPS.map((s, i) => {
+    const cls = `step ${i === current ? 'current' : i < done ? 'done' : ''}`;
+    const inner = `<span class="n">${i < done && i !== current ? '✓' : i + 1}</span>${s}`;
+    // a finished step is a link back to it: redoing it starts a new pattern, the earlier results stay
+    return links[i] && i !== current
+      ? `<a class="${cls}" href="${esc(links[i])}" aria-label="${esc(s)}に戻る">${inner}</a>`
+      : `<span class="${cls}" ${i === current ? 'aria-current="step"' : ''}>${inner}</span>`;
+  }).join('');
 }
 function phone(src, id = '') {
   return `<div class="phone" ${id ? `id="${id}"` : ''}><video src="${esc(src)}" controls playsinline preload="metadata"></video><div class="safezone" aria-hidden="true"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i></div></div>`;
@@ -529,6 +536,12 @@ async function project(id, showSettings = false) {
         </div>
       </section>
     </div>
+    <section class="card" id="patterns" aria-labelledby="patterns-h" style="margin-top:16px">
+      <h2 id="patterns-h">作ったパターン <span class="caption">（<span id="patternCount">0</span>件）</span></h2>
+      <p class="caption">上の設定を変えて「候補をつくる」を押すたびに、新しいパターンが増えます。前に作ったパターンは、ここに残ります。</p>
+      <div id="patternList"></div>
+      <div id="patternMsg" role="status" aria-live="polite"></div>
+    </section>
     <section class="card" aria-labelledby="proper-nouns-heading" style="margin-top:16px">
       <details id="properNounsDetails">
         <summary id="proper-nouns-heading"><b>字幕・テロップの固有名詞</b> <span class="caption">（<span id="properNounCount">${d.project.proper_nouns?.length ?? 0}</span>件）</span></summary>
@@ -539,6 +552,7 @@ async function project(id, showSettings = false) {
       </details>
     </section>`;
   document.body.classList.add('fit');
+  loadPatterns(id, presets);
 
   let properNouns = (d.project.proper_nouns ?? []).map(n => ({ ...n, variants: n.variants ?? [] }));
   const properNounTypes = { person: '人名', place: '地名', organization: '企業・団体名', product: '商品・作品名', other: 'その他' };
@@ -836,10 +850,82 @@ async function project(id, showSettings = false) {
     try {
       clearTimeout(maskSaveTimer);
       if (!await saveOpts()) return;
-      const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options } }); location.hash = `#/job/${r.job_id}`;
+      const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options, derived_from_job_id: derivedFrom?.project === id ? derivedFrom.job : null } }); derivedFrom = null; location.hash = `#/job/${r.job_id}`;
     }
     catch (e) { $('#genMsg').innerHTML = errorBar(e); }
   });
+}
+
+// ---------------- patterns: every generation of a project, side by side ----------------
+let derivedFrom = null;   // { project, job }: the pattern whose settings were carried over; sent with the next generation
+const JOB_STATE = { ready: '完了', done: '完了', failed: '失敗', cancelled: '中止' };
+function patternSummary(j, presets) {
+  const o = j.options ?? {};
+  const scope = { economy: '節約', balanced: '標準', full: '全文' }[o.scope] ?? o.scope;
+  const bits = [`絞り込み: ${scope}`];
+  if (o.parts) bits.push(`${o.parts}本に分割`); else if (o.part_minutes) bits.push(`約${o.part_minutes}分ずつに分割`);
+  bits.push(`BGM: ${o.bgm === 'auto' ? '自動' : o.bgm === 'none' ? 'なし' : '指定'}`);
+  if (o.opening) bits.push('オープニング'); if (o.closing) bits.push('クロージング');
+  if (o.scene_cards) bits.push('ツッコミカード'); if (o.tsukkomi) bits.push('ツッコミ');
+  if (o.mask_words?.length) bits.push(`伏せ字 ${o.mask_words.length} 語`);
+  if (j.instruction) bits.push(`追加指示: ${j.instruction}`);
+  return bits.join(' · ');
+}
+async function loadPatterns(projectId, presets) {
+  const box = $('#patternList'); if (!box) return;
+  const items = await api(`/api/projects/${projectId}/patterns`);
+  if (!$('#patternList')) return;   // navigated away meanwhile
+  $('#patternCount').textContent = String(items.length);
+  const ids = new Set(items.map(x => x.job.id));
+  box.innerHTML = items.length ? items.map(x => {
+    const j = x.job, finished = j.status in JOB_STATE;
+    const state = JOB_STATE[j.status] ?? '生成中';
+    const parent = j.derived_from_job_id && ids.has(j.derived_from_job_id) ? `<span class="caption">（${esc(items.find(y => y.job.id === j.derived_from_job_id).preset_names.join('・'))} のパターンから）</span>` : '';
+    return `<div class="pattern" data-job="${esc(j.id)}">
+      <div>
+        <div><b>${esc(x.preset_names.join('・'))}</b> <fluent-badge appearance="tint" color="${j.status === 'failed' ? 'danger' : finished ? 'success' : 'informative'}">${state}</fluent-badge>
+          <span class="caption">${esc(new Date(j.created_at).toLocaleString('ja-JP'))}</span> ${parent}</div>
+        <div class="caption">${esc(patternSummary(j, presets))}</div>
+        <div class="caption">候補 ${x.candidates} 件 · 承認 ${x.approved} 件 · 書き出し済み ${x.exported} 件</div>
+      </div>
+      <div class="row">
+        <fluent-anchor-button size="small" href="#/job/${esc(j.id)}">${finished ? '候補を見る' : '進み具合を見る'}</fluent-anchor-button>
+        <fluent-button size="small" class="reuse" data-job="${esc(j.id)}" ${finished ? '' : 'disabled'} aria-label="${esc(x.preset_names.join('・'))}の設定を引き継いで別のパターンを作る">この設定から作り直す</fluent-button>
+        <fluent-button size="small" appearance="subtle" class="rm" data-job="${esc(j.id)}" ${x.busy ? 'disabled' : ''} aria-label="${esc(x.preset_names.join('・'))}のパターンを削除">削除</fluent-button>
+      </div>
+      <div class="rm-confirm" hidden style="grid-column:1/-1"></div>
+    </div>`;
+  }).join('') : '<p class="caption">まだありません。上で設定して「候補をつくる」を押してください。</p>';
+  $$('#patternList .reuse').forEach(b => b.addEventListener('click', async () => {
+    const x = items.find(y => y.job.id === b.dataset.job), o = x.job.options ?? {};
+    try {
+      await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
+        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi,
+        series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
+        opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [] } });
+      derivedFrom = { project: projectId, job: x.job.id };
+      await router();
+      $('#gen')?.scrollIntoView({ block: 'center' });
+      $('#genMsg').innerHTML = info('このパターンの設定を読み込みました。変えたい所を変えて「候補をつくる」を押すと、別のパターンとして増えます（今のパターンは残ります）。', 'success');
+    } catch (e) { $('#patternMsg').innerHTML = errorBar(e); }
+  }));
+  $$('#patternList .rm').forEach(b => b.addEventListener('click', () => {
+    const row = b.closest('.pattern'), box = $('.rm-confirm', row), x = items.find(y => y.job.id === b.dataset.job);
+    box.hidden = false;
+    box.innerHTML = `<fluent-message-bar intent="warning" layout="multiline">「${esc(x.preset_names.join('・'))}」のパターンを削除します。このパターンの候補・編集内容・書き出した動画は<b>削除</b>され（動画ファイルはごみ箱へ）、元に戻せません。ほかのパターンと元の素材は残ります。</fluent-message-bar>
+      <div class="row"><fluent-button size="small" appearance="primary" class="rm-ok">削除する</fluent-button><fluent-button size="small" class="rm-cancel">やめる</fluent-button></div>`;
+    $('.rm-cancel', box).addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; b.focus(); });
+    $('.rm-ok', box).addEventListener('click', async () => {
+      $('.rm-ok', box).disabled = true;
+      try {
+        await api(`/api/jobs/${encodeURIComponent(b.dataset.job)}`, { method: 'DELETE' });
+        if (derivedFrom?.job === b.dataset.job) derivedFrom = null;
+        await router();
+        $('#patternMsg').innerHTML = info(`「${x.preset_names.join('・')}」のパターンを削除しました。`, 'success');
+      } catch (e) { box.insertAdjacentHTML('beforeend', errorBar(e)); $('.rm-ok', box).disabled = false; }
+    });
+    $('.rm-cancel', box).focus();
+  }));
 }
 
 // ---------------- job: progress (SSE) + candidates ----------------
@@ -847,7 +933,7 @@ async function job(jobId) {
   const j = await api(`/api/jobs/${jobId}`);
   if (j.status === 'ready' || j.status === 'done') return candidates(j);
   await saveWorkflowState(j.project_id, { step: 'job', job_id: j.id });
-  setSteps(2);
+  setSteps(2, 2, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
   const started = Date.now();
   const skeleton = (failed, message) => {
     main.innerHTML = `
@@ -926,7 +1012,7 @@ async function job(jobId) {
 }
 
 async function candidates(j) {
-  setSteps(3);
+  setSteps(3, 3, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
   const list = await api(`/api/jobs/${j.id}/candidates`);
   await saveWorkflowState(j.project_id, { step: 'candidates', job_id: j.id });
   if (list.length && list[0].candidate.series) return seriesView(j, list);
@@ -1145,6 +1231,7 @@ async function review(epId) {
   let { plan, qa, approval, final_render_stale: finalStale } = await api(`/api/editplans/${epId}`);
   await saveWorkflowState(plan.project_id, { step: 'review', edit_plan_id: epId });
   const job = await api(`/api/jobs/${plan.provenance.job_id}`);
+  setSteps(4, 4, { 0: `#/p/${plan.project_id}/settings`, 1: `#/p/${plan.project_id}/settings`, 2: `#/job/${job.id}`, 3: `#/job/${job.id}` });
   const cands = await api(`/api/jobs/${job.id}/candidates`);
   const me = cands.find(x => x.candidate.edit_plan_id === epId);
   const bgmList = await api(`/api/bgm?project_id=${encodeURIComponent(plan.project_id)}`);
@@ -1300,7 +1387,7 @@ async function exportView(renderId) {
       clearInterval(timer);
       const r = s.render, files = r.outputs;
       const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
-      setSteps(5, 6);
+      setSteps(5, 6, { 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}` });
       main.innerHTML = `
         <div class="row" style="justify-content:space-between"><h1>書き出しが完了しました</h1>${safeToggle()}</div>
         ${info(`自動チェック: ハード制約 ${hard.filter(q => q.status === 'pass').length}/${hard.length} 合格（ffprobe / loudnorm / 実測による検証）`, 'success')}

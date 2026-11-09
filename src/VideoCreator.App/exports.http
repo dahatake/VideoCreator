@@ -40,3 +40,11 @@ GET {{baseUrl}}/api/renders/{{renderId}}
 ### Withdraw a queued export (409 once it has started).
 POST {{baseUrl}}/api/renders/{{renderId}}/cancel
 X-VideoCreator: 1
+
+### List every pattern (job) of a project: preset names, options, state, candidate / approved / exported counts, busy flag.
+@projectId = replace-with-project-id
+GET {{baseUrl}}/api/projects/{{projectId}}/patterns
+
+### Delete one pattern: its candidates, edit plans, renders and files. 409 E-JOB-BUSY while it is generating or exporting.
+DELETE {{baseUrl}}/api/jobs/{{jobId}}
+X-VideoCreator: 1

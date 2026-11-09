@@ -67,6 +67,12 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
         _running.Keys.Any(id => store.Get<Job>(Kinds.Job, id)?.ProjectId == projectId)
         || Exports.Values.Any(e => e.State is "queued" or "rendering" && store.Get<EditPlan>(Kinds.EditPlan, e.EditplanId)?.ProjectId == projectId);
 
+    /// <summary>True while the job is generating, or one of its edit plans is being exported or re-previewed.</summary>
+    public bool IsJobBusy(string jobId, IReadOnlyCollection<string> planIds) =>
+        _running.ContainsKey(jobId)
+        || Previews.Keys.Any(planIds.Contains)
+        || Exports.Values.Any(e => e.State is "queued" or "rendering" && planIds.Contains(e.EditplanId));
+
     /// <summary>No generation job, export or preview re-render is queued or running (nothing holds project files open).</summary>
     public bool IsIdle => _running.IsEmpty && Previews.IsEmpty && !Exports.Values.Any(e => e.State is "queued" or "rendering");
 

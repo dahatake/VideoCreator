@@ -16,7 +16,7 @@ public static class Api
     public sealed record PutProjectProperNouns(List<ProjectProperNoun?>? ProperNouns);
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
-    public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null);
+    public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null, string? DerivedFromJobId = null);
     public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker);
     public sealed record Regenerate(string? Instruction, List<string>? ExcludeCandidateIds);
     public sealed record PatchPlan(List<PlanOp> Ops);
@@ -545,7 +545,8 @@ public static class Api
         });
 
         // ---- jobs (FR-SEL, SSE) ----
-        api.MapPost("/projects/{id}/jobs", (Runtime rt, JobQueue q, string id, StartJob req) => StartGeneration(rt, q, id, req.PresetIds, req.Instruction, [], req.Options));
+        api.MapPost("/projects/{id}/jobs", (Runtime rt, JobQueue q, string id, StartJob req) => StartGeneration(rt, q, id, req.PresetIds, req.Instruction, [], req.Options,
+            req.DerivedFromJobId != null && rt.Store.Get<Job>(Kinds.Job, req.DerivedFromJobId)?.ProjectId == id ? req.DerivedFromJobId : null));
         api.MapGet("/jobs/{jobId}", (Runtime rt, string jobId) => rt.Store.Get<Job>(Kinds.Job, jobId) is Job j ? Results.Json(j, Json.Options) : Error(404, "E-NOT-FOUND", "ジョブがありません"));
         api.MapPost("/jobs/{jobId}/cancel", (JobQueue q, string jobId) => q.Cancel(jobId) ? Results.Accepted() : Error(409, "E-NOT-RUNNING", "実行中ではありません"));
         api.MapGet("/jobs/{jobId}/events", async (HttpContext ctx, JobEvents ev, Runtime rt, string jobId, CancellationToken ct) =>
@@ -646,8 +647,48 @@ public static class Api
             var prev = rt.Store.Get<Job>(Kinds.Job, jobId);
             if (prev == null) return Error(404, "E-NOT-FOUND", "ジョブがありません");
             var exclude = (req.ExcludeCandidateIds ?? []).Concat(prev.ExcludeCandidateIds).Concat(prev.CandidateIds).Distinct().ToList();
-            return StartGeneration(rt, q, prev.ProjectId, prev.PresetIds, req.Instruction, exclude, prev.Options);
+            return StartGeneration(rt, q, prev.ProjectId, prev.PresetIds, req.Instruction, exclude, prev.Options, derivedFrom: prev.Id);
         });
+
+        // ---- patterns: every generation (job) of a project, kept side by side ----
+        api.MapGet("/projects/{id}/patterns", (Runtime rt, JobQueue q, string id) =>
+        {
+            if (rt.Store.Get<Project>(Kinds.Project, id) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            var patterns = rt.Store.List<Job>(Kinds.Job, id).Select(j =>
+            {
+                var cands = rt.Store.List<Candidate>(Kinds.Candidate, j.Id);
+                var planIds = JobDeletion.PlanIds(rt.Store, j);
+                var finals = planIds.SelectMany(e => rt.Store.List<Render>(Kinds.Render, e).Where(r => r.Kind == "final" && File.Exists(r.Path)
+                    && !RenderValidity.IsStale(r, rt.Store.Get<EditPlan>(Kinds.EditPlan, e)))).Count();
+                return new
+                {
+                    job = j,
+                    preset_names = j.PresetIds.Select(p => rt.Presets.TryGetValue(p, out var pr) ? pr.Name : p).ToList(),
+                    candidates = cands.Count,
+                    approved = cands.Count(c => c.Approval != null),
+                    exported = finals,
+                    busy = q.IsJobBusy(j.Id, planIds),
+                };
+            });
+            return Results.Json(patterns, Json.Options);
+        });
+        api.MapDelete("/jobs/{jobId}", (Runtime rt, JobQueue q, ProjectsLocation loc, RemoveFolder remove, string jobId) => rt.Store.Atomic<IResult>(() =>
+        {
+            var job = rt.Store.Get<Job>(Kinds.Job, jobId);
+            if (job == null) return Error(404, "E-NOT-FOUND", "ジョブがありません");
+            var p = rt.Store.Get<Project>(Kinds.Project, job.ProjectId);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (q.IsJobBusy(job.Id, JobDeletion.PlanIds(rt.Store, job))) return Error(409, "E-JOB-BUSY", "このパターンは生成または書き出しの途中です。終わるか、キャンセルしてから削除してください");
+            try
+            {
+                var r = JobDeletion.Delete(rt.Store, p, job, rt.Options.ResolvedDataDir, remove, out var renders);
+                q.Forget([job.Id], renders);
+                if (p.WorkflowState is { } ws && (ws.JobId == job.Id || renders.Contains(ws.RenderId ?? "") || ws.EditPlanId is string ep && rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) == null))
+                    rt.Store.Put(Kinds.Project, p.Id, null, p with { WorkflowState = new ProjectWorkflowState { Step = "settings" } });
+                return Results.Json(r, Json.Options);
+            }
+            catch (FolderInUseException ex) { return Error(409, "E-FILE-IN-USE", ex.Message); }
+        })).WithSummary("Delete one pattern (job) with its candidates, edit plans and renders; other patterns stay");
 
         // ---- edit plans (FR-REV) ----
         api.MapGet("/editplans/{id}", (Runtime rt, string id) =>
@@ -784,7 +825,7 @@ public static class Api
         return Selection.CandidateValidator.MergeOverlaps(body, 2.0);
     }
 
-    static IResult StartGeneration(Runtime rt, JobQueue q, string projectId, List<string> presetIds, string? instruction, List<string> exclude, JobOptions? options = null)
+    static IResult StartGeneration(Runtime rt, JobQueue q, string projectId, List<string> presetIds, string? instruction, List<string> exclude, JobOptions? options = null, string? derivedFrom = null)
     {
         options ??= new JobOptions();
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
@@ -828,7 +869,7 @@ public static class Api
         var job = new Job
         {
             Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = presetIds, Instruction = instruction, Options = options,
-            ExcludeCandidateIds = exclude, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope),
+            ExcludeCandidateIds = exclude, DerivedFromJobId = derivedFrom, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope),
         };
         q.EnqueueJob(job);
         return Results.Json(new { job_id = job.Id, cost = job.Cost }, Json.Options, statusCode: 202);
