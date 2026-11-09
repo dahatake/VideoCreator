@@ -192,7 +192,7 @@ public static class AssWriter
     {
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(Planning.InsertMap.Active(plan)).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width - (card.Bgm != null ? Math.Abs(c.MarginR - MarginL) : 0), c.MarginR);
+            var fit = CardFontSize(card, plan.Canvas, c);
             int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
@@ -248,7 +248,7 @@ public static class AssWriter
         }
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = FitFontSize(card.Text, CardFontPx, CardOutline, plan.Canvas.Width - (card.Bgm != null ? Math.Abs(c.MarginR - MarginL) : 0), c.MarginR);
+            var fit = CardFontSize(card, plan.Canvas, c);
             int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
@@ -258,6 +258,15 @@ public static class AssWriter
     }
 
     public const int CardFontPx = 120, CardOutline = 12;
+
+    static int CardFontSize(Insert card, Canvas canvas, CaptionStyle c)
+    {
+        if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, c.MarginR);
+        double width = canvas.Width - 2 * Math.Max(MarginL, c.MarginR);
+        if (card.Path != null && card.Width > 0 && card.Height > 0)
+            width = Math.Min(width, Math.Min(canvas.Width * 0.8, canvas.Height * 0.5 * card.Width / card.Height));
+        return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + MarginL + c.MarginR, c.MarginR);
+    }
 
     public static string Time(double s)
     {

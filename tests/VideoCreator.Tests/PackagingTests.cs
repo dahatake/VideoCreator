@@ -72,6 +72,28 @@ public class PackagingTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Card_text_fits_the_registered_portrait_image_in_both_telop_styles()
+    {
+        foreach (var id in new[] { "P3", "P4" })
+        {
+            var p = Fixtures.Presets[id];
+            string text = new('あ', 20);
+            var plan = new EditPlan
+            {
+                EditplanId = "fit", ProjectId = "p", Preset = p.Ref, Timeline = [C("body", 0, 8)],
+                Audio = new AudioSpec { Master = "a1" },
+                Inserts = [new Insert { Id = "card", Kind = "card", At = 4, Duration = 2.5, Path = "portrait.png",
+                    Width = 1080, Height = 1920, Text = text, Bgm = "upbeat" }],
+            };
+            int fit = AssWriter.FitFontSize(text, AssWriter.CardFontPx, AssWriter.CardOutline,
+                540 + AssWriter.MarginL + p.Telop.Caption.MarginR, p.Telop.Caption.MarginR);
+            var ass = AssWriter.Write(plan, p);
+            Assert.Contains($@"\fs{fit}", ass);
+            Assert.Contains(@"\pos(540,806)", ass);
+        }
+    }
+
+    [Fact]
     public void Brand_files_are_classified_by_name_and_the_canvas_shaped_variant_is_picked()
     {
         Assert.Equal("opening", BrandKitService.Classify(@"C:\x\Opening-9x16.mp4"));
