@@ -56,6 +56,7 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
             bgm = "none",
             sfx = false,
             tsukkomi = true,
+            tsukkomi_style = "telop",
             series = true,
             series_by = "minutes",
             parts = 3,
@@ -74,6 +75,7 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
         Assert.Equal("none", saved.Bgm);
         Assert.False(saved.Sfx);
         Assert.True(saved.Tsukkomi);
+        Assert.Equal("telop", saved.TsukkomiStyle);
         Assert.True(saved.Series);
         Assert.Equal("minutes", saved.SeriesBy);
         Assert.Equal(3, saved.Parts);

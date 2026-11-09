@@ -59,13 +59,16 @@ main { padding: var(--s24); max-width: 1440px; width: 100%; margin: 0 auto; outl
 .cols-auto { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .cols-cands { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 /* Steps 1-3 always sit side by side (never stacked); below ~780px wide main scrolls horizontally instead. */
-.cols-steps { grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.25fr) minmax(220px, 1fr); align-items: start; }
+.cols-steps { grid-template-columns: minmax(220px, .9fr) minmax(260px, 1.15fr) minmax(280px, 1.2fr); align-items: start; }
 .col-body { align-content: start; }
-.col-foot { margin-top: var(--s16); padding-top: var(--s12); border-top: 1px solid var(--colorNeutralStroke2, #e0e0e0); }
-/* The columns fill the viewport and scroll independently, so the generate button never needs page scrolling.
-   On extremely short windows the 260px floor kicks in and main scrolls rather than squashing the columns. */
+.col-foot { margin-top: var(--s12); padding-top: var(--s8); border-top: 1px solid var(--colorNeutralStroke2, #e0e0e0); display: grid; gap: var(--s8); }
+.col-foot fluent-message-bar { margin: var(--s8) 0 0; }
+.col-foot .send-to { margin: 0; overflow-wrap: anywhere; }
+/* The title and the three columns fill the viewport and the columns scroll independently, so the generate button never needs
+   page scrolling; the pattern list sits below and is reached by scrolling main. Very short windows fall back to the 440px floor. */
 body.fit { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 body.fit main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; padding-bottom: var(--s16); }
+body.fit .fit-top { flex: none; height: 100%; min-height: 440px; display: flex; flex-direction: column; }
 body.fit .cols-steps { flex: 1 0 260px; min-height: 0; align-items: stretch; }
 body.fit .step-col { display: flex; flex-direction: column; min-height: 0; }
 body.fit .col-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--s8)); padding: var(--s4) var(--s8); }
@@ -140,8 +143,11 @@ ul.notes { margin: var(--s4) 0 0; padding-left: var(--s20); font-size: 12px; col
 table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.list th { text-align: left; font-weight: 600; font-size: 12px; color: var(--colorNeutralForeground3); padding: var(--s8); border-bottom: 1px solid var(--colorNeutralStroke2); position: sticky; top: 0; background: var(--colorNeutralBackground1); z-index: 1; }
 table.list td { padding: var(--s4) var(--s8); border-bottom: 1px solid var(--colorNeutralStroke3, #f0f0f0); vertical-align: middle; }
-table.list input.telop { width: 100%; font: inherit; padding: var(--s4) var(--s8); border: 1px solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium, 4px); background: var(--colorNeutralBackground1); color: inherit; }
-table.list input.telop:focus { outline: 2px solid var(--colorBrandStroke1); outline-offset: -1px; }
+table.list button.timestamp-seek { padding: 0; border: 0; background: transparent; color: var(--colorBrandForegroundLink, #115ea3); font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; text-decoration: underline; cursor: pointer; }
+table.list button.timestamp-seek:focus-visible { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 2px; }
+table.list input.telop, table.list input.card-text { width: 100%; font: inherit; padding: var(--s4) var(--s8); border: 1px solid var(--colorNeutralStroke1); border-radius: var(--borderRadiusMedium, 4px); background: var(--colorNeutralBackground1); color: inherit; }
+table.list input.telop:focus, table.list input.card-text:focus { outline: 2px solid var(--colorBrandStroke1); outline-offset: -1px; }
+table.list .insert-notes { margin: 2px 0 0; }
 table.list tr.off td { opacity: .45; }
 .scroll { max-height: 62vh; overflow: auto; }
 .tag { display: inline-block; padding: 0 var(--s8); border-radius: 999px; font-size: 11px; line-height: 18px; font-weight: 600; white-space: nowrap; }
@@ -149,6 +155,9 @@ table.list tr.off td { opacity: .45; }
 .tag.emphasis { background: #fff4ce; color: #835b00; }
 .tag.hook { background: #ebf3fc; color: #0f548c; }
 .tag.headline { background: #f1f0fe; color: #3b2d9e; }
+.tag.tsukkomi { background: #fde7e9; color: #a4262c; }
+.tag.card { background: #fff0e0; color: #8a3707; }
+.tag.opening, .tag.closing { background: #e0f2f1; color: #00594f; }
 .warn { color: var(--colorPaletteDarkOrangeForeground1, #bc4b09); font-weight: 600; }
 .qa-row { display: grid; grid-template-columns: 52px 72px 1fr; gap: var(--s8); padding: var(--s4) 0; font-size: 12px; border-bottom: 1px solid var(--colorNeutralStroke3); }
 .qa-row b { font-weight: 600; }
@@ -179,3 +188,21 @@ fieldset.proper-noun-row legend { padding: 0 var(--s4); }
 fieldset.proper-noun-row label { display: flex; flex-direction: column; gap: var(--s4); }
 fieldset.proper-noun-row input { min-width: 180px; }
 fieldset.proper-noun-row label:last-of-type { flex: 1; }
+/* "3. 生成する" groups follow the Windows Settings expander: the header shows the current value while collapsed */
+.setgroup { border-bottom: 1px solid var(--colorNeutralStroke2, #e0e0e0); padding-bottom: var(--s8); }
+.setgroup:last-child { border-bottom: 0; }
+.setgroup > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: var(--s8); align-items: center; padding: var(--s4); border-radius: var(--borderRadiusMedium, 4px); }
+.setgroup > summary::-webkit-details-marker { display: none; }
+.setgroup > summary::before { content: ""; width: 6px; height: 6px; justify-self: center; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform var(--durationFast, 150ms) var(--curveEasyEase, ease); }
+.setgroup[open] > summary::before { transform: rotate(45deg); }
+.setgroup > summary:hover { background: var(--colorNeutralBackground1Hover, #f5f5f5); }
+.setgroup > summary:focus-visible { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 1px; }
+.setgroup > summary h3 { margin: 0; font-size: 14px; line-height: 20px; }   /* Body 1 Strong */
+.setgroup > summary .group-sum { grid-column: 2; overflow-wrap: anywhere; }
+.setgroup[open]:not(.muted-box) > summary .group-sum { display: none; }
+.setgroup-body { padding: var(--s4) 0 0 var(--s4); }
+details.help > summary { cursor: pointer; width: fit-content; }
+details.help[hidden] { display: none; }
+details.help p { margin: var(--s4) 0 0; }
+#scopes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s8); }
+.card.scope { padding: var(--s8) var(--s12); display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }

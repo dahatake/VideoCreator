@@ -89,10 +89,13 @@ public static class TsukkomiService
 {
     public const string Schema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["caption_id","text"],"properties":{"caption_id":{"type":"string"},"text":{"type":"string"}}}}}}""";
     const string System = """
-あなたは日本のバラエティ番組のテロップ担当です。字幕の流れを読み、ボケや意外な発言の直後に入る「ツッコミテロップ」を最大4個作ります。
+あなたは日本のバラエティ番組のテロップ担当です。字幕の流れを読み、ボケや意外な発言・見せ場の直後に入る「ツッコミテロップ」を最大4個作ります。
+ツッコミテロップは出演者のセリフではなく、見ている人が心の中で言いたくなる一言の代弁です。場面に合う反応を選びます:
+ツッコミ（「なんでやねん！」「そこ？」「いや多すぎ！」）、称賛（「イケてる！」「天才か」）、共感（「わかる〜」）、驚き（「マジで!?」）。
 規則:
-- 各ツッコミは14字以内の短い口語（例:「いや多すぎ！」「そこ？」「言い方！」）
+- 各ツッコミは14字以内の短い口語
 - caption_id は与えられた字幕のIDから選び、その字幕の直後に表示される
+- 字幕の言葉をそのまま繰り返さない（発言への反応を書く）。同じ文を2回使わない
 - 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない
 - 人や集団を傷つける、侮辱する、差別的な内容は書かない。ツッコミの対象は「発言の内容」や「状況」にする
 - 面白くなりそうな箇所が少なければ、個数を減らしてよい（0個でもよい）
@@ -106,10 +109,11 @@ public static class TsukkomiService
         var user = "字幕:\n" + string.Join("\n", captions.Select(c => $"{c.Id}: {c.Text}"));
         var json = await llm.CompleteJsonAsync(System, user, "tsukkomi", Schema, ct);
         using var doc = JsonDocument.Parse(json);
+        var seen = new HashSet<string>();
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
         {
             var id = it.GetProperty("caption_id").GetString() ?? ""; var text = (it.GetProperty("text").GetString() ?? "").Trim();
-            if (Validate(text, id, captions, sourceText) == null) res.Add((id, text));
+            if (Validate(text, id, captions, sourceText) == null && seen.Add(Bare(text))) res.Add((id, text));
             if (res.Count >= 4) break;
         }
         return res;
@@ -122,15 +126,25 @@ public static class TsukkomiService
         return ValidateText(text, sourceText);
     }
 
-    /// <summary>Length, blocklist and grounding rules shared by tsukkomi telops and scene-change cards.</summary>
+    /// <summary>Length, blocklist, echo and grounding rules shared by tsukkomi telops and scene-change cards.</summary>
     public static string? ValidateText(string text, string sourceText)
     {
         if (text.Length == 0 || text.Length > 14) return "length";
         if (Blocklist.Any(text.Contains)) return "blocklist";
-        if (JapaneseText.UngroundedClaims(text, sourceText).Count > 0) return "ungrounded";
-        if (Regex.Matches(text, @"[ァ-ヴー]{4,}").Any(m => !sourceText.Contains(m.Value))) return "invented name";
+        // the line is the viewer's reaction, not a quote: a copy of what was said only duplicates the caption
+        var bare = Bare(text);
+        if (bare.Length >= 4 && Bare(sourceText).Contains(bare, StringComparison.Ordinal)) return "echo";
+        if (JapaneseText.UngroundedClaims(text, sourceText, ReactionWords).Count > 0) return "ungrounded";
+        if (Regex.Matches(text, @"[ァ-ヴー]{4,}").Any(m => !sourceText.Contains(m.Value) && !ReactionWords.Contains(m.Value))) return "invented name";
         return null;
     }
+
+    /// <summary>Colloquial katakana in viewer reactions (「イケてる！」「マジで!?」) — not names, so they need no grounding in the transcript.</summary>
+    public static readonly string[] ReactionWords =
+        ["イケ", "マジ", "ヤバ", "ウケ", "スゴ", "エモ", "ガチ", "ナイス", "ドンマイ", "ワクワク", "ドキドキ", "ハラハラ", "ヒヤヒヤ"];
+
+    /// <summary>Letters and digits only (NFKC), so 「わかる〜！」 and 「わかる」 compare equal.</summary>
+    public static string Bare(string s) => new(s.Normalize(global::System.Text.NormalizationForm.FormKC).Where(char.IsLetterOrDigit).ToArray());
 }
 
 /// <summary>① SFX placement and BGM mutes derived from the final telops/timeline (FR-AUD-05..07).</summary>

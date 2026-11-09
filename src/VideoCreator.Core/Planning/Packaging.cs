@@ -382,21 +382,32 @@ public static class InsertPlanner
 
     public const string CardSchema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["card_id","text"],"properties":{"card_id":{"type":"string"},"text":{"type":"string"}}}}}}""";
     const string CardSystem = """
-あなたは日本のバラエティ系 YouTube の編集者です。映像を一時停止するように2〜3秒挟む「ツッコミ」カードの文字を作ります。
-各カードについて、直前の場面の字幕を読み、その場面への短いツッコミ（例:「いや長い！」「結局どっち？」「話それすぎ」）を1つ書きます。
+あなたは日本のバラエティ系 YouTube の編集者です。映像を一時停止するように2〜3秒挟むカードの文字を作ります。
+カードの文字は出演者のセリフではなく、見ている人が心の中で言いたくなる一言の代弁です。
+各カードについて直前の場面と次の場面の字幕を読み、次のどちらかを1つ書きます。直前の場面への反応を優先します:
+- 直前の場面への反応: ツッコミ（「なんでやねん！」「いや長い！」「結局どっち？」）、称賛（「イケてる！」「天才か」）、共感（「わかる〜」「悔しい〜」）、驚き（「マジで!?」）
+- 直前の場面に反応する所がないときだけ、次の場面への期待（「次どうなる!?」「お手並み拝見」）
 規則:
 - 14字以内の口語。2〜3秒で読める短さにする
 - card_id は与えられた ID をそのまま使う
+- 字幕の言葉をそのまま繰り返さない（発言への反応を書く）
+- 次の場面の字幕に書かれていない展開や結果を予告しない（「まさかの〜」「落とし穴」などの煽りを書かない）
+- カード同士、また「使用済み」の文と同じ文を書かない。カードごとに反応の種類を変えてよい
 - 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない
 - 人や集団を傷つける、侮辱する、差別的な内容は書かない。ツッコミの対象は「発言の内容」や「状況」にする
-- 良いツッコミが思いつかないカードは返さなくてよい
+- 良い一言が思いつかないカードは返さなくてよい
 """;
 
-    /// <summary>AI tsukkomi text for text cards. Filtered in code like tsukkomi telops and created unapproved (H-08). Returns how many cards got AI text.</summary>
+    /// <summary>
+    /// AI viewer-voice text for scene-change cards, with or without an image. Filtered in code like tsukkomi telops (plus no repeats of other cards or
+    /// tsukkomi) and created unapproved (H-08). Cards the AI skips keep their fixed phrase. Returns how many cards got AI text.
+    /// </summary>
     public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct)
     {
-        var cards = inserts.Where(i => i.Kind == "card" && i.TextSource != "ai").ToList();
+        var cards = inserts.Where(i => i.Kind == "card" && i.TextSource is not ("ai" or "user")).ToList();
         if (cards.Count == 0) return 0;
+        var used = inserts.Where(i => i.Kind == "card" && i.TextSource is ("ai" or "user")).Select(i => i.Text)
+            .Concat(telops.Where(t => t.Type == TelopType.Tsukkomi).Select(t => t.Text)).Where(t => t.Length > 0).Distinct().ToList();
         var caps = telops.Where(t => t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
         var blocks = new List<string>();
         foreach (var c in cards)
@@ -407,17 +418,61 @@ public static class InsertPlanner
             blocks.Add($"{c.Id}\n  直前の場面: {string.Join(" / ", before)}\n  次の場面: {string.Join(" / ", after)}");
         }
         if (blocks.Count == 0) return 0;
+        if (used.Count > 0) blocks.Add("使用済み: " + string.Join(" / ", used));
         var json = await llm.CompleteJsonAsync(CardSystem, string.Join("\n", blocks), "scene_cards", CardSchema, ct);
         using var doc = JsonDocument.Parse(json);
+        var seen = used.Select(TsukkomiService.Bare).ToHashSet();
         int n = 0;
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
         {
             var id = it.GetProperty("card_id").GetString() ?? ""; var text = JapaneseText.NormalizeTelop((it.GetProperty("text").GetString() ?? "").Trim());
-            int idx = inserts.FindIndex(i => i.Id == id && i.Kind == "card" && i.Path == null);
-            if (idx < 0 || inserts[idx].TextSource == "ai" || TsukkomiService.ValidateText(text, sourceText) != null) continue;
+            int idx = inserts.FindIndex(i => i.Id == id && cards.Contains(i));
+            if (idx < 0 || inserts[idx].TextSource == "ai" || TsukkomiService.ValidateText(text, sourceText) != null || !seen.Add(TsukkomiService.Bare(text))) continue;
             inserts[idx] = inserts[idx] with { Text = text, TextSource = "ai", Approved = false };
             n++;
         }
         return n;
+    }
+}
+
+/// <summary>
+/// Overlay telop or pause card for each AI tsukkomi. A pause card stops the picture and the speech for 2–3 s, so in "auto" it is only used where
+/// stopping does not cut anything: the line has finished (sentence-final form or a question), the next line does not answer or continue it
+/// (「そうそう」「だから」), it is away from the body edges, other cards and the opening / closing, and the cards together add at most
+/// <see cref="CardBudget"/> of the body length (each one slows the tempo). Everything else is an overlay telop, so no proposed tsukkomi is lost.
+/// </summary>
+public static class TsukkomiPlacement
+{
+    public const double CardBudget = 0.10;
+    public static readonly string[] Styles = ["auto", "telop", "card"];
+
+    public sealed record Pick(double At, string Text, bool Card, string Reason);
+
+    public static List<Pick> Choose(string style, IReadOnlyList<(Telop Cap, Telop? Next, string Text)> items, double total, IReadOnlyList<Insert> inserts, double cardSec)
+    {
+        if (style == "telop") return items.Select(x => new Pick(x.Cap.End, x.Text, false, "重ねテロップを指定")).OrderBy(p => p.At).ToList();
+        if (style == "card") return items.Select(x => new Pick(x.Cap.End, x.Text, true, "停止カードを指定")).OrderBy(p => p.At).ToList();
+        var res = new List<Pick>();
+        var scored = new List<(double Score, Pick Pick)>();
+        foreach (var (cap, next, text) in items)
+        {
+            double at = cap.End, closure = SplitCues.Closure(cap.Text);
+            double gap = next == null ? 1 : Math.Max(0, next.Start - at);
+            string? why =
+                at < InsertPlanner.CardEdgeSec || total - at < InsertPlanner.CardEdgeSec ? "本編の端に近いため" :
+                closure < 0.6 ? "発言の途中で、止めると話が切れるため" :
+                next != null && SplitCues.Continuation(next.Text) <= -0.6 ? "次の発言が受け答えになっていて、止めると掛け合いが切れるため" : null;
+            if (why != null) res.Add(new Pick(at, text, false, why));
+            else scored.Add((closure + Math.Min(gap, 1), new Pick(at, text, true, $"発言の切れ目（次の発言まで {gap:0.0} 秒）")));
+        }
+        var taken = inserts.Where(i => i.Enabled).Select(i => i.At).ToList();
+        int budget = (int)Math.Floor(CardBudget * total / cardSec) - inserts.Count(i => i.Enabled && i.Kind == "card");
+        foreach (var (_, p) in scored.OrderByDescending(s => s.Score).ThenBy(s => s.Pick.At))
+        {
+            if (taken.Any(t => Math.Abs(t - p.At) < InsertPlanner.CardMinGapSec)) res.Add(p with { Card = false, Reason = $"近くに別のカードやオープニングがあるため（{InsertPlanner.CardMinGapSec:0} 秒以内）" });
+            else if (budget <= 0) res.Add(p with { Card = false, Reason = $"止める時間が本編の {CardBudget:P0} を超えてテンポが落ちるため" });
+            else { res.Add(p); taken.Add(p.At); budget--; }
+        }
+        return res.OrderBy(p => p.At).ToList();
     }
 }

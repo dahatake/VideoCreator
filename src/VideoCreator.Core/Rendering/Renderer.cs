@@ -271,7 +271,7 @@ public sealed partial class Renderer(FFmpeg ff)
 
     /// <summary>
     /// Insert video [iv{j}]: a bumper scaled to the canvas (blurred background when its shape differs, e.g. a 16:9 opening in a 9:16 output),
-    /// or a card = the last frame of the previous scene frozen and dimmed, with the card image on top (the card text is drawn by libass).
+    /// or a card = the last frame of the previous scene frozen and dimmed, covered full screen by the card image if any (the card text is drawn by libass).
     /// </summary>
     static void AppendInsertVideo(StringBuilder g, EditPlan plan, Inputs inp, List<(int Clip, Insert? Insert)> seq, int s, int j, int frames, int W, int H, int fps, bool half)
     {
@@ -304,14 +304,28 @@ public sealed partial class Renderer(FFmpeg ff)
         }
         if (ins.Path != null)
         {
+            // full screen: an image of about the canvas shape covers it (≤ ~10 % cropped); any other shape is shown whole over a blurred copy of itself.
+            // Transparent parts still show the frozen scene underneath.
             int k = inp.Index["ins:" + ins.Id];
-            g.Append($"[{k}:v]scale=w={W * 4 / 5}:h={H / 2}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=rgba[ci{j}];" +
-                     $"[{bg}][ci{j}]overlay=(W-w)/2:(H-h)/2-{H / 12}:eof_action=repeat,setsar=1{fix}[iv{j}];");
+            string fit = $"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H}";
+            g.Append($"[{k}:v]trim=duration={D},setpts=PTS-STARTPTS,fps={fps},format=rgba");
+            if (CardCovers(ins, W, H)) g.Append($",{fit}[ci{j}];[{bg}][ci{j}]overlay=0:0:eof_action=repeat,setsar=1{fix}[iv{j}];");
+            else g.Append($",split[cf{j}][cs{j}];[cs{j}]{fit},boxblur=20:2[cbb{j}];" +
+                          $"[cf{j}]scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[cff{j}];" +
+                          $"[{bg}][cbb{j}]overlay=0:0:eof_action=repeat[cbx{j}];[cbx{j}][cff{j}]overlay=(W-w)/2:(H-h)/2:eof_action=repeat,setsar=1{fix}[iv{j}];");
         }
         else if (ins.Bgm != null)
-            g.Append($"[{bg}]drawbox=x=iw/10:y=ih*0.25:w=iw*0.8:h=ih/3:color=0x352044:t=fill," +
-                     $"drawbox=x=iw/10:y=ih*0.25:w=iw*0.8:h=ih/3:color=0xFFE600:t={Math.Max(2, W / 180)}[iv{j}];");
+        {
+            // no image: a full-screen panel with a yellow frame just inside the edges
+            int inset = Math.Max(4, W / 24);
+            g.Append($"[{bg}]drawbox=x=0:y=0:w=iw:h=ih:color=0x352044:t=fill," +
+                     $"drawbox=x={inset}:y={inset}:w=iw-{2 * inset}:h=ih-{2 * inset}:color=0xFFE600:t={Math.Max(2, W / 180)}[iv{j}];");
+        }
     }
+
+    /// <summary>A card image close enough to the canvas shape to fill it by cropping at most ~10 % (otherwise it is letterboxed over a blurred copy).</summary>
+    public static bool CardCovers(Insert card, int w, int h) =>
+        card.Width > 0 && card.Height > 0 && Math.Abs(Math.Log((double)card.Width / card.Height / ((double)w / h))) < 0.1;
 
     static string Silence(long samples, string label) => $"anullsrc=r=48000:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[{label}];";
 

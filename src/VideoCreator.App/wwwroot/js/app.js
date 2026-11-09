@@ -110,6 +110,17 @@ function transmissionNotice(s) {
   return info(`${t.llm_disabled ? 'LLM不使用モード：LLMには送信しません。' : `LLMへの送信先：${t.llm_destination ?? '未設定'}（書き起こしの文章と音量の要約）。`}
     ${t.asr_endpoint ? `字幕用の音声は ${t.asr_endpoint} に送信します。完全オフラインではありません。認証先：${t.authentication}。` : 'ASRは未設定です。キャッシュがない音声の書き起こしはできません。'}`);
 }
+// Same disclosure as transmissionNotice, condensed to a caption so it stays visible above the generate button.
+function transmissionCompact(s) {
+  const t = s.transmission;
+  if (!t) return transmissionNotice(s);
+  const same = !t.llm_disabled && t.asr_endpoint && t.llm_destination && t.llm_destination.replace(/\/+$/, '') === t.asr_endpoint.replace(/\/+$/, '');
+  const off = `完全オフラインではありません。認証先：${esc(t.authentication)}`;
+  if (same) return `<p class="caption send-to"><b>送信先</b> 文章と音量の要約・字幕用の音声 → ${esc(t.asr_endpoint)}（${off}）</p>`;
+  const llm = t.llm_disabled ? 'LLM不使用モード：LLMには送信しません' : `文章と音量の要約 → ${esc(t.llm_destination ?? '未設定')}`;
+  const asr = t.asr_endpoint ? `字幕用の音声 → ${esc(t.asr_endpoint)}（${off}）` : 'ASRは未設定です。キャッシュがない音声の書き起こしはできません';
+  return `<p class="caption send-to"><b>送信先</b> ${llm}／${asr}</p>`;
+}
 $('#settings-btn').addEventListener('click', async () => {
   const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
   const local = s.local_only ? 'LLM不使用モードで起動しています' : '';
@@ -147,7 +158,7 @@ $('#settings-btn').addEventListener('click', async () => {
     const radios = $$('#llm fluent-radio');
     const value = radios.find(r => r.checked)?.value;
     if (!value || value === s.llm_provider) return;
-    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: value } }); s.llm_provider = value; $('#settings-body fluent-message-bar[intent=warning]')?.remove(); await refreshProvider(); const current = await api('/api/settings'); if ($('#transmission')) $('#transmission').innerHTML = transmissionNotice(current); }
+    try { await api('/api/settings', { method: 'PUT', body: { llm_provider: value } }); s.llm_provider = value; $('#settings-body fluent-message-bar[intent=warning]')?.remove(); await refreshProvider(); const current = await api('/api/settings'); if ($('#transmission')) $('#transmission').innerHTML = transmissionCompact(current); }
     catch (e) { radios.forEach(r => { r.checked = r.value === s.llm_provider; }); $('#settings-body').insertAdjacentHTML('afterbegin', errorBar(e)); }
   });
   $('#settings-dialog').show();
@@ -346,7 +357,7 @@ async function project(id, showSettings = false) {
   const notReady = !assets.length ? '素材を追加してください' : !allRights ? '権利確認にチェックしてください' : '';
   const saved = d.project.generation_settings ?? {};
   let selected = saved.preset_id ?? 'P4';
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
@@ -367,7 +378,16 @@ async function project(id, showSettings = false) {
   const jpy = (c) => `¥${Number(c.estimated_jpy).toFixed(1)}`;
   const long = estimate && estimate.duration > 1800;
 
+  // Windows Settings-style expanders: the header always shows the current value, so a collapsed group still reads at a glance
+  const groupState = JSON.parse(localStorage.getItem('vc.genGroups') ?? '{}');
+  const group = (key, title, body, { open = true, id = '', titleId = '' } = {}) => `
+        <details class="setgroup" data-group="${key}" ${id ? `id="${id}"` : ''} ${(groupState[key] ?? open) ? 'open' : ''}>
+          <summary><h3 ${titleId ? `id="${titleId}"` : ''}>${title}</h3><span class="caption group-sum" id="sum-${key}"></span></summary>
+          <div class="stack setgroup-body">${body}</div>
+        </details>`;
+
   main.innerHTML = `
+    <div class="fit-top">
     <div class="row" style="justify-content:space-between">
       <div class="row title-row" id="title-view"><h1 id="pname">${esc(d.project.name)}</h1><fluent-button id="rename" appearance="subtle" size="small">名前を変更</fluent-button></div>
       <form class="row title-row" id="title-edit" hidden>
@@ -427,45 +447,49 @@ async function project(id, showSettings = false) {
       <section class="card step-col" aria-labelledby="h-gen">
         <h2 id="h-gen">3. 生成する</h2>
         <div id="settingsSaveMsg" aria-live="polite"></div>
-        <div class="col-body stack" style="gap:16px">
-        <div class="stack">
-          <h3>シリーズに分ける（前編・中編・後編…）</h3>
+        <div class="col-body stack" style="gap:var(--s8)">
+        ${group('series', 'シリーズに分ける（前編・中編・後編…）', `
           ${field('長尺を、前編・後編のように続けて見るシリーズに分ける', `<fluent-switch slot="input" id="seriesSw" ${opts.series ? 'checked' : ''}></fluent-switch>`)}
           <fieldset class="series-by" aria-describedby="seriesInfo"><legend class="caption">分け方</legend>
             <label class="caption"><input type="radio" name="seriesBy" value="parts" ${opts.series_by === 'parts' ? 'checked' : ''}> 本数で指定 <input class="native" type="number" id="partCount" min="2" max="20" step="1" value="${esc(opts.parts)}" style="width:64px" aria-label="本数"> 本</label>
             <label class="caption"><input type="radio" name="seriesBy" value="minutes" ${opts.series_by !== 'parts' ? 'checked' : ''}> 1本の長さで指定 <input class="native" type="number" id="partMin" min="1" max="60" step="0.5" value="${esc(opts.part_minutes)}" style="width:72px" aria-label="1本あたりの分数"> 分</label>
           </fieldset>
           <p class="caption" id="seriesInfo" aria-live="polite"></p>
-        </div>
-        <div id="scopeBox">
-          <h3>長い動画の絞り込み（速さ・費用と見落としの少なさ）</h3>
-          <div class="grid" id="scopes" role="radiogroup" aria-label="長尺の絞り込み">
+          <details class="help" id="seriesHow"><summary class="caption">分け方のしくみ</summary>
+            <p class="caption">分け目は時間ではなく話題の切れ目で決まるため、各パートの長さは前後します。各パートの冒頭に見どころ、2本目以降に前のパートのおさらい、最後に「〜につづく」と次の予告が入ります。AI には書き起こし全体を送ります。</p></details>`)}
+        ${group('scope', '長い動画の絞り込み', `
+          <div class="grid" id="scopes" role="radiogroup" aria-label="長尺の絞り込み（速さ・費用と見落としの少なさ）">
             ${(estimate?.scopes ?? [{ scope: 'economy' }, { scope: 'balanced' }, { scope: 'full' }]).map(s => `
-              <div class="card selectable ${s.scope === opts.scope ? 'selected' : ''}" role="radio" aria-checked="${s.scope === opts.scope}" tabindex="-1" data-scope="${s.scope}" style="padding:12px">
-                <div class="card-head"><b>${scopeLabel[s.scope][0]}</b>${s.cost ? `<span class="badges"><fluent-badge appearance="tint" color="informative">AI に送る量 約${Math.round(s.share * 100)}%</fluent-badge><fluent-badge appearance="tint" color="brand" class="scope-cost">約 ${jpy(s.cost)}</fluent-badge></span>` : ''}</div>
-                <div class="caption">${scopeLabel[s.scope][1]}</div>
+              <div class="card selectable scope ${s.scope === opts.scope ? 'selected' : ''}" role="radio" aria-checked="${s.scope === opts.scope}" tabindex="-1" data-scope="${s.scope}">
+                <b>${scopeLabel[s.scope][0]}</b>${s.cost ? `<span class="caption">AI に送る量 約${Math.round(s.share * 100)}%</span><fluent-badge appearance="tint" color="brand" class="scope-cost">約 ${jpy(s.cost)}</fluent-badge>` : ''}
+                <span class="sr-only">${scopeLabel[s.scope][1]}</span>
               </div>`).join('')}
           </div>
-          <p class="caption" style="margin-top:8px">${estimate ? (long ? '30分を超える動画では、選んだ項目によって AI に送る量が変わります。' : 'この長さの動画は、どの項目でも全文を AI に送るため結果は同じです。') : '素材を追加すると、費用の目安が表示されます。'}</p>
-        </div>
-        <div class="stack">
-          <h3>音</h3>
+          <p class="caption" id="scopeDesc" aria-hidden="true">${scopeLabel[opts.scope]?.[1] ?? ''}</p>
+          <p class="caption">${estimate ? (long ? '30分を超える動画では、選んだ項目によって AI に送る量が変わります。' : 'この長さの動画は、どの項目でも全文を AI に送るため結果は同じです。') : '素材を追加すると、費用の目安が表示されます。'}</p>`, { id: 'scopeBox' })}
+        ${group('sound', '音', `
           <label class="caption">BGM <select class="native" id="bgm">
             <option value="auto" ${opts.bgm === 'auto' ? 'selected' : ''}>パターンに任せる</option><option value="none" ${opts.bgm === 'none' ? 'selected' : ''}>なし</option>
             ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>${esc(b.name)}${b.source === 'user' ? '（自分の曲）' : ''}${b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''}</option>`).join('')}
           </select></label>
           ${field('効果音（ポン・ピンポン・ドーン など）', `<fluent-switch slot="input" id="sfx" ${opts.sfx ? 'checked' : ''}></fluent-switch>`)}
-          ${field('映像を2〜3秒止めるツッコミカードを AI に提案させる（P3 のみ。画像＋文字＋BGM。承認が必要）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
+          ${field('ツッコミを AI に提案させる（P3 のみ。承認するまで書き出せません）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
+          <div class="stack" id="tsukkomiStyleBox" style="margin-left:16px" ${opts.tsukkomi ? '' : 'hidden'}>
+            <span class="caption" id="tsukkomiStyleLabel">ツッコミの見せ方</span>
+            <fluent-radio-group id="tsukkomiStyle" orientation="vertical" aria-labelledby="tsukkomiStyleLabel" value="${esc(opts.tsukkomi_style)}" ${opts.tsukkomi ? '' : 'disabled'}>
+              ${field('自動（おすすめ）: 発言の切れ目だけ停止カード、それ以外は重ねテロップ', '<fluent-radio slot="input" value="auto"></fluent-radio>')}
+              ${field('ツッコミテロップ: 映像を止めずに文字を重ねる', '<fluent-radio slot="input" value="telop"></fluent-radio>')}
+              ${field('カード: 映像を2〜3秒止めて、画像＋文字＋BGM', '<fluent-radio slot="input" value="card"></fluent-radio>')}
+            </fluent-radio-group>
+          </div>
           <label class="caption">伏せる語（読点・カンマ区切り。字幕・テロップでは ● になり、音声はピー音になります）<input type="text" class="native" id="maskWords" maxlength="400" style="display:block;width:100%;margin-top:4px" value="${esc(opts.mask_words.join('、'))}" placeholder="例: 店の名前、人の名前"></label>
           <details><summary class="caption">自分の BGM を追加する</summary>
             <form id="bgmForm" class="stack" style="margin-top:8px">
               <input type="file" id="bgmFile" accept="audio/*" class="native" aria-label="BGM ファイル">
               ${field('この曲を使う権利（著作権・利用許諾）を自分が持っています', '<fluent-checkbox slot="input" id="bgmRights"></fluent-checkbox>')}
               <div><fluent-button type="submit" size="small">BGM を追加</fluent-button></div><div id="bgmMsg"></div>
-            </form></details>
-        </div>
-        <div class="stack" id="packBox">
-          <h3>オープニング・クロージング・場面転換</h3>
+            </form></details>`)}
+        ${group('pack', 'オープニング・クロージング・場面転換', `
           ${(() => {
             const sign = (v, d) => v == null || Number.isNaN(v) ? '—' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(d)}`;
             const enh = (x) => {
@@ -482,7 +506,7 @@ async function project(id, showSettings = false) {
           ${field('オープニングを入れる（先出しの見どころのあと）', `<fluent-switch slot="input" id="openingSw" ${opts.opening ? 'checked' : ''} ${kitView.opening ? '' : 'disabled'}></fluent-switch>`)}
           ${field('クロージングを入れる（最後）', `<fluent-switch slot="input" id="closingSw" ${opts.closing ? 'checked' : ''} ${kitView.closing ? '' : 'disabled'}></fluent-switch>`)}
           ${field('場面が変わる所に2〜3秒の「ツッコミ」カードを入れる（画像＋文字＋BGM。AI の文は承認が必要）', `<fluent-switch slot="input" id="cardsSw" ${opts.scene_cards ? 'checked' : ''}></fluent-switch>`)}
-          <details ${kitView.registered ? '' : 'open'}><summary class="caption">${kitView.registered ? '登録し直す・解除する' : 'オープニング・クロージングを登録する'}</summary>
+          <details><summary class="caption">${kitView.registered ? '登録し直す・解除する' : 'オープニング・クロージングを登録する'}</summary>
             <form id="kitForm" class="stack" style="margin-top:8px">
               <p class="caption">フォルダーのフルパスを指定すると、ファイル名に Opening / Closing を含む動画と、PNG / JPG 画像（カード用）を読み込みます。縦型（9:16）と横型（16:9）の両方があれば、出力に合う方を自動で使います。登録はすべてのプロジェクトで共通です。</p>
               <fluent-text-input id="kitPath" placeholder="C:\\Work\\HubRadio\\OpeningClosing" value="${esc(kitView.kit?.sources?.[0] ?? '')}" aria-label="オープニング・クロージングのフォルダー"></fluent-text-input>
@@ -492,9 +516,10 @@ async function project(id, showSettings = false) {
               ${field('これらの動画・画像（ロゴ・音楽・イラストを含む）を使う権利を自分が持っている、または許諾を得ています', '<fluent-checkbox slot="input" id="kitRights"></fluent-checkbox>')}
               <div class="row"><fluent-button type="submit" size="small">登録</fluent-button>${kitView.registered ? '<fluent-button size="small" id="kitClear" type="button">登録を解除</fluent-button>' : ''}</div><div id="kitMsg"></div>
             </form></details>
-          <div class="stack" style="margin-top:12px">
+          <div class="stack" style="margin-top:4px">
             <b id="cardMakeLabel">動画から場面転換の画像を作る</b>
-            <p class="caption">登録したカード画像がない場合に使います。元動画かオープニング・クロージングから、映像の変化・明るさ・時間分布で代表画像を選び、黒画面や似た画像を除きます。AI に動画を送らず、このプロジェクトだけに保存します。意味上の見どころを保証するものではありません。作成後に候補を生成すると反映されます。</p>
+            <details class="help"><summary class="caption">どんな画像ができるか</summary>
+            <p class="caption">登録したカード画像がない場合に使います。元動画かオープニング・クロージングから、映像の変化・明るさ・時間分布で代表画像を選び、黒画面や似た画像を除きます。AI に動画を送らず、このプロジェクトだけに保存します。意味上の見どころを保証するものではありません。作成後に候補を生成すると反映されます。</p></details>
             ${(() => {
               if (kitView.card_images) return '<p class="caption">登録済みのカード画像があるため、その画像を使用します。</p>';
               const made = d.project.scene_card_images ?? [];
@@ -524,25 +549,26 @@ async function project(id, showSettings = false) {
                 </div>`;
             })()}
             <div id="cardImageMsg" aria-live="polite"></div>
-          </div>
-        </div>
-        <div class="stack" id="analysisBox">
-          <h3 id="analysisLabel">前回の解析結果（他のパターンで作ったもの）</h3>
+          </div>`, { open: false })}
+        ${group('analysis', '前回の解析結果（他のパターンで作ったもの）', `
           <fluent-radio-group id="analysisReuse" orientation="vertical" aria-labelledby="analysisLabel" aria-describedby="analysisInfo" value="reuse">
             ${field('流用する（おすすめ・速い）', '<fluent-radio slot="input" value="reuse"></fluent-radio>')}
             ${field('流用せず、最初の解析からやり直す（アプリを更新したときなど）', '<fluent-radio slot="input" value="redo"></fluent-radio>')}
           </fluent-radio-group>
-          <p class="caption" id="analysisInfo" aria-live="polite"></p>
-        </div>
+          <p class="caption" id="analysisInfo" aria-live="polite"></p>`, { id: 'analysisBox', titleId: 'analysisLabel' })}
         </div>
         <div class="col-foot">
-          <div id="transmission">${transmissionNotice(settings)}</div>
-          ${estimate ? `<p class="caption" id="costLine"></p>` : ''}
+          <div id="transmission">${transmissionCompact(settings)}</div>
+          ${estimate ? `<details class="help" id="costInfo"><summary class="caption">費用の内訳</summary><p class="caption" id="costLine"></p></details>` : ''}
           <div id="genMsg"></div>
-          <fluent-button appearance="primary" id="gen" ${notReady ? 'aria-describedby="genHint"' : ''}>候補を3本つくる</fluent-button>
-          ${notReady ? `<span class="caption" id="genHint"> ${notReady}</span>` : ''}
+          <div class="row">
+            <fluent-button appearance="primary" id="gen" ${notReady ? 'aria-describedby="genHint"' : ''}>候補を3本つくる</fluent-button>
+            ${estimate ? '<span class="caption" id="costShort"></span>' : ''}
+            ${notReady ? `<span class="caption warnc" id="genHint">${notReady}</span>` : ''}
+          </div>
         </div>
       </section>
+    </div>
     </div>
     <section class="card" id="patterns" aria-labelledby="patterns-h" style="margin-top:16px">
       <h2 id="patterns-h">作ったパターン <span class="caption">（<span id="patternCount">0</span>件）</span></h2>
@@ -641,6 +667,7 @@ async function project(id, showSettings = false) {
 
   let saveChain = Promise.resolve(), saveRevision = 0, maskSaveTimer;
   const saveOpts = (delay = 0) => {
+    updateSums();
     const revision = ++saveRevision;
     const settings = { ...opts, preset_id: selected };
     const status = $('#settingsSaveMsg');
@@ -661,6 +688,19 @@ async function project(id, showSettings = false) {
   };
   // not saved with the settings: redoing the analysis costs time (and the transcript again), so every generation starts from "reuse"
   let reuseAnalysis = true;
+  const updateSums = () => {
+    const set = (k, t) => { const el = $(`#sum-${k}`); if (el) el.textContent = t; };
+    set('series', !opts.series ? 'オフ（ショート候補を3本）' : opts.series_by === 'parts' ? `オン・${opts.parts}本に分ける` : `オン・1本 約${opts.part_minutes}分で分ける`);
+    set('scope', opts.series ? 'シリーズでは全文を送ります' : `${scopeLabel[opts.scope]?.[0] ?? ''}${$('#scopes .selected .scope-cost')?.textContent ? `・${$('#scopes .selected .scope-cost').textContent}` : ''}`);
+    const bgm = $('#bgm'), bgmName = opts.bgm === 'auto' ? '自動' : opts.bgm === 'none' ? 'なし' : bgm?.selectedOptions[0]?.textContent.trim() ?? '指定';
+    set('sound', [`BGM ${bgmName}`, `効果音 ${opts.sfx ? 'オン' : 'オフ'}`, opts.tsukkomi ? `ツッコミ ${{ telop: 'テロップ', card: 'カード' }[opts.tsukkomi_style] ?? '自動'}` : 'ツッコミ オフ', ...(opts.mask_words.length ? [`伏せ字 ${opts.mask_words.length}語`] : [])].join('・'));
+    set('pack', [`オープニング ${!kitView.opening ? '未登録' : opts.opening ? 'あり' : 'なし'}`, `クロージング ${!kitView.closing ? '未登録' : opts.closing ? 'あり' : 'なし'}`, `場面転換カード ${opts.scene_cards ? 'あり' : 'なし'}`].join('・'));
+    set('analysis', reuseAnalysis ? '流用する' : '最初からやり直す');
+  };
+  $$('.setgroup').forEach(g => g.addEventListener('toggle', () => {
+    groupState[g.dataset.group] = g.open;
+    localStorage.setItem('vc.genGroups', JSON.stringify(groupState));
+  }));
   const scopeCost = (list) => (list.find(s => s.scope === (opts.series ? 'full' : opts.scope)) ?? list[1]).cost;
   const showAnalysis = () => {
     const el = $('#analysisInfo'); if (!el) return;
@@ -673,12 +713,14 @@ async function project(id, showSettings = false) {
       : `${when} の解析結果を使わず、すべて作り直します（時間がかかります${extra > 0.05 ? `。書き起こしの費用 約 ¥${extra.toFixed(1)} が増えます` : ''}）。${a.transcript_cached ? '確認画面で直した書き起こしは、新しい書き起こしで置き換わります。' : ''}手入力した「ずれ(秒)」と「話者」はそのまま使います。`;
   };
   const showCost = () => {
-    showAnalysis();
+    showAnalysis(); updateSums();
     const el = $('#costLine'); if (!el || !estimate) return;
     const list = reuseAnalysis || !estimate.analysis ? estimate.scopes : estimate.analysis.redo_scopes;
     $$('#scopes [data-scope]').forEach(card => { const b = $('.scope-cost', card), sc = list.find(s => s.scope === card.dataset.scope); if (b && sc) b.textContent = `約 ${jpy(sc.cost)}`; });
     const c = scopeCost(list);
+    $('#costShort').textContent = `推定コスト 約 ${jpy(c)}`;
     el.textContent = `推定コスト: 約 ${jpy(c)}（書き起こし ${c.asr_minutes} 分${reuseAnalysis && estimate.analysis?.transcript_cached ? '・前回の結果を流用' : ''}、AI 入力 約 ${c.llm_input_tokens.toLocaleString()} トークン）— ${c.basis}`;
+    updateSums();
   };
   showCost();
   $('#analysisReuse').addEventListener('change', () => {
@@ -690,7 +732,8 @@ async function project(id, showSettings = false) {
     const on = opts.series, byParts = opts.series_by === 'parts', min = Number(opts.part_minutes), parts = Number(opts.parts);
     $('#partMin').disabled = !on || byParts; $('#partCount').disabled = !on || !byParts;
     $$('input[name=seriesBy]').forEach(r => { r.disabled = !on; });
-    $('#scopeBox').classList.toggle('muted-box', on); $('#scopeBox').inert = on;
+    $('#scopeBox').classList.toggle('muted-box', on); $('#scopeBox').inert = on; $('#scopeBox > .setgroup-body').hidden = on;
+    $('#seriesHow').hidden = !on; updateSums();
     const el = $('#seriesInfo');
     if (!on) { $('#gen').textContent = '候補を3本つくる'; el.textContent = 'オフのときは、見どころを切り出したショート候補を3本つくります。'; return; }
     $('#gen').textContent = byParts && parts >= 2 ? `${seriesLabels(parts).length}本（${seriesLabels(parts).slice(0, 3).join('・')}${parts > 3 ? '…' : ''}）をつくる` : '前編・後編をつくる';
@@ -700,19 +743,18 @@ async function project(id, showSettings = false) {
     const basis = edited != null ? `無音カット後の推定 ${fmt(edited)}` : `元の長さ ${fmt(estimate.duration)}（無音のカットで短くなります）`;
     const max = se.max_parts ?? 0;
     $('#partCount').max = String(Math.max(2, max));
-    const tail = '分け目は時間ではなく話題の切れ目で決まるため、各パートの長さは前後します。各パートの冒頭に見どころ、2本目以降に前のパートのおさらい、最後に「〜につづく」と次の予告が入ります。AI には書き起こし全体を送ります。';
     if (byParts) {
       if (!(Number.isInteger(parts) && parts >= 2 && parts <= 20)) { el.textContent = '本数は 2〜20 本の整数で指定してください。'; return; }
       if (max < 2) { el.textContent = `この動画（${basis}）は短いため分けられません（1本あたり1分以上が必要です）。`; return; }
       if (parts > max) { el.textContent = `${parts}本では1本あたり1分未満になります。この動画（${basis}）は最大 ${max} 本まで分けられます。`; return; }
-      el.textContent = `${parts}本（${seriesLabels(parts).join('・')}）、1本あたり 約${fmt(base / parts)}（${basis}を${parts}等分した目安）。${tail}`;
+      el.textContent = `${parts}本（${seriesLabels(parts).join('・')}）、1本あたり 約${fmt(base / parts)}（${basis}を${parts}等分した目安）。`;
       return;
     }
     if (!(min >= 1 && min <= 60)) { el.textContent = '1本あたりの長さは 1〜60 分で指定してください。'; return; }
     const n = Math.round(base / (min * 60));
     el.textContent = n < 2
       ? `この動画（${basis}）は ${min} 分の2本分に足りません。1本あたりの長さを短くするか、本数で指定してください。`
-      : `約 ${n} 本（${seriesLabels(n).join('・')}）、1本あたり 約${fmt(base / n)}（${basis}から）。${tail}`;
+      : `約 ${n} 本（${seriesLabels(n).join('・')}）、1本あたり 約${fmt(base / n)}（${basis}から）。`;
   };
   showSeries();
   $('#seriesSw').addEventListener('change', () => { opts.series = $('#seriesSw').checked; saveOpts(); showSeries(); showCost(); });
@@ -720,10 +762,11 @@ async function project(id, showSettings = false) {
   $('#partCount').addEventListener('input', () => { opts.parts = Number($('#partCount').value); saveOpts(); showSeries(); });
   $$('input[name=seriesBy]').forEach(r => r.addEventListener('change', () => { if (r.checked) { opts.series_by = r.value; saveOpts(); showSeries(); } }));
   const scopeRadios = $$('#scopes [role=radio]');
-  radioGroup(scopeRadios, (el) => { opts.scope = el.dataset.scope; saveOpts(); scopeRadios.forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); showCost(); });
+  radioGroup(scopeRadios, (el) => { opts.scope = el.dataset.scope; scopeRadios.forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); $('#scopeDesc').textContent = scopeLabel[opts.scope][1]; saveOpts(); showCost(); });
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
-  $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; saveOpts(); });
+  $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; $('#tsukkomiStyle').disabled = !opts.tsukkomi; $('#tsukkomiStyleBox').hidden = !opts.tsukkomi; saveOpts(); });
+  $('#tsukkomiStyle').addEventListener('change', () => { const v = $$('#tsukkomiStyle fluent-radio').find(r => r.checked)?.value; if (v) { opts.tsukkomi_style = v; saveOpts(); } });
   $('#maskWords').addEventListener('input', () => {
     opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean);
     clearTimeout(maskSaveTimer); maskSaveTimer = setTimeout(saveOpts, 250);
@@ -894,7 +937,7 @@ function patternSummary(j, presets) {
   if (o.parts) bits.push(`${o.parts}本に分割`); else if (o.part_minutes) bits.push(`約${o.part_minutes}分ずつに分割`);
   bits.push(`BGM: ${o.bgm === 'auto' ? '自動' : o.bgm === 'none' ? 'なし' : '指定'}`);
   if (o.opening) bits.push('オープニング'); if (o.closing) bits.push('クロージング');
-  if (o.scene_cards) bits.push('ツッコミカード'); if (o.tsukkomi) bits.push('ツッコミ');
+  if (o.scene_cards) bits.push('場面転換カード'); if (o.tsukkomi) bits.push(`ツッコミ（${{ telop: 'テロップ', card: 'カード' }[o.tsukkomi_style] ?? '自動'}）`);
   if (o.mask_words?.length) bits.push(`伏せ字 ${o.mask_words.length} 語`);
   if (j.instruction) bits.push(`追加指示: ${j.instruction}`);
   if (o.reuse_analysis === false) bits.push('解析を最初からやり直し');
@@ -929,7 +972,7 @@ async function loadPatterns(projectId, presets) {
     const x = items.find(y => y.job.id === b.dataset.job), o = x.job.options ?? {};
     try {
       await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
-        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi,
+        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto',
         series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
         opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [] } });
       derivedFrom = { project: projectId, job: x.job.id };
@@ -1278,6 +1321,25 @@ async function review(epId) {
   const finalT = (t, end = false) => t + active().filter(i => i.at < t - 1e-3 || (!end && i.at <= t + 1e-3)).reduce((a, i) => a + i.duration, 0);
   const insertStart = (ins) => { let off = 0; for (const i of active()) { if (i.id === ins.id) break; off += i.duration; } return ins.at + off; };
   const insertName = { opening: 'オープニング', closing: 'クロージング', card: '場面転換カード' };
+  Object.assign(typeLabel, insertName);
+  // one list for telops and inserts; the type switches turn a whole type on/off (tsukkomi = overlay telops + pause cards)
+  const isTsukkomiCard = (i) => i.kind === 'card' && i.id.startsWith('tsukkomi');
+  const groupOf = (i) => isTsukkomiCard(i) ? 'tsukkomi' : i.kind;
+  const filterTypes = ['caption', 'emphasis', 'headline', 'counter', 'sfx', 'tsukkomi', 'opening', 'card', 'closing'];
+  const itemsOf = (type) => [...plan.telops.filter(t => t.type === type), ...(plan.inserts ?? []).filter(i => groupOf(i) === type)];
+  const insertRow = (i) => {
+    const start = insertStart(i), end = start + Number(i.duration), name = isTsukkomiCard(i) ? 'ツッコミ' : insertName[i.kind] ?? i.kind;
+    const file = (i.path ?? '').split(/[\\/]/).pop();
+    const notes = i.kind === 'card'
+      ? [isTsukkomiCard(i) ? '停止カード' : '', i.path ? `全画面の画像 ${file}` : '', `映像を止めて ${Number(i.duration).toFixed(1)} 秒`, i.text_source === 'ai' ? 'AI の提案' : ''].filter(Boolean)
+      : [file, `${Number(i.duration).toFixed(1)} 秒`];
+    return `<tr class="insert ${i.enabled ? '' : 'off'}" data-insert="${esc(i.id)}"><td><span class="tag ${esc(groupOf(i))}">${esc(name)}</span></td>
+      <td>${i.enabled ? `<button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${start.toFixed(1)}秒から${end.toFixed(1)}秒の${esc(name)}を確認（開始位置へ移動）">${start.toFixed(1)}–${end.toFixed(1)}</button>` : '<span class="caption">（使わない）</span>'}</td>
+      <td>${i.kind === 'card' ? `<input class="card-text" data-id="${esc(i.id)}" value="${esc(i.text)}" maxlength="20" aria-label="${esc(name)} ${esc(i.id)} の文字" placeholder="${i.path ? '（文字なし）' : ''}">` : ''}
+        <p class="caption insert-notes">${esc(notes.join(' · '))}</p></td>
+      <td>${i.kind === 'card' ? [...(i.text ?? '')].length : ''}</td><td></td>
+      <td><fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${esc(name)} ${esc(i.id)} を使う"></fluent-switch>${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">承認</fluent-button>`}</td></tr>`;
+  };
 
   const draw = () => {
     const unapprovedText = plan.telops.some(t => t.enabled && !t.approved) || active().some(i => i.kind === 'card' && i.text && !i.approved);
@@ -1293,17 +1355,6 @@ async function review(epId) {
           ${stale ? info('変更があったため、プレビューが古くなっています。', 'warning') : ''}
           <fluent-button id="repreview" ${stale ? 'appearance="primary"' : ''}>プレビューを更新</fluent-button>
           <p class="caption">${plan.series ? `${esc(plan.series.label)}（${plan.series.part}/${plan.series.parts}）· ` : ''}長さ ${(() => { const d = plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0); const all = d + active().reduce((a, i) => a + i.duration, 0); const f = (x) => x >= 180 ? fmt(x) : `${x.toFixed(1)} 秒`; return all - d > 0.01 ? `本編 ${f(d)}・全体 ${f(all)}` : f(d); })()} · カット ${plan.timeline.length} · テロップ ${plan.telops.filter(t => t.enabled).length}</p>
-          ${(plan.inserts ?? []).length ? `<h3>オープニング・場面転換</h3>
-          <p class="caption">カードの文字は 1 秒で読める短さに（20 字まで）。AI が考えた文は「承認」するまで書き出せません。変更後は「プレビューを更新」で確かめられます。</p>
-          ${(plan.inserts ?? []).map(i => `<div class="row insert-row" style="align-items:center;gap:8px">
-            <fluent-badge appearance="tint" color="${i.kind === 'card' ? 'warning' : 'brand'}">${esc(insertName[i.kind] ?? i.kind)}</fluent-badge>
-            <span class="caption">${i.enabled ? `${insertStart(i).toFixed(1)}秒から` : '（使わない）'} ${Number(i.duration).toFixed(1)}秒</span>
-            ${i.kind === 'card'
-              ? `${i.path ? `<span class="caption">画像 ${esc(i.path.split(/[\\/]/).pop())}</span>` : ''}<input class="native card-text" data-id="${esc(i.id)}" value="${esc(i.text)}" maxlength="20" size="14" aria-label="${esc(insertName[i.kind])} ${esc(i.id)} の文字" placeholder="${i.path ? '（文字なし）' : ''}">
-                 ${i.text_source === 'ai' ? '<span class="caption">AI</span>' : ''}${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">承認</fluent-button>`}`
-              : `<span class="caption">${esc((i.path ?? '').split(/[\\/]/).pop())}</span>`}
-            <fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${esc(insertName[i.kind] ?? i.kind)} ${esc(i.id)} を使う"></fluent-switch></div>`).join('')}
-          ${(plan.inserts ?? []).some(i => i.kind === 'card' && i.text && !i.approved) ? '<fluent-button size="small" id="approveCards">カードをすべて承認</fluent-button>' : ''}` : ''}
           ${plan.series?.chapters?.length ? `<details><summary class="caption">構成・チャプター（${plan.series.chapters.length}）</summary><ul class="notes">${plan.series.chapters.map(ch => `<li>${fmt(ch.start)} ${esc(ch.title)}</li>`).join('')}</ul></details>` : ''}
           <details><summary class="caption">カット一覧（映像・速度）</summary>
             <ul class="notes">${plan.timeline.map(c => `<li>${esc(c.clip_id)} ${esc(assetName(c.asset_id))}${c.role !== 'body' ? `（${esc(roleName[c.role] ?? c.role)}）` : ''} ${((c.src_out - c.src_in) / (c.speed || 1)).toFixed(1)}秒${c.speed && c.speed !== 1 ? ` ×${c.speed}倍速` : ''}${c.reframe?.mode === 'face' ? ' · 顔を追う' : ''}${c.reframe?.mode === 'screen' ? (c.reframe.crop_w ? ' · 画面（操作箇所へズーム）' : ' · 画面（全体）') : ''}${c.pip ? ` · ワイプ: ${esc(assetName(c.pip.asset_id))}` : ''}</li>`).join('')}</ul></details>
@@ -1327,15 +1378,18 @@ async function review(epId) {
           <div id="msg"></div>
         </section>
         <section class="card">
-          <div class="row" style="justify-content:space-between"><h2>テロップ</h2>
-            <div class="row">${['caption', 'emphasis', 'headline', 'counter', 'sfx', 'tsukkomi'].filter(t => plan.telops.some(x => x.type === t) || ['caption', 'emphasis', 'headline'].includes(t)).map(t => field(typeLabel[t], `<fluent-switch slot="input" data-type="${t}" ${plan.telops.filter(x => x.type === t).some(x => x.enabled) || !plan.telops.some(x => x.type === t) ? 'checked' : ''}></fluent-switch>`)).join('')}
-              ${plan.telops.some(t => t.type === 'tsukkomi' && !t.approved) ? '<fluent-button size="small" id="approveAll">ツッコミをすべて承認</fluent-button>' : ''}</div></div>
-          <p class="caption">文字を直すと、文字数・表示速度・行頭や行末の禁則・安全領域の自動チェックがすぐにやり直されます。1行は全角${maxW}字${maxLines > 1 ? `（字幕は${maxLines}行）` : ''}まで、字幕は毎秒${maxCps}字までが目安です。</p>
+          <div class="row" style="justify-content:space-between"><h2>テロップ・場面転換</h2>
+            <div class="row">${filterTypes.filter(t => itemsOf(t).length || ['caption', 'emphasis', 'headline'].includes(t)).map(t => field(typeLabel[t], `<fluent-switch slot="input" data-type="${t}" ${itemsOf(t).some(x => x.enabled) || !itemsOf(t).length ? 'checked' : ''}></fluent-switch>`)).join('')}
+              ${plan.telops.some(t => t.type === 'tsukkomi' && !t.approved) || (plan.inserts ?? []).some(i => isTsukkomiCard(i) && i.text && !i.approved) ? '<fluent-button size="small" id="approveAll">ツッコミをすべて承認</fluent-button>' : ''}
+              ${(plan.inserts ?? []).some(i => i.kind === 'card' && !isTsukkomiCard(i) && i.text && !i.approved) ? '<fluent-button size="small" id="approveCards">カードをすべて承認</fluent-button>' : ''}</div></div>
+          <p class="caption">文字を直すと、文字数・表示速度・行頭や行末の禁則・安全領域の自動チェックがすぐにやり直されます。1行は全角${maxW}字${maxLines > 1 ? `（字幕は${maxLines}行）` : ''}まで、字幕は毎秒${maxCps}字までが目安です。カードは映像を止めて全画面で 2〜3 秒挟み、文字は 1 秒で読める短さ（20 字まで）にします。AI が考えた文は「承認」するまで書き出せません。カードの変更は「プレビューを更新」で確かめられます。</p>
           <div class="scroll"><table class="list"><thead><tr><th>種類</th><th>時刻</th><th style="width:55%">テキスト</th><th>字数</th><th>速さ</th><th>表示</th></tr></thead><tbody>
-            ${plan.telops.map(t => {
+            ${[...plan.telops.map(t => ({ at: finalT(t.start), t })), ...(plan.inserts ?? []).map(i => ({ at: i.enabled && i.duration > 0 ? insertStart(i) : finalT(i.at), i }))]
+              .sort((a, b) => a.at - b.at || (a.i ? 0 : 1) - (b.i ? 0 : 1)).map(({ t, i }) => i ? insertRow(i) : (() => {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
+              const start = finalT(t.start), end = finalT(t.end, true);
               return `<tr class="${t.enabled ? '' : 'off'}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
-                <td class="caption">${finalT(t.start).toFixed(1)}–${finalT(t.end, true).toFixed(1)}</td>
+                <td><button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${start.toFixed(1)}秒から${end.toFixed(1)}秒の範囲を確認（開始位置へ移動）">${start.toFixed(1)}–${end.toFixed(1)}</button></td>
                 <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}">
                   ${['emphasis', 'headline', 'hook', 'counter'].includes(t.type) ? (() => {
                     const words = t.source_word_ids.map(id => tr.words.find(w => w.id === id)).filter(Boolean);
@@ -1350,11 +1404,17 @@ async function review(epId) {
                 <td class="${w > maxW * (t.type === 'caption' ? maxLines : 1) && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
                 <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td>
                 <td><fluent-switch data-id="${esc(t.id)}" class="en" ${t.enabled ? 'checked' : ''} aria-label="表示"></fluent-switch>${t.approved ? '' : `<fluent-button size="small" data-approve="${esc(t.id)}">承認</fluent-button>`}</td></tr>`;
-            }).join('')}
+            })()).join('')}
           </tbody></table></div>
         </section>
       </div>`;
     wireSafeToggle();
+    $$('button.timestamp-seek').forEach(button => button.addEventListener('click', () => {
+      const video = $('#pv video');
+      const time = Number(button.dataset.time);
+      if (!video || !Number.isFinite(time)) return;
+      video.currentTime = Number.isFinite(video.duration) ? Math.min(time, video.duration) : time;
+    }));
     const patch = async (ops) => {
       try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; draw(); }
       catch (e) { $('#msg').innerHTML = errorBar(e); }

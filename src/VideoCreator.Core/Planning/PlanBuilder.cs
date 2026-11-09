@@ -115,6 +115,8 @@ public static class PlanBuilder
         var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
         if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n));
+        var canvas = new Canvas();
+        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
         if (p.HasTelop("tsukkomi") && r.Job.Options.Tsukkomi)
         {
             if (r.Llm == null) notes.Add("ツッコミテロップには AI が必要です（現在は無効）");
@@ -122,17 +124,31 @@ public static class PlanBuilder
             {
                 try
                 {
-                    var caps = telops.Where(t => t.Type == TelopType.Caption).ToList();
+                    var caps = telops.Where(t => t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
                     var src = CandidateValidator.TextOf(telopTr, clips.Select(c => new Interval(c.MasterIn, c.MasterOut)));
                     var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct);
-                    foreach (var (id, text) in items)
+                    var style = r.Job.Options.TsukkomiStyle;
+                    var picks = TsukkomiPlacement.Choose(style, items.Select(x =>
                     {
-                        var cap = caps.First(c => c.Id == id);
-                        tsukkomi.Add((cap.End, text));
+                        int i = caps.FindIndex(c => c.Id == x.CaptionId);
+                        return (caps[i], i + 1 < caps.Count ? caps[i + 1] : null, x.Text);
+                    }).ToList(), total, inserts, InsertPlanner.CardDuration(r.Kit, canvas));
+                    foreach (var pick in picks)
+                    {
+                        if (pick.Card) { tsukkomi.Add((pick.At, pick.Text)); }
+                        else
+                        {
+                            if (telops.Any(t => t.Type == TelopType.Tsukkomi && Math.Abs(t.Start - pick.At) < 1.5)) continue;
+                            telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Tsukkomi, Start = pick.At, End = Math.Round(Math.Min(total, pick.At + 1.4), 3), Text = pick.Text, Style = "Tsukkomi", Animation = "pop", Approved = false });
+                        }
+                        if (style == "auto") notes.Add($"ツッコミ「{pick.Text}」は{(pick.Card ? "停止カード" : "重ねテロップ")}にしました: {pick.Reason}");
                     }
-                    notes.Add(items.Count > 0 ? $"ツッコミテロップ {items.Count} 件を提案しました（承認するまで書き出せません）" : "ツッコミテロップは提案できませんでした");
+                    var label = style switch { "telop" => "重ねテロップ", "card" => "停止カード", _ => "自動" };
+                    notes.Add(items.Count > 0
+                        ? $"ツッコミ {items.Count} 件を提案しました（見せ方: {label}。停止カード {picks.Count(x => x.Card)} 件・重ねテロップ {picks.Count(x => !x.Card)} 件。承認するまで書き出せません）"
+                        : "ツッコミは提案できませんでした");
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("ツッコミテロップの生成に失敗しました: " + ex.Message); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("ツッコミの生成に失敗しました: " + ex.Message); }
             }
         }
         telops = telops.OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
@@ -150,8 +166,6 @@ public static class PlanBuilder
             BgmPhase = p.Planner == "beat" ? r.Bgm?.Phase ?? 0 : 0,
             SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = bgmId == null ? [] : mutes, Bleeps = bleeps,
         };
-        var canvas = new Canvas();
-        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
         InsertPlanner.AddTsukkomi(packed, inserts, tsukkomi, r.Kit, canvas, notes);
         inserts = inserts.Select(i => i.Kind == "card" ? i with { Bgm = "upbeat", GainDb = p.Audio.BgmDb } : i).ToList();
         if (r.Llm != null && inserts.Any(i => i.Kind == "card" && i.TextSource != "ai"))
@@ -160,7 +174,9 @@ public static class PlanBuilder
             {
                 var src = CandidateValidator.TextOf(telopTr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
                 int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct);
-                if (ai > 0) notes.Add($"場面転換カード {ai} 枚のツッコミを AI が提案しました（承認するまで書き出せません）");
+                int rest = inserts.Count(i => i.Kind == "card" && i.TextSource == "fixed");
+                if (ai > 0) notes.Add($"場面転換カード {ai} 枚の文字を、視聴者の代弁として AI が提案しました（承認するまで書き出せません）");
+                if (rest > 0) notes.Add($"場面転換カード {rest} 枚は AI の文が使えなかったため、定型の文にしました");
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("場面転換カードのツッコミの生成に失敗しました（定型の文を使います）: " + ex.Message); }
         }

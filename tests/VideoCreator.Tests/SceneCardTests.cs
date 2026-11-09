@@ -145,10 +145,11 @@ public sealed class SceneCardTests : IAsyncLifetime
         var card = Assert.Single(inserts);
         Assert.Equal(images[0].Path, card.Path);
         Assert.Equal(source.Id, card.ImageAssetId);
-        Assert.Equal("", card.Text);
+        Assert.Equal(InsertPlanner.FixedPhrases[0], card.Text);   // pause cards always carry text over the image
         var preset = Fixtures.Presets["P9"];
+        // Clear the text so only the image itself is compared.
         var plan = new EditPlan { EditplanId = "ep", ProjectId = _id, Preset = preset.Ref, Canvas = canvas,
-            Timeline = packed, Inserts = inserts, Audio = new AudioSpec { Master = source.Id, SfxEnabled = false } };
+            Timeline = packed, Inserts = [card with { Text = "" }], Audio = new AudioSpec { Master = source.Id, SfxEnabled = false } };
         var transcript = new Transcript { Provider = "none", Duration = 12 };
         var qa = QaEngine.PlanChecks(new(plan, preset, transcript, [source.Id], []));
         Assert.Equal(QaStatus.Pass, qa.Single(q => q.CheckId == "H-09").Status);
@@ -158,10 +159,11 @@ public sealed class SceneCardTests : IAsyncLifetime
         Assert.Equal(QaStatus.Fail, QaEngine.PlanChecks(new(other, preset, transcript, ["other"], [])).Single(q => q.CheckId == "H-09").Status);
 
         var render = await new Renderer(Rt.Ff).RenderAsync(plan, preset, new Dictionary<string, SourceAsset> { [source.Id] = source }, Path.Combine(_root, "render.mp4"), true, Ct);
-        double cardT = InsertMap.StartOf(InsertMap.Active(plan), card) + 0.5;
+        double cardT = InsertMap.StartOf(InsertMap.Active(plan), plan.Inserts[0]) + 0.5;
         var expected = await PixelsAsync(images[0].Path, 0);
-        // Image cards retain the existing overlay layout on a dimmed frozen scene; preview is half-size.
-        var actual = await PixelsAsync(render.Path, cardT, "crop=160:90:80:30,");
+        // A same-aspect image card covers the whole screen (no partial overlay).
+        Assert.True(Renderer.CardCovers(plan.Inserts[0], canvas.Width, canvas.Height));
+        var actual = await PixelsAsync(render.Path, cardT);
         Assert.Equal(expected.Length, actual.Length);
         double error = expected.Zip(actual).Average(p => Math.Abs(p.First - p.Second));
         Assert.True(error < 12, $"Rendered card must match the extracted source image: MAE={error}");

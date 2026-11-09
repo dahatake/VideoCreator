@@ -107,7 +107,8 @@ BGM multipartの権利確認等は[Api.csの実装](../src/VideoCreator.App/Api.
 |---|---|
 | scope | economy / balanced / full（既定balanced） |
 | bgm | auto / none / 曲ID |
-| sfx / tsukkomi | bool。AIツッコミはP3で使用。発言直後に2〜3秒の停止カード（画像／パネル＋文字＋専用BGM）を挿入 |
+| sfx / tsukkomi | bool。AIツッコミはP3で使用 |
+| tsukkomi_style | `auto`（既定）/ `telop` / `card`。AIツッコミの見せ方。`telop` は映像を止めずに重ねるテロップ、`card` は発言直後に2〜3秒の停止カード（画像／パネル＋文字＋専用BGM）。`auto` は発言が終わり、次の発言が受け答えでなく、本編の端・ほかのカード／オープニングから離れ（8秒以上）、カードの合計が本編の10%以内に収まる所だけカード、それ以外はテロップ。それ以外の値は 422 |
 | parts / part_minutes | 本数2〜20 **か** 1本の分数1〜60。互いに排他。両方nullならショート |
 | opening / closing / scene_cards | bool。使用可能な共通登録等を確認 |
 | mask_words | 伏せる語の配列 |
@@ -122,7 +123,7 @@ PATCH `/editplans/{id}` に `{"ops":[...]}` を送ります。[PlanEditor](../sr
 |---|---|
 | replace_text | target（telop ID）、text |
 | set_enabled | target、enabled |
-| set_type_enabled | type（caption等）、enabled |
+| set_type_enabled | type（caption・emphasis・headline・sfx・tsukkomi・opening・card・closing）、enabled。tsukkomi はツッコミのテロップとカードの両方、card はツッコミ以外の場面転換カード |
 | approve / approve_all_tsukkomi | 前者はtarget |
 | set_bgm / set_sfx | 前者はtarget（曲ID/none）、後者はenabled |
 | set_insert_enabled | target（insert ID）、enabled |

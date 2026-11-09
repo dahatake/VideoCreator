@@ -93,12 +93,26 @@ public static class PlanEditor
         };
     }
 
+    /// <summary>
+    /// The review list's type switches: a telop type, or an insert kind (opening / card = scene-change cards / closing). "tsukkomi" covers both the
+    /// overlay telops and the pause cards, since they are the same proposals shown two ways.
+    /// </summary>
     static EditPlan SetType(EditPlan plan, string type, bool enabled)
     {
-        if (!Enum.TryParse<TelopType>(type, true, out var tt)) throw new ArgumentException($"unknown telop type {type}");
+        static bool Tsukkomi(Insert i) => i.Kind == "card" && i.Id.StartsWith("tsukkomi", StringComparison.Ordinal);
+        Func<Insert, bool>? insert = type switch
+        {
+            "opening" or "closing" => i => i.Kind == type,
+            "card" => i => i.Kind == "card" && !Tsukkomi(i),
+            "tsukkomi" => Tsukkomi,
+            _ => null,
+        };
+        TelopType? tt = Enum.TryParse<TelopType>(type, true, out var parsed) ? parsed : null;
+        if (tt == null && insert == null) throw new ArgumentException($"unknown telop type {type}");
         return plan with
         {
-            Telops = plan.Telops.Select(t => t.Type == tt ? t with { Enabled = enabled } : t).ToList(),
+            Telops = tt == null ? plan.Telops : plan.Telops.Select(t => t.Type == tt ? t with { Enabled = enabled } : t).ToList(),
+            Inserts = insert == null ? plan.Inserts : plan.Inserts.Select(i => insert(i) ? i with { Enabled = enabled } : i).ToList(),
             Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "set_type_enabled", type, null, enabled.ToString())] },
         };
     }

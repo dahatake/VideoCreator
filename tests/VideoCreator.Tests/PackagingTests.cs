@@ -29,6 +29,35 @@ public class PackagingTests : IAsyncLifetime
         new() { Id = "closing", Kind = "closing", At = total, Duration = 12.1 },
     ];
 
+    [Fact] // the merged review list: one type switch per row type, inserts included; tsukkomi covers overlay telops and pause cards
+    public void Type_switches_cover_inserts_and_both_forms_of_tsukkomi()
+    {
+        var plan = new EditPlan
+        {
+            EditplanId = "types", ProjectId = "p", Preset = Fixtures.Presets["P4"].Ref, Timeline = [C("body", 0, 30)], Audio = new AudioSpec { Master = "a1" },
+            Telops = [new Telop { Id = "t1", Type = TelopType.Caption, Start = 1, End = 2, Text = "字幕" },
+                      new Telop { Id = "t2", Type = TelopType.Tsukkomi, Start = 3, End = 4, Text = "そこ？" }],
+            Inserts = [.. Inserts(30), new Insert { Id = "tsukkomi4", Kind = "card", At = 20, Duration = 2.5, Text = "マジで!?" }],
+        };
+        var off = PlanEditor.Apply(plan, [new PlanOp("set_type_enabled", Type: "card", Enabled: false)]);
+        Assert.False(off.Inserts.Single(i => i.Id == "card1").Enabled);
+        Assert.True(off.Inserts.Single(i => i.Id == "tsukkomi4").Enabled);   // a tsukkomi pause card is not a scene-change card
+        Assert.Equal(plan.TotalDuration - 1.0, off.TotalDuration, 3);
+        Assert.Equal(plan.Telops, off.Telops);
+
+        off = PlanEditor.Apply(plan, [new PlanOp("set_type_enabled", Type: "tsukkomi", Enabled: false)]);
+        Assert.False(off.Telops.Single(t => t.Id == "t2").Enabled);
+        Assert.False(off.Inserts.Single(i => i.Id == "tsukkomi4").Enabled);
+        Assert.True(off.Telops.Single(t => t.Id == "t1").Enabled);
+        Assert.True(off.Inserts.Single(i => i.Id == "card1").Enabled);
+
+        off = PlanEditor.Apply(plan, [new PlanOp("set_type_enabled", Type: "opening", Enabled: false), new PlanOp("set_type_enabled", Type: "closing", Enabled: false)]);
+        Assert.Equal(["card1", "tsukkomi4"], off.Inserts.Where(i => i.Enabled).Select(i => i.Id).ToList());
+        var on = PlanEditor.Apply(off, [new PlanOp("set_type_enabled", Type: "opening", Enabled: true)]);
+        Assert.True(on.Inserts.Single(i => i.Id == "opening").Enabled);
+        Assert.Throws<ArgumentException>(() => PlanEditor.Apply(plan, [new PlanOp("set_type_enabled", Type: "bumper", Enabled: false)]));
+    }
+
     [Fact]
     public void Body_times_map_past_inserts_and_spans_split_around_them()
     {
@@ -72,7 +101,41 @@ public class PackagingTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Card_text_fits_the_registered_portrait_image_in_both_telop_styles()
+    public void Auto_tsukkomi_pauses_only_at_finished_lines_with_room_and_overlays_the_rest()
+    {
+        static Telop T(double s, double e, string text) => new() { Id = $"c{s}", Start = s, End = e, Text = text };
+        List<(Telop, Telop?, string)> Items() =>
+        [
+            (T(0.5, 1.5, "最高です！"), T(1.6, 3, "うん"), "edge"),
+            (T(8, 10, "それは多すぎます。"), T(10.8, 12, "いや本当に"), "A"),
+            (T(12.5, 14, "行きましたよ。"), T(14.2, 15, "はい"), "D"),
+            (T(18, 20, "だから行ったんだけど"), T(20.1, 21, "高くて"), "mid"),
+            (T(23, 25, "全部食べました。"), null, "G"),
+            (T(29, 30, "これ美味しいですね"), T(30.2, 32, "そうそう、本当に"), "reply"),
+            (T(36, 38, "もう帰ります。"), T(39, 40, "え"), "F"),
+        ];
+        var inserts = new List<Insert> { new() { Id = "card1", Kind = "card", At = 45, Duration = 2.5 }, new() { Id = "closing", Kind = "closing", At = 120, Duration = 5 } };
+        var picks = TsukkomiPlacement.Choose("auto", Items(), 120, inserts, 2.5).ToDictionary(p => p.Text);
+        Assert.Equal(["A", "G"], picks.Values.Where(p => p.Card).Select(p => p.Text).Order().ToList());
+        Assert.Contains("端", picks["edge"].Reason);
+        Assert.Contains("発言の途中", picks["mid"].Reason);
+        Assert.Contains("受け答え", picks["reply"].Reason);
+        Assert.Contains("近く", picks["D"].Reason);       // 4 s after A
+        Assert.Contains("近く", picks["F"].Reason);       // 7 s before the scene card
+        Assert.Equal(10, picks["A"].At);
+
+        // a 60 s body allows floor(10 % × 60 / 2.5) = 2 cards; the scene card uses one, so only the best-scored line pauses
+        var tight = TsukkomiPlacement.Choose("auto", Items(), 60, [inserts[0]], 2.5);
+        Assert.Equal(["G"], tight.Where(p => p.Card).Select(p => p.Text).ToList());
+        Assert.Contains("テンポ", tight.Single(p => p.Text == "A").Reason);
+        Assert.Equal(7, tight.Count);
+
+        Assert.All(TsukkomiPlacement.Choose("telop", Items(), 120, inserts, 2.5), p => Assert.False(p.Card));
+        Assert.All(TsukkomiPlacement.Choose("card", Items(), 120, inserts, 2.5), p => Assert.True(p.Card));
+    }
+
+    [Fact]
+    public void Card_text_uses_the_full_screen_width_of_an_image_card_in_both_telop_styles()
     {
         foreach (var id in new[] { "P3", "P4" })
         {
@@ -85,12 +148,17 @@ public class PackagingTests : IAsyncLifetime
                 Inserts = [new Insert { Id = "card", Kind = "card", At = 4, Duration = 2.5, Path = "portrait.png",
                     Width = 1080, Height = 1920, Text = text, Bgm = "upbeat" }],
             };
-            int fit = AssWriter.FitFontSize(text, AssWriter.CardFontPx, AssWriter.CardOutline,
-                540 + AssWriter.MarginL + p.Telop.Caption.MarginR, p.Telop.Caption.MarginR);
+            int m = p.Telop.Caption.MarginR, safe = 1080 - 2 * Math.Max(AssWriter.MarginL, m);
+            int fit = AssWriter.FitFontSize(text, AssWriter.CardFontPx, AssWriter.CardOutline, safe + AssWriter.MarginL + m, m);
+            Assert.True(fit > AssWriter.FitFontSize(text, AssWriter.CardFontPx, AssWriter.CardOutline, 540 + AssWriter.MarginL + m, m), "wider than the old half-height image");
             var ass = AssWriter.Write(plan, p);
             Assert.Contains($@"\fs{fit}", ass);
             Assert.Contains(@"\pos(540,806)", ass);
         }
+        Assert.True(Renderer.CardCovers(new Insert { Id = "c", Kind = "card", Width = 1080, Height = 1920 }, 1080, 1920));
+        Assert.True(Renderer.CardCovers(new Insert { Id = "c", Kind = "card", Width = 1000, Height = 1920 }, 540, 960));
+        Assert.False(Renderer.CardCovers(new Insert { Id = "c", Kind = "card", Width = 1920, Height = 1080 }, 1080, 1920));
+        Assert.False(Renderer.CardCovers(new Insert { Id = "c", Kind = "card" }, 1080, 1920));
     }
 
     [Fact]
@@ -250,6 +318,36 @@ public class PackagingTests : IAsyncLifetime
         Assert.Contains("100個買います", llm.LastUser);
     }
 
+    [Fact]
+    public async Task Ai_card_text_covers_image_cards_and_rejects_echoes_repeats_and_user_text()
+    {
+        var caps = new List<Telop> { new() { Id = "t1", Start = 1, End = 2, Text = "肉を全部焦がしました" }, new() { Id = "t2", Start = 3, End = 4, Text = "次は花火" } };
+        const string src = "肉を全部焦がしました次は花火";
+        var ins = new List<Insert>
+        {
+            new() { Id = "card1", Kind = "card", At = 2.5, Duration = 2.5, Path = "a.png", Width = 1080, Height = 1920, Text = "さて、次！", TextSource = "fixed" },
+            new() { Id = "card2", Kind = "card", At = 2.6, Duration = 2.5, Path = "b.png", Text = "ところで…", TextSource = "fixed" },
+            new() { Id = "card3", Kind = "card", At = 2.7, Duration = 2.5, Text = "話は変わって", TextSource = "fixed" },
+            new() { Id = "card4", Kind = "card", At = 2.8, Duration = 2.5, Text = "私の文", TextSource = "user" },
+            new() { Id = "tsukkomi1", Kind = "card", At = 2.9, Duration = 2.5, Text = "なんでやねん！", TextSource = "ai" },
+        };
+        var tel = caps.Append(new Telop { Id = "t9", Type = TelopType.Tsukkomi, Start = 1.5, End = 2.9, Text = "マジで!?" }).ToList();
+        var llm = new CardLlm("""{"items":[{"card_id":"card1","text":"いや焦がしすぎ！"},{"card_id":"card2","text":"全部焦がしました！"},{"card_id":"card3","text":"なんでやねん"},{"card_id":"card4","text":"上書き"}]}""");
+        var n = await InsertPlanner.AiTextAsync(llm, ins, tel, src, Ct);
+        Assert.Equal(1, n);
+        Assert.Equal(("いや焦がしすぎ！", "ai", false), (ins[0].Text, ins[0].TextSource, ins[0].Approved));   // the image card gets the viewer's line
+        Assert.Equal("fixed", ins[1].TextSource);   // echo of the speaker's words
+        Assert.Equal("fixed", ins[2].TextSource);   // repeat of an existing tsukkomi card
+        Assert.Equal(("私の文", "user"), (ins[3].Text, ins[3].TextSource));
+        Assert.DoesNotContain("card4", llm.LastUser);
+        Assert.Contains("使用済み: 私の文 / なんでやねん！ / マジで!?", llm.LastUser);
+        Assert.Equal("echo", TsukkomiService.ValidateText("全部焦がしました！", src));
+        Assert.Null(TsukkomiService.ValidateText("イケてる！", src));   // colloquial reactions are not invented names
+        Assert.Null(TsukkomiService.ValidateText("マジで!?", src));
+        Assert.Null(TsukkomiService.ValidateText("ワクワク！", src));
+        Assert.Equal("ungrounded", TsukkomiService.ValidateText("ディズニーかよ！", src));
+    }
+
     async Task<string> MakeAsync(string name, string video, double tone, double gain, double dur, string vf = "null")
     {
         var f = Path.Combine(_dir, name);
@@ -271,6 +369,26 @@ public class PackagingTests : IAsyncLifetime
         await Ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", t.ToString("0.###", IC), "-i", file, "-frames:v", "1", "-vf", $"crop={crop}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], Ct, stdout: ms);
         var b = ms.ToArray(); int n = 0;
         for (int i = 0; i + 2 < b.Length; i += 3) if (b[i] > 200 && b[i + 1] > 170 && b[i + 2] < 90) n++;
+        return n / (b.Length / 3.0);
+    }
+
+    async Task<double> RedShareAsync(string file, double t, string crop)
+    {
+        using var ms = new MemoryStream();
+        await Ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", t.ToString("0.###", IC), "-i", file, "-frames:v", "1", "-vf", $"crop={crop}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], Ct, stdout: ms);
+        var b = ms.ToArray(); int n = 0;
+        for (int i = 0; i + 2 < b.Length; i += 3) if (b[i] > 180 && b[i + 1] < 80 && b[i + 2] < 80) n++;
+        return n / (b.Length / 3.0);
+    }
+
+    /// <summary>Share of pixels close to the image-less card panel colour 0x352044 (grey source frames never match: they have B ≈ G).</summary>
+    async Task<double> PanelShareAsync(string file, double t, string crop)
+    {
+        using var ms = new MemoryStream();
+        await Ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", t.ToString("0.###", IC), "-i", file, "-frames:v", "1", "-vf", $"crop={crop}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], Ct, stdout: ms);
+        var b = ms.ToArray(); int n = 0;
+        for (int i = 0; i + 2 < b.Length; i += 3)
+            if (Math.Abs(b[i] - 0x35) < 25 && Math.Abs(b[i + 1] - 0x20) < 25 && Math.Abs(b[i + 2] - 0x44) < 25 && b[i + 2] - b[i + 1] > 15) n++;
         return n / (b.Length / 3.0);
     }
 
@@ -309,18 +427,22 @@ public class PackagingTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Pause_card_has_music_text_and_exact_resume_with_or_without_registered_image(bool image)
+    [InlineData(null)]
+    [InlineData("540x360")]   // other shape: shown whole over a blurred copy of itself
+    [InlineData("540x960")]   // canvas shape: covers the screen
+    public async Task Pause_card_has_music_text_and_exact_resume_with_or_without_registered_image(string? imageSize)
     {
+        bool image = imageSize != null;
         var src = await MakeAsync("pause-source.mp4", "testsrc2=s=540x960:r=30", 330, 0.8, 8, "hue=s=0");
         var music = Path.Combine(_dir, "music.wav");
         await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=f=880:d=4", music], Ct);
         string? picture = null;
+        int iw = 0, ih = 0;
         if (image)
         {
-            picture = Path.Combine(_dir, "card.png");
-            await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=540x360",
+            picture = Path.Combine(_dir, $"card-{imageSize}.png");
+            (iw, ih) = (int.Parse(imageSize!.Split('x')[0], IC), int.Parse(imageSize.Split('x')[1], IC));
+            await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", $"color=c=red:s={imageSize}",
                 "-frames:v", "1", picture], Ct);
         }
         var p = Fixtures.Presets["P4"];
@@ -335,7 +457,7 @@ public class PackagingTests : IAsyncLifetime
         {
             Timeline = clips,
             Inserts = [new Insert { Id = "pause", Kind = "card", At = 4, Duration = 2.5, Text = "そこ？", Bgm = "upbeat",
-                Path = picture, Width = image ? 540 : 0, Height = image ? 360 : 0, RightsConfirmed = image, GainDb = 0 }],
+                Path = picture, Width = iw, Height = ih, RightsConfirmed = image, GainDb = 0 }],
         };
         var assets = new Dictionary<string, SourceAsset> { ["a1"] = new() { Id = "a1", ProjectId = "p", Path = src, Sha256 = "x",
             Media = new MediaInfo { Duration = 8, Width = 540, Height = 960, Fps = 30, AudioChannels = 1 } } };
@@ -352,6 +474,22 @@ public class PackagingTests : IAsyncLifetime
         Assert.True(Error(await FrameAsync(output.Path, 4.3), await FrameAsync(output.Path, 6.2)) < 2, "source is frozen throughout the card");
         Assert.True(Error(await FrameAsync(output.Path, 6.7), await FrameAsync(baseline.Path, 4.2)) < 3, "resume at the original frame without skipping content");
         Assert.True(await YellowShareAsync(output.Path, 5.2, "432:200:54:300") > 0.01, "text is on the image/panel");
+        if (image)
+        {
+            // full screen: the top and bottom bands (where the frozen scene showed around the old centred image) are the card image too
+            Assert.True(await RedShareAsync(output.Path, 5.2, "540:120:0:0") > 0.95, "card image reaches the top edge");
+            Assert.True(await RedShareAsync(output.Path, 5.2, "540:120:0:840") > 0.95, "card image reaches the bottom edge");
+            Assert.True(await RedShareAsync(output.Path, 5.2, "540:960:0:0") > 0.8, "card image fills the screen apart from the text");
+            Assert.True(await RedShareAsync(output.Path, 3.0, "540:960:0:0") < 0.01, "no card image before the card");
+        }
+        else
+        {
+            // full screen without an image too: the panel (not the frozen grey scene) reaches the top and bottom edges
+            Assert.True(await PanelShareAsync(output.Path, 5.2, "540:120:0:0") > 0.9, "panel reaches the top edge");
+            Assert.True(await PanelShareAsync(output.Path, 5.2, "540:120:0:840") > 0.9, "panel reaches the bottom edge");
+            Assert.True(await PanelShareAsync(output.Path, 5.2, "540:960:0:0") > 0.75, "panel fills the screen apart from the text and frame");
+            Assert.True(await PanelShareAsync(output.Path, 3.0, "540:960:0:0") < 0.01, "no panel before the card");
+        }
         Assert.True(await ToneDbAsync(output.Path, 5, 880) > -35, "card BGM plays even when body BGM is none");
         Assert.True(await ToneDbAsync(output.Path, 5, 330) < -45, "source dialogue is paused");
         Assert.True(await ToneDbAsync(output.Path, 3, 330) > -35, "dialogue before the card");

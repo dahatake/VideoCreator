@@ -284,6 +284,8 @@ public static class Api
                     return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
                 if (settings.SeriesBy is not ("parts" or "minutes"))
                     return Error(422, "E-VALIDATION", "シリーズの分け方は parts / minutes のどちらかを指定してください");
+                if (!Planning.TsukkomiPlacement.Styles.Contains(settings.TsukkomiStyle))
+                    return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
                 p = p with { GenerationSettings = settings };
                 rt.Store.Put(Kinds.Project, id, null, p);
                 return Results.Json(p.GenerationSettings, Json.Options);
@@ -833,6 +835,7 @@ public static class Api
     {
         options ??= new JobOptions();
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
+        if (!Planning.TsukkomiPlacement.Styles.Contains(options.TsukkomiStyle)) return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
         if (options.MaskWords.Count > Planning.Masking.MaxWords || options.MaskWords.Any(w => w.Trim().Length > Planning.Masking.MaxWordLength))
             return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
         options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };

@@ -33,6 +33,7 @@ public sealed record ProjectGenerationSettings
     public string Bgm { get; init; } = "auto";
     public bool Sfx { get; init; } = true;
     public bool Tsukkomi { get; init; }
+    public string TsukkomiStyle { get; init; } = "auto";
     public bool Series { get; init; }
     public string SeriesBy { get; init; } = "parts";
     public int Parts { get; init; } = 2;
@@ -473,6 +474,8 @@ public sealed record JobOptions
     public string Bgm { get; init; } = "auto";
     public bool Sfx { get; init; } = true;
     public bool Tsukkomi { get; init; }
+    /// <summary>How AI tsukkomi are shown: auto (per tsukkomi, see TsukkomiPlacement) | telop (overlay, the video keeps playing) | card (2–3 s pause card).</summary>
+    public string TsukkomiStyle { get; init; } = "auto";
     /// <summary>Series mode: edit the whole source into consecutive parts (前編/後編…) of about this many minutes each. Null = short candidates.</summary>
     public double? PartMinutes { get; init; }
     /// <summary>Series mode by count: exactly this many parts of balanced length. Mutually exclusive with <see cref="PartMinutes"/>.</summary>

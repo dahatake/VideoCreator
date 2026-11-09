@@ -165,14 +165,16 @@ try {
   // ===== S6: P3 — tsukkomi proposals are gated by approval =====
   if (run('S6')) {
     const p = await newProject('v11 P3 tsukkomi', [talk]);
-    const { job } = await generate(p.id, 'P3', { tsukkomi: true });
+    const { job } = await generate(p.id, 'P3', { tsukkomi: true, tsukkomi_style: 'auto' });
     const c = (await api(`/api/jobs/${job.id}/candidates`)).body[0];
     const ep = c.candidate.edit_plan_id;
     let plan = (await api(`/api/editplans/${ep}`)).body.plan;
     const ts = (plan.inserts ?? []).filter(t => t.kind === 'card' && t.text_source === 'ai');
-    console.log('      tsukkomi:', ts.map(t => t.text).join(' / ') || '(none proposed)', '| notes:', c.candidate.notes.filter(n => n.includes('ツッコミ')).join(' '));
-    check(ts.length > 0 && ts.every(t => !t.approved && t.text.length <= 14 && t.duration >= 2 && t.duration <= 3 && t.bgm === 'upbeat'), `P3: ${ts.length} pause cards proposed, all unapproved, 2–3 seconds with music and ≤14 chars`);
-    check(!plan.telops.some(t => t.type === 'tsukkomi'), 'P3: tsukkomi are inserts, not overlay telops');
+    const tt = plan.telops.filter(t => t.type === 'tsukkomi');
+    console.log('      tsukkomi cards:', ts.map(t => t.text).join(' / ') || '(none)', '| telops:', tt.map(t => t.text).join(' / ') || '(none)', '| notes:', c.candidate.notes.filter(n => n.includes('ツッコミ')).join(' '));
+    check(ts.length + tt.length > 0 && [...ts, ...tt].every(t => !t.approved && t.text.length <= 14), `P3 auto: ${ts.length} pause cards + ${tt.length} overlay telops proposed, all unapproved and ≤14 chars`);
+    check(ts.every(t => t.duration >= 2 && t.duration <= 3 && t.bgm === 'upbeat'), 'P3 auto: pause cards are 2–3 seconds with music');
+    check(c.candidate.notes.filter(n => /^ツッコミ「.+」は(停止カード|重ねテロップ)にしました: /.test(n)).length >= ts.length + tt.length, 'P3 auto: every tsukkomi has a reason for its style');
     const blocked = await exportPlan(ep);
     check(blocked.status === 422 || blocked.status === 500, `P3: export blocked before approval (status ${blocked.status})`);
     await api(`/api/editplans/${ep}`, 'PATCH', { ops: [{ op: 'approve_all_tsukkomi' }] });

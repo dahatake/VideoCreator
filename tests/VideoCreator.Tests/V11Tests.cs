@@ -346,18 +346,24 @@ public class V11Tests : IAsyncLifetime
 
         var p = Fixtures.Presets["P3"];
         var assets = new List<SourceAsset> { Asset("a1", "x.mp4", 125, AssetRole.Main) };
-        var job = new Job { Id = "j", ProjectId = "p", PresetIds = ["P3"], Options = new JobOptions { Tsukkomi = true } };
         var cand = new Candidate { Id = "c1", Segments = [new Interval(8.8, 40)], HookText = "1万円で帰れない", Headline = "100円だけ" };
-        var tsu = new JsonLlm("""{"items":[{"caption_id":"CAP","text":"そこ？"}]}""") { CaptionFromPrompt = true };
-        var (plan, _) = await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, tsu), Ct);
-        Assert.DoesNotContain(plan.Telops, x => x.Type == TelopType.Tsukkomi);
-        var t = Assert.Single(plan.Inserts, x => x.Kind == "card");
-        Assert.InRange(t.Duration, 2, 3);
-        Assert.Equal("upbeat", t.Bgm);
-        Assert.False(t.Approved);
-        Assert.Contains(QaEngine.PlanChecks(new QaContext(plan, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Fail);   // export blocked until approved
-        var approved = PlanEditor.Apply(plan, [new PlanOp("approve_all_tsukkomi")]);
-        Assert.Contains(QaEngine.PlanChecks(new QaContext(approved, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Pass);
+        foreach (var style in TsukkomiPlacement.Styles)
+        {
+            var job = new Job { Id = "j", ProjectId = "p", PresetIds = ["P3"], Options = new JobOptions { Tsukkomi = true, TsukkomiStyle = style } };
+            var tsu = new JsonLlm("""{"items":[{"caption_id":"CAP","text":"そこ？"}]}""") { CaptionFromPrompt = true };
+            var (plan, notes) = await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, tsu), Ct);
+            var telops = plan.Telops.Where(x => x.Type == TelopType.Tsukkomi).ToList();
+            var cards = plan.Inserts.Where(x => x.Kind == "card").ToList();
+            Assert.Equal(1, telops.Count + cards.Count);
+            if (style == "telop") Assert.Empty(cards);
+            if (style == "card") Assert.Empty(telops);
+            if (style == "auto") Assert.Contains(notes, n => n.StartsWith("ツッコミ「そこ？」は", StringComparison.Ordinal));
+            foreach (var t in cards) { Assert.InRange(t.Duration, 2, 3); Assert.Equal("upbeat", t.Bgm); Assert.False(t.Approved); }
+            foreach (var t in telops) { Assert.Equal("Tsukkomi", t.Style); Assert.False(t.Approved); }
+            Assert.Contains(QaEngine.PlanChecks(new QaContext(plan, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Fail);   // export blocked until approved
+            var approved = PlanEditor.Apply(plan, [new PlanOp("approve_all_tsukkomi")]);
+            Assert.Contains(QaEngine.PlanChecks(new QaContext(approved, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Pass);
+        }
     }
 
     [Fact] // counters (⑥) come straight from spoken number+unit words; onomatopoeia (⑤) and SFX placement

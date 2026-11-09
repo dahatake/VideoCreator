@@ -262,9 +262,8 @@ public static class AssWriter
     static int CardFontSize(Insert card, Canvas canvas, CaptionStyle c)
     {
         if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, c.MarginR);
+        // the card image fills the screen, so the text may use the whole safe width
         double width = canvas.Width - 2 * Math.Max(MarginL, c.MarginR);
-        if (card.Path != null && card.Width > 0 && card.Height > 0)
-            width = Math.Min(width, Math.Min(canvas.Width * 0.8, canvas.Height * 0.5 * card.Width / card.Height));
         return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + MarginL + c.MarginR, c.MarginR);
     }
 
