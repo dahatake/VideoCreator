@@ -20,6 +20,10 @@ public static class Api
     public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker);
     public sealed record Regenerate(string? Instruction, List<string>? ExcludeCandidateIds);
     public sealed record PatchPlan(List<PlanOp> Ops);
+    /// <summary>「Copilotで自動修復」: the checks to repair (null/empty = every repairable warn/fail).</summary>
+    public sealed record QaRepairRequest(List<string>? CheckIds);
+    /// <summary>Plan as it was before an auto-repair; undo restores it only while the plan is still exactly the repaired one.</summary>
+    public sealed record QaRepairSnapshot(string Id, string EditplanId, EditPlan Before, string AfterHash, DateTimeOffset At);
     public sealed record Settings(string LlmProvider);
     public sealed record WordEdit(string WordId, string Text);
     public sealed record PatchTranscript(List<WordEdit> Edits);
@@ -748,6 +752,50 @@ public static class Api
             }
             catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { return Error(422, "E-VALIDATION", ex.Message); }
         });
+        object PlanView(Runtime rt, PipelineRunner runner, EditPlan before, EditPlan updated)
+        {
+            var c = before.Provenance.CandidateId is { } cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid) : null;
+            var finalStale = rt.Store.List<Render>(Kinds.Render, before.EditplanId).FirstOrDefault(r => r.Kind == "final") is { } latest && RenderValidity.IsStale(latest, updated);
+            return new { plan = updated, plan_hash = EditPlanFingerprint.Of(updated), qa = QaEngine.PlanChecks(runner.QaContextFor(updated)), duration = updated.Duration,
+                preview_stale = EditPlanFingerprint.Of(updated) != EditPlanFingerprint.Of(before),
+                approval = c == null ? null : ApprovalView(c, updated), qa_stale = finalStale, final_render_stale = finalStale };
+        }
+        api.MapPost("/editplans/{id}/qa/repair", async (Runtime rt, JobQueue q, string id, QaRepairRequest? req, CancellationToken ct) =>
+        {
+            var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
+            if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            if (q.ActiveExport(id) != null) return StaleError();
+            var runner = rt.CreateRunner();
+            var res = await QaRepair.RunAsync(runner.QaContextFor(plan), req?.CheckIds, rt.Llm, ct);
+            return rt.Store.Atomic<IResult>(() =>
+            {
+                if (q.ActiveExport(id) != null || rt.Store.Get<EditPlan>(Kinds.EditPlan, id) is not { } current
+                    || EditPlanFingerprint.Of(current) != EditPlanFingerprint.Of(plan)) return StaleError();
+                string? repairId = null;
+                if (res.Changes.Count > 0)
+                {
+                    rt.Store.Put(Kinds.EditPlan, id, plan.ProjectId, res.Plan);
+                    repairId = "qr_" + Guid.NewGuid().ToString("N")[..12];
+                    rt.Store.Put(Kinds.QaRepair, repairId, id, new QaRepairSnapshot(repairId, id, plan, EditPlanFingerprint.Of(res.Plan), DateTimeOffset.Now));
+                }
+                var view = PlanView(rt, runner, plan, res.Changes.Count > 0 ? res.Plan : plan);
+                return Results.Json(new { repair = new { repair_id = repairId, changes = res.Changes, skipped = res.Skipped, llm = res.Llm,
+                    llm_destination = rt.LlmDestination, fixed_count = res.Changes.Count }, result = view }, Json.Options);
+            });
+        }).WithSummary("Auto-repair QA findings (rules first, then the configured LLM); every change is re-verified by the plan checks");
+        api.MapPost("/editplans/{id}/qa/repair/{repairId}/undo", (Runtime rt, JobQueue q, string id, string repairId) => rt.Store.Atomic<IResult>(() =>
+        {
+            var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
+            var snap = rt.Store.Get<QaRepairSnapshot>(Kinds.QaRepair, repairId);
+            if (plan == null || snap == null || snap.EditplanId != id) return Error(404, "E-NOT-FOUND", "元に戻せる自動修復がありません");
+            if (q.ActiveExport(id) != null) return StaleError();
+            if (EditPlanFingerprint.Of(plan) != snap.AfterHash) return Error(409, "E-PLAN-STALE", "自動修復の後に編集されたため、元に戻せません");
+            // exact restore (no undo record): the hash returns to the one an approval / final render was made for
+            var restored = snap.Before;
+            rt.Store.Put(Kinds.EditPlan, id, plan.ProjectId, restored);
+            rt.Store.Delete([(Kinds.QaRepair, repairId)]);
+            return Results.Json(PlanView(rt, rt.CreateRunner(), plan, restored), Json.Options);
+        })).WithSummary("Undo one auto-repair while the plan is unchanged since");
         api.MapPost("/editplans/{id}/preview", async (Runtime rt, JobQueue q, string id, CancellationToken ct) =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);

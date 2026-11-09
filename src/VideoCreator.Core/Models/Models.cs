@@ -528,7 +528,17 @@ public sealed record QaResult(string CheckId, QaStatus Status, string Measured, 
     public bool Hard => CheckId.StartsWith("H-", StringComparison.Ordinal);
     public string? Stage { get; init; }
     public string? PlanHash { get; init; }
+    /// <summary>Every finding of this check (Measured only summarises the first few), each with its target and place in the rendered file.</summary>
+    public List<QaItem>? Items { get; init; }
+    /// <summary>Recommended fix for a Warn/Fail result (Qa.QaAdvice).</summary>
+    public QaAdvice? Advice { get; init; }
 }
+
+/// <summary>One finding. Target is a telop / insert / clip id (Kind says which); Start/End are seconds in the rendered file (inserts included).</summary>
+public sealed record QaItem(string Target, string Kind, string Detail, double? Start = null, double? End = null);
+
+/// <summary>Repair: "rule" = fixed by a deterministic rule, "ai" = the LLM proposes and QA verifies, "manual" = a person has to decide (approval, rights, cut range).</summary>
+public sealed record QaAdvice(string Recommendation, string Repair);
 
 public sealed record Render
 {

@@ -35,6 +35,7 @@ public static class ProjectDeletion
         foreach (var k in ProjectChildren) docs.AddRange(store.Ids(k, p.Id).Select(id => (k, id)));
         foreach (var j in jobIds) docs.AddRange(store.Ids(Kinds.Candidate, j).Select(id => (Kinds.Candidate, id)));
         docs.AddRange(renderIds.Select(id => (Kinds.Render, id)));
+        docs.AddRange(planIds.SelectMany(e => store.Ids(Kinds.QaRepair, e)).Select(id => (Kinds.QaRepair, id)));
         docs.Add((Kinds.Project, p.Id));
         var shas = store.List<SourceAsset>(Kinds.Asset, p.Id).Select(a => CacheKey(a.Sha256)).Where(s => s != null).ToHashSet();
 

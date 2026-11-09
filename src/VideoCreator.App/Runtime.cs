@@ -79,12 +79,14 @@ public sealed class Runtime
             ? Origin(endpoint) : null,
         authentication = _o.Asr.Provider == "azure" && !string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
             ? "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）" : null,
-        llm_destination = LlmProvider switch
-        {
-            "azure-openai" when Uri.TryCreate(_o.Llm.Endpoint, UriKind.Absolute, out var llmEndpoint) => Origin(llmEndpoint),
-            "copilot" => "GitHub Copilot",
-            _ => null,
-        },
+        llm_destination = LlmDestination,
+    };
+
+    public string? LlmDestination => LlmProvider switch
+    {
+        "azure-openai" when Uri.TryCreate(_o.Llm.Endpoint, UriKind.Absolute, out var llmEndpoint) => Origin(llmEndpoint),
+        "copilot" => "GitHub Copilot",
+        _ => null,
     };
 
     public IHighlightSelector? Llm => LlmProvider switch

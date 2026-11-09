@@ -46,6 +46,7 @@ public static class JobDeletion
         var docs = new List<(string, string)>();
         docs.AddRange(store.Ids(Kinds.Candidate, job.Id).Select(id => (Kinds.Candidate, id)));
         docs.AddRange(renderIds.Select(id => (Kinds.Render, id)));
+        docs.AddRange(planIds.SelectMany(e => store.Ids(Kinds.QaRepair, e)).Select(id => (Kinds.QaRepair, id)));
         docs.AddRange(planIds.Select(id => (Kinds.EditPlan, id)));
         docs.Add((Kinds.Job, job.Id));
         var n = store.Delete(docs);

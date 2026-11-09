@@ -1321,6 +1321,8 @@ async function review(epId) {
   const finalT = (t, end = false) => t + active().filter(i => i.at < t - 1e-3 || (!end && i.at <= t + 1e-3)).reduce((a, i) => a + i.duration, 0);
   const insertStart = (ins) => { let off = 0; for (const i of active()) { if (i.id === ins.id) break; off += i.duration; } return ins.at + off; };
   const insertName = { opening: 'オープニング', closing: 'クロージング', card: '場面転換カード' };
+  const llmDest = (await api('/api/settings').catch(() => null))?.transmission?.llm_destination ?? null;
+  let lastRepair = null, repairing = false;
   Object.assign(typeLabel, insertName);
   // one list for telops and inserts; the type switches turn a whole type on/off (tsukkomi = overlay telops + pause cards)
   const isTsukkomiCard = (i) => i.kind === 'card' && i.id.startsWith('tsukkomi');
@@ -1341,6 +1343,116 @@ async function review(epId) {
       <td><fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${esc(name)} ${esc(i.id)} を使う"></fluent-switch>${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">承認</fluent-button>`}</td></tr>`;
   };
 
+  // ---- 自動チェック panel (right column): findings on the rendered-file timeline, recommended fix, Copilot auto-repair ----
+  const totalDur = () => plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0) + active().reduce((a, i) => a + i.duration, 0);
+  const tc = (x) => `${Math.floor(x / 60)}:${(x % 60).toFixed(1).padStart(4, '0')}`;
+  const statusName = { pass: '合格', fail: '不合格', warn: '警告', not_run: '未実施' };
+  const repairName = { rule: '自動で修復できます', ai: 'AI で修復できます', manual: '手動で修正' };
+  const targetText = (it) => {
+    if (it.kind === 'telop') { const t = plan.telops.find(x => x.id === it.target); return t ? `${typeLabel[t.type] ?? t.type}「${t.text}」` : it.target; }
+    if (it.kind === 'insert') { const i = (plan.inserts ?? []).find(x => x.id === it.target); return i ? `${isTsukkomiCard(i) ? 'ツッコミ' : insertName[i.kind] ?? i.kind}${i.text ? `「${i.text}」` : ''}` : it.target; }
+    if (it.kind === 'clip') return `カット ${it.target}`;
+    if (it.kind === 'asset') return assetName(it.target);
+    return it.target;
+  };
+  const seekBtn = (it, check) => Number.isFinite(it.start)
+    ? `<button class="qa-seek" type="button" data-time="${it.start.toFixed(3)}" data-target="${esc(it.target)}" data-kind="${esc(it.kind)}" aria-label="${esc(check)} ${tc(it.start)} の位置へ移動">${tc(it.start)}</button>`
+    : '<span class="qa-seek none" aria-hidden="true">—</span>';
+  const SPARKLE = '<svg slot="start" class="ico" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="currentColor"><path d="M9 2.2l1.7 4.4c.2.6.7 1.1 1.3 1.3L16.4 9.6l-4.4 1.7c-.6.2-1.1.7-1.3 1.3L9 17l-1.7-4.4c-.2-.6-.7-1.1-1.3-1.3L1.6 9.6 6 7.9c.6-.2 1.1-.7 1.3-1.3z"/><path d="M15.5 1.5l.6 1.6c.1.2.2.3.4.4l1.6.6-1.6.6c-.2.1-.3.2-.4.4l-.6 1.6-.6-1.6c-.1-.2-.2-.3-.4-.4l-1.6-.6 1.6-.6c.2-.1.3-.2.4-.4z"/></svg>';
+  const BULB = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M8 1a5 5 0 0 0-3 9v1.5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5V10a5 5 0 0 0-3-9zm2 8.4V11H6V9.4l-.2-.2A4 4 0 1 1 10.2 9.2zM6 13h4v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1z"/></svg>';
+  const qaPanel = () => {
+    const issues = qa.filter(q => q.status === 'fail' || q.status === 'warn').sort((a, b) => (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1));
+    const passed = qa.filter(q => q.status === 'pass' || q.status === 'not_run');
+    const fails = issues.filter(q => q.status === 'fail').length, warns = issues.length - fails;
+    const repairable = issues.filter(q => q.advice && q.advice.repair !== 'manual');
+    const total = Math.max(0.1, totalDur());
+    const markers = issues.flatMap(q => (q.items ?? []).filter(it => Number.isFinite(it.start)).map(it => {
+      const left = Math.min(100, it.start / total * 100), w = Math.max(0.8, Math.min(100 - left, ((it.end ?? it.start) - it.start) / total * 100));
+      return `<button type="button" class="qa-mark ${q.status}" style="left:${left.toFixed(2)}%;width:${w.toFixed(2)}%" data-time="${it.start.toFixed(3)}" data-target="${esc(it.target)}" data-kind="${esc(it.kind)}" aria-label="${esc(q.check_id)} ${tc(it.start)}: ${esc(it.detail)}" title="${esc(q.check_id)} ${tc(it.start)} ${esc(it.detail)}"></button>`;
+    })).join('');
+    const issueCard = (q) => {
+      const items = q.items ?? [];
+      const row = (it) => `<li class="qa-item" data-start="${it.start ?? ''}" data-end="${it.end ?? it.start ?? ''}">${seekBtn(it, q.check_id)}<span><span class="qa-target">${esc(targetText(it))}</span> <span class="caption">${esc(it.detail)}</span></span></li>`;
+      return `<li class="qa-issue ${q.status}" data-check="${esc(q.check_id)}">
+        <div class="qa-issue-head"><span class="qa-status ${q.status}">${statusName[q.status]}</span><b>${esc(q.check_id)}</b><span>${esc(q.message)}</span></div>
+        <p class="caption qa-measure">${esc(q.measured)}（基準 ${esc(q.threshold)}${q.stage ? `・${esc(q.stage)}` : ''}）</p>
+        ${q.advice ? `<div class="qa-advice">${BULB}<div><b>推奨する修正</b> <span class="repair-tag ${esc(q.advice.repair)}">${repairName[q.advice.repair] ?? ''}</span><p>${esc(q.advice.recommendation)}</p>
+          ${q.advice.repair !== 'manual' ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}この項目を修復</fluent-button>` : ''}</div></div>` : ''}
+        ${items.length ? `<ul class="qa-items">${items.slice(0, 12).map(row).join('')}</ul>${items.length > 12 ? `<details><summary class="caption">ほか ${items.length - 12} 件</summary><ul class="qa-items">${items.slice(12).map(row).join('')}</ul></details>` : ''}` : ''}
+      </li>`;
+    };
+    const r = lastRepair;
+    const result = !r ? '' : `<div class="qa-result" role="status">
+      <div class="row" style="justify-content:space-between"><b>${r.fixed_count ? `${r.fixed_count} 件を修復しました` : '修復できる項目はありませんでした'}</b>
+        ${r.repair_id ? `<fluent-button size="small" id="qaUndo">元に戻す</fluent-button>` : ''}</div>
+      ${r.changes.length ? `<ul class="qa-changes">${r.changes.map(c => `<li>${seekBtn(c, c.check_id)}<span><b>${esc(c.check_id)}</b> <span class="repair-tag ${esc(c.method)}">${c.method === 'ai' ? 'AI' : 'ルール'}</span>${c.needs_approval ? ' <span class="repair-tag manual">要承認</span>' : ''}
+        <span class="qa-diff"><del>${esc(c.before ?? '')}</del> → <ins>${esc(c.after ?? '')}</ins></span></span></li>`).join('')}</ul>` : ''}
+      ${r.changes.some(c => c.needs_approval) ? '<p class="caption">AI が書き直した文は未承認です。内容を確認して「承認」してください。</p>' : ''}
+      ${r.skipped.length ? `<details><summary class="caption">直さなかった項目 ${r.skipped.length} 件</summary><ul class="qa-changes">${r.skipped.map(s => `<li>${seekBtn(s, s.check_id)}<span><b>${esc(s.check_id)}</b> ${esc(s.target)} <span class="caption">${esc(s.reason)}</span></span></li>`).join('')}</ul></details>` : ''}
+      <p class="caption">修復はテロップの文字・根拠発話だけを変え、変更ごとに自動チェックをやり直して、ほかの項目が悪くならないものだけを残しています。</p></div>`;
+    return `<section class="card qa-panel" aria-labelledby="qa-title">
+      <div class="row" style="justify-content:space-between"><h2 id="qa-title">自動チェック</h2>
+        <div class="row"><span class="qa-count fail">不合格 ${fails}</span><span class="qa-count warnc">警告 ${warns}</span><span class="qa-count pass">合格 ${passed.filter(q => q.status === 'pass').length}</span></div></div>
+      <div class="qa-timeline" role="group" aria-label="指摘の位置（動画の時間）">${markers}<div class="qa-playhead" aria-hidden="true"></div></div>
+      <div class="row caption" style="justify-content:space-between"><span>0:00.0</span><span id="qaNow" aria-live="off">0:00.0</span><span>${tc(total)}</span></div>
+      ${issues.length ? `<div class="qa-repair">
+        <fluent-button appearance="primary" id="qaRepair" ${repairable.length && !repairing ? '' : 'disabled'} aria-describedby="qaRepairNote">${SPARKLE}${repairing ? '修復しています…' : 'Copilotで自動修復'}</fluent-button>
+        ${repairing ? '<fluent-progress-bar aria-label="自動修復の進み具合"></fluent-progress-bar>' : ''}
+        <p class="caption" id="qaRepairNote">${repairable.length ? `${repairable.length} 項目が対象。` : '自動で直せる項目はありません。'}${llmDest ? `AI の修正にはテロップの文字と前後の書き起こしを ${esc(llmDest)} に送ります。` : 'LLM が未設定のため、ルールで直せる項目だけを修復します。'}</p></div>` : '<p class="pass">すべての自動チェックに合格しています。</p>'}
+      <div id="qaRepairMsg">${result}</div>
+      ${issues.length ? `<ul class="qa-issues">${issues.map(issueCard).join('')}</ul>` : ''}
+      ${passed.length ? `<details class="qa-passed"><summary class="caption">合格・未実施 ${passed.length} 件</summary>${qaList(passed)}</details>` : ''}
+    </section>`;
+  };
+  const focusTarget = (target, kind) => {
+    $$('tr.qa-hit').forEach(tr => tr.classList.remove('qa-hit'));
+    const row = kind === 'telop' ? $(`tr[data-telop="${CSS.escape(target)}"]`) : kind === 'insert' ? $(`tr[data-insert="${CSS.escape(target)}"]`) : null;
+    if (!row) return;
+    row.classList.add('qa-hit');
+    row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  const runRepair = async (checkIds) => {
+    repairing = true; draw();
+    try {
+      const r = await api(`/api/editplans/${epId}/qa/repair`, { method: 'POST', body: { check_ids: checkIds } });
+      const v = r.result; plan = v.plan; qa = v.qa; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale;
+      lastRepair = r.repair;
+    } catch (e) { lastRepair = null; repairing = false; draw(); $('#qaRepairMsg').innerHTML = errorBar(e); return; }
+    repairing = false; draw();
+  };
+  const wireQaPanel = () => {
+    const video = $('#pv video');
+    const seek = (el) => {
+      const time = Number(el.dataset.time);
+      if (video && Number.isFinite(time)) video.currentTime = Number.isFinite(video.duration) ? Math.min(time + 0.05, video.duration) : time + 0.05;
+      focusTarget(el.dataset.target, el.dataset.kind);
+    };
+    $$('.qa-panel .qa-seek[data-time], .qa-panel .qa-mark').forEach(b => b.addEventListener('click', () => seek(b)));
+    $('#qaRepair')?.addEventListener('click', () => runRepair(null));
+    $$('[data-repair-one]').forEach(b => b.addEventListener('click', () => runRepair([b.dataset.repairOne])));
+    $('#qaUndo')?.addEventListener('click', async () => {
+      try {
+        const v = await api(`/api/editplans/${epId}/qa/repair/${encodeURIComponent(lastRepair.repair_id)}/undo`, { method: 'POST' });
+        plan = v.plan; qa = v.qa; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale; lastRepair = null; draw();
+      } catch (e) { $('#qaRepairMsg').innerHTML = errorBar(e); }
+    });
+    if (!video) return;
+    const total = Math.max(0.1, totalDur());
+    const spans = new Map(plan.telops.filter(x => x.enabled).map(x => [x.id, [finalT(x.start), finalT(x.end, true)]]));
+    const rows = $$('tr[data-telop]'), items = $$('.qa-panel .qa-item');
+    const sync = () => {
+      const t = video.currentTime;
+      const head = $('.qa-playhead'); if (head) head.style.left = `${Math.min(100, t / total * 100).toFixed(2)}%`;
+      const now = $('#qaNow'); if (now) now.textContent = tc(t);
+      // findings on screen now, and the telop row they point at
+      items.forEach(li => { const s = Number(li.dataset.start), e = Number(li.dataset.end); li.classList.toggle('now', li.dataset.start !== '' && t >= s - 0.05 && t <= Math.max(e, s + 0.5)); });
+      rows.forEach(tr => { const s = spans.get(tr.dataset.telop); tr.classList.toggle('playing', !!s && t >= s[0] && t < s[1]); });
+    };
+    video.addEventListener('timeupdate', sync);
+    video.addEventListener('seeked', sync);
+    sync();
+  };
+
   const draw = () => {
     const unapprovedText = plan.telops.some(t => t.enabled && !t.approved) || active().some(i => i.kind === 'card' && i.text && !i.approved);
     const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail'
@@ -1349,7 +1461,7 @@ async function review(epId) {
     main.innerHTML = `
       <div class="row" style="justify-content:space-between"><h1>確認・修正</h1>
         <div class="row">${safeToggle()}<fluent-anchor-button href="#/job/${esc(job.id)}" appearance="subtle">候補に戻る</fluent-anchor-button></div></div>
-      <div class="grid cols-review" style="align-items:start">
+      <div class="grid cols-review with-qa" style="align-items:start">
         <section class="card stack">
           ${previewUrl ? phone(previewUrl + (stale ? '' : `?v=${Date.now()}`), 'pv') : ''}
           ${stale ? info('変更があったため、プレビューが古くなっています。', 'warning') : ''}
@@ -1369,12 +1481,10 @@ async function review(epId) {
           ${plan.series ? '<p class="caption">前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません（本数か1本あたりの長さを変えて作り直します）。</p>' : `<h3>区間の調整（文単位）</h3>
           <div class="row"><fluent-button size="small" data-adj="start:1">開始を1文前へ</fluent-button><fluent-button size="small" data-adj="start:-1">開始を1文後へ</fluent-button></div>
           <div class="row"><fluent-button size="small" data-adj="end:-1">終了を1文前へ</fluent-button><fluent-button size="small" data-adj="end:1">終了を1文後へ</fluent-button></div>`}
-          <h3 style="margin-top:8px">自動チェック</h3>
-          <div>${qaList(qa)}</div>
           <div id="review-approval">${approvalBadge(approval)}</div>
           ${finalStale ? info('編集後のため、本番QA・書き出し結果は失効しています。現在の内容で再承認・再書き出ししてください。', 'warning') : ''}
           <fluent-button appearance="primary" id="export" ${hardFail ? 'disabled' : ''}>この内容を承認して書き出す（1080×1920）</fluent-button>
-          ${hardFail ? '<span class="caption fail">不合格の項目を直すと書き出せます</span>' : ''}
+          ${hardFail ? '<span class="caption fail">不合格の項目を直すと書き出せます（右の「自動チェック」）</span>' : ''}
           <div id="msg"></div>
         </section>
         <section class="card">
@@ -1388,7 +1498,7 @@ async function review(epId) {
               .sort((a, b) => a.at - b.at || (a.i ? 0 : 1) - (b.i ? 0 : 1)).map(({ t, i }) => i ? insertRow(i) : (() => {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
               const start = finalT(t.start), end = finalT(t.end, true);
-              return `<tr class="${t.enabled ? '' : 'off'}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
+              return `<tr class="${t.enabled ? '' : 'off'}" data-telop="${esc(t.id)}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
                 <td><button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${start.toFixed(1)}秒から${end.toFixed(1)}秒の範囲を確認（開始位置へ移動）">${start.toFixed(1)}–${end.toFixed(1)}</button></td>
                 <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="テロップ ${esc(t.id)}">
                   ${['emphasis', 'headline', 'hook', 'counter'].includes(t.type) ? (() => {
@@ -1407,8 +1517,10 @@ async function review(epId) {
             })()).join('')}
           </tbody></table></div>
         </section>
+        ${qaPanel()}
       </div>`;
     wireSafeToggle();
+    wireQaPanel();
     $$('button.timestamp-seek').forEach(button => button.addEventListener('click', () => {
       const video = $('#pv video');
       const time = Number(button.dataset.time);
@@ -1416,7 +1528,7 @@ async function review(epId) {
       video.currentTime = Number.isFinite(video.duration) ? Math.min(time, video.duration) : time;
     }));
     const patch = async (ops) => {
-      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; draw(); }
+      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; lastRepair = null; draw(); }
       catch (e) { $('#msg').innerHTML = errorBar(e); }
     };
     $$('input.wd').forEach(inp => inp.addEventListener('change', async () => {

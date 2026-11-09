@@ -25,12 +25,27 @@ public sealed class QaEngine(FFmpeg ff)
     {
         var res = new List<QaResult>();
         var p = ctx.Preset; var plan = ctx.Plan; var tr = ctx.Transcript;
+        var ins = InsertMap.Active(plan);
+        QaItem TelopItem(Telop t, string detail) => new(t.Id, "telop", detail, Math.Round(InsertMap.ToFinal(ins, t.Start), 3), Math.Round(InsertMap.ToFinal(ins, t.End, true), 3));
+        QaItem InsertItem(Insert i, string detail)
+        {
+            double s = i.Enabled && i.Duration > 0 ? InsertMap.StartOf(ins, i) : InsertMap.ToFinal(ins, i.At);
+            return new(i.Id, "insert", detail, Math.Round(s, 3), Math.Round(s + (i.Enabled ? i.Duration : 0), 3));
+        }
+        var clipStart = new double[plan.Timeline.Count];
+        for (int ci = 1; ci < plan.Timeline.Count; ci++) clipStart[ci] = clipStart[ci - 1] + plan.Timeline[ci - 1].Length;
+        QaItem ClipItem(int ci, string detail, double? bodyAt = null)
+        {
+            var c = plan.Timeline[ci];
+            double s = InsertMap.ToFinal(ins, bodyAt ?? clipStart[ci]), e = bodyAt != null ? s : InsertMap.ToFinal(ins, clipStart[ci] + c.Length, true);
+            return new(c.ClipId, "clip", detail, Math.Round(s, 3), Math.Round(e, 3));
+        }
         double dur = plan.Duration, fileDur = plan.TotalDuration;
         var (minD, maxD, cap) = DurationRange(plan, p);
         res.Add(new("H-01", DurationOk(dur, fileDur, minD, maxD, cap, 0.05) ? QaStatus.Pass : QaStatus.Fail, DurationText(dur, fileDur), RangeText(minD, maxD, cap), "尺"));
 
         // H-06: an edge must not fall inside a word by more than the ASR timing tolerance on both sides
-        var bad = new List<string>();
+        var bad = new List<string>(); var badItems = new List<QaItem>();
         for (int ci = 0; ci < plan.Timeline.Count; ci++)
         {
             var c = plan.Timeline[ci];
@@ -41,58 +56,76 @@ public sealed class QaEngine(FFmpeg ff)
             if (ci == plan.Timeline.Count - 1 || Math.Abs(plan.Timeline[ci + 1].MasterIn - c.MasterOut) > 0.002 || plan.Timeline[ci + 1].Speed != c.Speed) edges.Add(c.MasterOut);
             foreach (var edge in edges)
                 foreach (var w in tr.Words)
-                    if (edge - w.T0 > WordTolerance && w.T1 - edge > WordTolerance) bad.Add($"{edge:F2}s「{w.Text}」");
+                    if (edge - w.T0 > WordTolerance && w.T1 - edge > WordTolerance)
+                    {
+                        bad.Add($"{edge:F2}s「{w.Text}」");
+                        badItems.Add(ClipItem(ci, $"「{w.Text}」の途中で{(edge == c.MasterIn ? "始まります" : "切れます")}", clipStart[ci] + (edge - c.MasterIn) / c.Speed));
+                    }
         }
-        res.Add(new("H-06", bad.Count == 0 ? QaStatus.Pass : p.Planner == "beat" ? QaStatus.Warn : QaStatus.Fail, bad.Count == 0 ? "0" : string.Join(", ", bad.Take(3)), p.Planner == "beat" ? "拍に合わせるため警告のみ" : "0 mid-word cuts (±150ms)", "発話途中のカット"));
+        res.Add(new("H-06", bad.Count == 0 ? QaStatus.Pass : p.Planner == "beat" ? QaStatus.Warn : QaStatus.Fail, bad.Count == 0 ? "0" : string.Join(", ", bad.Take(3)), p.Planner == "beat" ? "拍に合わせるため警告のみ" : "0 mid-word cuts (±150ms)", "発話途中のカット") { Items = badItems });
 
         // H-07: numbers / proper tokens in generated telops must be grounded in the clip transcript (or dictionary).
         // Series parts: hook/chapter telops may name the series (whole source), and part labels (第2話 …) are structural, not claims.
         var src = plan.Series is { } se
             ? tr.FullText + string.Concat(se.Labels)
             : string.Concat(tr.Sentences.Where(s => plan.Timeline.Any(c => s.T1 > c.MasterIn && s.T0 < c.MasterOut)).Select(s => s.Text));
-        var ungrounded = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
-            .SelectMany(t => JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary).Select(x => $"{t.Id}:{x}"))
-            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).SelectMany(i => JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary).Select(x => $"{i.Id}:{x}"))).ToList();
-        res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの未出現語（内容の忠実性は別途確認）"));
+        var ungroundedHits = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
+            .Select(t => (id: t.Id, claims: JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary), item: (Func<string, QaItem>)(d => TelopItem(t, d))))
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).Select(i => (id: i.Id, claims: JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary), item: (Func<string, QaItem>)(d => InsertItem(i, d)))))
+            .Where(x => x.claims.Count > 0).ToList();
+        var ungrounded = ungroundedHits.SelectMany(x => x.claims.Select(c => $"{x.id}:{c}")).ToList();
+        res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの未出現語（内容の忠実性は別途確認）")
+            { Items = ungroundedHits.Select(x => x.item($"「{string.Join("」「", x.claims)}」が発話にありません")).ToList() });
 
-        var evidenceErrors = plan.Telops.Where(t => t.Enabled && (TelopGrounding.Applies(t) || p.Planner == "switch" && t.Speaker != null))
-            .SelectMany(t => TelopGrounding.Problems(t, plan.Timeline, tr, ctx.Dictionary, plan.Series).Select(message => $"{t.Id}: {message}")).ToList();
+        var evidence = plan.Telops.Where(t => t.Enabled && (TelopGrounding.Applies(t) || p.Planner == "switch" && t.Speaker != null))
+            .Select(t => (t, problems: TelopGrounding.Problems(t, plan.Timeline, tr, ctx.Dictionary, plan.Series))).Where(x => x.problems.Count > 0).ToList();
+        var evidenceErrors = evidence.SelectMany(x => x.problems.Select(message => $"{x.t.Id}: {message}")).ToList();
         res.Add(new("H-11", evidenceErrors.Count == 0 ? QaStatus.Pass : QaStatus.Fail,
-            evidenceErrors.Count == 0 ? "0" : string.Join(", ", evidenceErrors), "区間内の根拠発話・数字/単位/対象・話者が一致", "テロップと発話の対応"));
-        var lostNegation = plan.Telops.Where(t => t.Enabled && TelopGrounding.NegationDropped(t, plan.Timeline, tr)).Select(t => t.Id).ToList();
+            evidenceErrors.Count == 0 ? "0" : string.Join(", ", evidenceErrors), "区間内の根拠発話・数字/単位/対象・話者が一致", "テロップと発話の対応")
+            { Items = evidence.Select(x => TelopItem(x.t, string.Join(" / ", x.problems))).ToList() });
+        var lostNegation = plan.Telops.Where(t => t.Enabled && TelopGrounding.NegationDropped(t, plan.Timeline, tr)).ToList();
         res.Add(new("S-09", lostNegation.Count == 0 ? QaStatus.Pass : QaStatus.Warn,
-            lostNegation.Count == 0 ? "0" : string.Join(", ", lostNegation), "根拠発話の否定を保持", "否定の脱落"));
+            lostNegation.Count == 0 ? "0" : string.Join(", ", lostNegation.Select(t => t.Id)), "根拠発話の否定を保持", "否定の脱落")
+            { Items = lostNegation.Select(t => TelopItem(t, "根拠発話の否定（〜ない など）がテロップから抜けています")).ToList() });
 
-        var unapproved = plan.Telops.Count(t => t.Enabled && !t.Approved) + plan.Inserts.Count(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved);
+        var unapprovedItems = plan.Telops.Where(t => t.Enabled && !t.Approved).Select(t => TelopItem(t, "未承認"))
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved).Select(i => InsertItem(i, "未承認のカード"))).ToList();
+        var unapproved = unapprovedItems.Count;
         bool staleApproval = ctx.Approval != null && ctx.Approval.PlanHash != EditPlanFingerprint.Of(plan);
         res.Add(new("H-08", unapproved == 0 && !staleApproval ? QaStatus.Pass : QaStatus.Fail,
-            staleApproval ? "候補の承認は編集後に失効しています" : unapproved.ToString(IC), "0・承認ハッシュが一致", "未承認テロップ・失効した承認"));
+            staleApproval ? "候補の承認は編集後に失効しています" : unapproved.ToString(IC), "0・承認ハッシュが一致", "未承認テロップ・失効した承認") { Items = unapprovedItems });
 
         var missing = plan.Timeline.Select(c => c.AssetId).Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId)).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.ImageAssetId != null && !ctx.RightsAssetIds.Contains(i.ImageAssetId)).Select(i => i.ImageAssetId!))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.Path != null && !i.RightsConfirmed).Select(i => Path.GetFileName(i.Path!))).ToList();
-        res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認"));
+        res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認")
+            { Items = missing.Select(m => new QaItem(m, "asset", "権利確認が済んでいません")).ToList() });
 
         // H-10 伏せ字: no hidden word may survive in any telop / card (including hand edits), and every spoken occurrence inside the edit must be bleeped.
         // The spans are recomputed here from the original transcript, independently of the planner.
         var mask = Planning.Masking.Clean(ctx.MaskWords);
         if (mask.Count > 0)
         {
-            var leaks = plan.Telops.Where(t => t.Enabled && Planning.Masking.Contains(t.Text, mask)).Select(t => t.Id)
-                .Concat(plan.Inserts.Where(i => i.Enabled && Planning.Masking.Contains(i.Text, mask)).Select(i => i.Id)).ToList();
+            var leakItems = plan.Telops.Where(t => t.Enabled && Planning.Masking.Contains(t.Text, mask)).Select(t => TelopItem(t, "伏せる語が文字に残っています"))
+                .Concat(plan.Inserts.Where(i => i.Enabled && Planning.Masking.Contains(i.Text, mask)).Select(i => InsertItem(i, "伏せる語が文字に残っています"))).ToList();
             var spoken = Planning.Masking.ToOutput(plan.Timeline, Planning.Masking.Apply(tr, mask).Spans);
-            var unbleeped = spoken.Where(s => !plan.Audio.Bleeps.Any(b => b.T0 <= s.T0 + 0.01 && b.T1 >= s.T1 - 0.01)).Select(s => $"{s.T0:F2}s").ToList();
-            var maskBad = leaks.Concat(unbleeped).ToList();
-            res.Add(new("H-10", maskBad.Count == 0 ? QaStatus.Pass : QaStatus.Fail, maskBad.Count == 0 ? $"{mask.Count} 語・{spoken.Count} か所" : string.Join(", ", maskBad.Take(5)), "伏せた語が文字にも音声にも残らない", "伏せ字"));
+            var unbleepedSpans = spoken.Where(s => !plan.Audio.Bleeps.Any(b => b.T0 <= s.T0 + 0.01 && b.T1 >= s.T1 - 0.01)).ToList();
+            var maskBad = leakItems.Select(x => x.Target).Concat(unbleepedSpans.Select(s => $"{s.T0:F2}s")).ToList();
+            res.Add(new("H-10", maskBad.Count == 0 ? QaStatus.Pass : QaStatus.Fail, maskBad.Count == 0 ? $"{mask.Count} 語・{spoken.Count} か所" : string.Join(", ", maskBad.Take(5)), "伏せた語が文字にも音声にも残らない", "伏せ字")
+            {
+                Items = [.. leakItems, .. unbleepedSpans.Select(s => new QaItem($"{s.T0:F2}s", "audio", "伏せる語の音声がピー音で消されていません", Math.Round(InsertMap.ToFinal(ins, s.T0), 3), Math.Round(InsertMap.ToFinal(ins, s.T1, true), 3)))],
+            });
         }
 
         var caps = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).ToList();
         var fast = caps.Where(t => JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start) > p.Telop.Caption.MaxCps + 0.01).ToList();
-        res.Add(new("S-01", fast.Count == 0 ? QaStatus.Pass : QaStatus.Warn, fast.Count == 0 ? "ok" : string.Join(", ", fast.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text) / (t.End - t.Start):F1}cps")), $"≤{p.Telop.Caption.MaxCps} 文字/秒", "字幕速度"));
+        res.Add(new("S-01", fast.Count == 0 ? QaStatus.Pass : QaStatus.Warn, fast.Count == 0 ? "ok" : string.Join(", ", fast.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text) / (t.End - t.Start):F1}cps")), $"≤{p.Telop.Caption.MaxCps} 文字/秒", "字幕速度")
+            { Items = fast.Select(t => TelopItem(t, $"毎秒 {JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start):F1} 字（{t.End - t.Start:F1} 秒に {JapaneseText.DisplayWidth(t.Text)} 字）")).ToList() });
         int lineChars = AssWriter.CaptionLineChars(p, plan.Canvas.Width);
         var wide = plan.Telops.Where(t => t.Enabled && (t.Type == TelopType.Caption ? AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width).Any(l => JapaneseText.DisplayWidth(l) > lineChars)
             : t.Type == TelopType.Emphasis && JapaneseText.DisplayWidth(t.Text) > p.Telop.Caption.MaxCharsPerLine)).ToList();
-        res.Add(new("S-02", wide.Count == 0 ? QaStatus.Pass : QaStatus.Warn, wide.Count == 0 ? "ok" : string.Join(", ", wide.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text)}字")), $"≤{lineChars} 字/行" + (p.Telop.Caption.MaxLines > 1 ? $"・{p.Telop.Caption.MaxLines}行まで" : ""), "1行の文字数"));
+        res.Add(new("S-02", wide.Count == 0 ? QaStatus.Pass : QaStatus.Warn, wide.Count == 0 ? "ok" : string.Join(", ", wide.Take(3).Select(t => $"{t.Id} {JapaneseText.DisplayWidth(t.Text)}字")), $"≤{lineChars} 字/行" + (p.Telop.Caption.MaxLines > 1 ? $"・{p.Telop.Caption.MaxLines}行まで" : ""), "1行の文字数")
+            { Items = wide.Select(t => TelopItem(t, $"{JapaneseText.DisplayWidth(t.Text)} 字")).ToList() });
 
         // S-08 禁則: every displayed caption line (incl. hand edits) obeys JIS X 4051 line-start/line-end rules, and a caption never starts with a particle/auxiliary of the previous caption
         var wordText = tr.Words.GroupBy(w => w.Id).ToDictionary(g => g.Key, g => g.First().Text);
@@ -100,24 +133,28 @@ public sealed class QaEngine(FFmpeg ff)
                 .Concat(t.SourceWordIds.Count > 0 && wordText.TryGetValue(t.SourceWordIds[0], out var w0) && !JapaneseText.IsPunct(w0) && !JapaneseText.CanStartLine(w0) && t.Start > 0.01
                     && caps.Any(o => o.End >= t.Start - 0.05 && o.Start < t.Start) ? [$"先頭が「{w0}」"] : Array.Empty<string>()).FirstOrDefault()))
             .Where(x => x.why != null).ToList();
-        res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則"));
+        res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則")
+            { Items = kinsoku.Select(x => TelopItem(x.t, x.why!)).ToList() });
 
         var mapped = TelopBuilder.MapWords(plan.Timeline, tr);
         bool hookOk = mapped.Any(m => m.Start <= p.Hook.MaxSec) || plan.Timeline.FirstOrDefault()?.Role == "teaser" || tr.Words.Count == 0;
         // an opening video before the first words delays the hook (a Shorts viewer decides in the first seconds); series parts are long-form
         var lead = InsertMap.Active(plan).FirstOrDefault(i => i.Kind == "opening" && i.At < 0.01);
         if (lead != null && plan.Series == null)
-            res.Add(new("S-03", QaStatus.Warn, $"オープニング {lead.Duration:F1}s が先頭", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック（オープニングの前に見どころを先出しすると離脱を防げます）"));
+            res.Add(new("S-03", QaStatus.Warn, $"オープニング {lead.Duration:F1}s が先頭", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック（オープニングの前に見どころを先出しすると離脱を防げます）") { Items = [InsertItem(lead, "オープニングが先頭にあります")] });
         else
-            res.Add(new("S-03", hookOk ? QaStatus.Pass : QaStatus.Warn, hookOk ? "speech/teaser in opening" : "no speech in opening", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック"));
+            res.Add(new("S-03", hookOk ? QaStatus.Pass : QaStatus.Warn, hookOk ? "speech/teaser in opening" : "no speech in opening", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック")
+                { Items = hookOk || plan.Timeline.Count == 0 ? [] : [ClipItem(0, $"最初の {p.Hook.MaxSec} 秒に発話がありません")] });
 
-        var shortShots = plan.Timeline.Where(c => c.Role == "body" && c.Length < p.Cut.MinShotSec - 0.01).ToList();
-        res.Add(new("S-04", shortShots.Count == 0 ? QaStatus.Pass : QaStatus.Warn, shortShots.Count == 0 ? "ok" : string.Join(",", shortShots.Select(c => $"{c.ClipId} {c.Length:F2}s")), $"≥{p.Cut.MinShotSec}s", "最短ショット"));
+        var shortShots = plan.Timeline.Select((c, ci) => (c, ci)).Where(x => x.c.Role == "body" && x.c.Length < p.Cut.MinShotSec - 0.01).ToList();
+        res.Add(new("S-04", shortShots.Count == 0 ? QaStatus.Pass : QaStatus.Warn, shortShots.Count == 0 ? "ok" : string.Join(",", shortShots.Select(x => $"{x.c.ClipId} {x.c.Length:F2}s")), $"≥{p.Cut.MinShotSec}s", "最短ショット")
+            { Items = shortShots.Select(x => ClipItem(x.ci, $"{x.c.Length:F2} 秒のショット")).ToList() });
 
         var firstBody = plan.Timeline.FirstOrDefault(c => c.Role == "body") ?? plan.Timeline.FirstOrDefault();
         var firstSentence = firstBody == null ? null : tr.Sentences.FirstOrDefault(s => s.T1 > firstBody.MasterIn + 0.05);
         bool demo = firstSentence != null && JapaneseText.StartsWithDemonstrative(firstSentence.Text);
-        res.Add(new("S-07", demo ? QaStatus.Warn : QaStatus.Pass, demo ? firstSentence!.Text : "ok", "冒頭が指示語でない", "冒頭の指示語"));
+        res.Add(new("S-07", demo ? QaStatus.Warn : QaStatus.Pass, demo ? firstSentence!.Text : "ok", "冒頭が指示語でない", "冒頭の指示語")
+            { Items = demo ? [ClipItem(plan.Timeline.IndexOf(firstBody!), $"「{firstSentence!.Text}」")] : [] });
 
         // S-13: camera alignment is distinct from S-09's utterance negation check.
         if (p.Planner == "switch" && ctx.Assets != null)
@@ -149,10 +186,11 @@ public sealed class QaEngine(FFmpeg ff)
             var enhanced = plan.Inserts.Where(i => i.Enabled && i.Kind != "card" && i.Enhanced != null && soft.All(x => x.i.Id != i.Id)).Select(i => $"{Path.GetFileName(i.OriginalPath)} {i.OriginalWidth}x{i.OriginalHeight} → {i.Width}x{i.Height} 高画質化済み").ToList();
             res.Add(new("S-12", soft.Count == 0 ? QaStatus.Pass : QaStatus.Warn,
                 soft.Count == 0 ? (enhanced.Count > 0 ? string.Join(", ", enhanced) : "等倍以下") : string.Join(", ", soft.Select(x => $"{Path.GetFileName(x.i.Path)} {x.i.Width}x{x.i.Height} を {x.s:0.##} 倍に拡大")),
-                $"{plan.Canvas.Width}x{plan.Canvas.Height} 以上の素材（小さい素材は登録時に高画質化）", "オープニング・クロージングの解像度"));
+                $"{plan.Canvas.Width}x{plan.Canvas.Height} 以上の素材（小さい素材は登録時に高画質化）", "オープニング・クロージングの解像度")
+                { Items = soft.Select(x => InsertItem(x.i, $"{x.s:0.##} 倍に拡大されます")).ToList() });
         }
         var hash = EditPlanFingerprint.Of(plan);
-        return res.Select(q => q with { Stage = "plan", PlanHash = hash }).ToList();
+        return res.Select(q => QaAdvisor.Attach(q) with { Stage = "plan", PlanHash = hash }).ToList();
     }
 
     /// <summary>Series chapters on the rendered file's timeline (shifted past the opening and cards).</summary>
@@ -219,7 +257,7 @@ public sealed class QaEngine(FFmpeg ff)
         if (!preview && Faces is { Available: true }) res.Add(await FaceOverlapAsync(ctx, rendered, ct));
         if (!preview) res.Add(await BlackFreezeAsync(rendered, ctx.Preset.Id == "P9", ct, InsertMap.InsertSpans(InsertMap.Active(ctx.Plan)).Select(x => (x.Start, x.End)).ToList()));
         var hash = EditPlanFingerprint.Of(ctx.Plan);
-        return res.Select(q => q with { Stage = q.Stage ?? (preview ? "preview" : "final"), PlanHash = hash })
+        return res.Select(q => QaAdvisor.Attach(q) with { Stage = q.Stage ?? (preview ? "preview" : "final"), PlanHash = hash })
             .OrderBy(r => r.Hard ? 0 : 1).ThenBy(r => r.CheckId, StringComparer.Ordinal).ToList();
     }
 
@@ -236,7 +274,7 @@ public sealed class QaEngine(FFmpeg ff)
         (double top, double bottom)? Band(Telop t) => AssWriter.Band(t.Type, ctx.Preset, H);
         var cand = ctx.Plan.Telops.Where(t => t.Enabled && Band(t) != null).OrderBy(t => t.Start).ToList();
         if (cand.Count == 0) return new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
-        int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>();
+        int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>(); var items = new List<QaItem>();
         var ins = InsertMap.Active(ctx.Plan);
         for (int i = 0; i < cand.Count; i += step)
         {
@@ -245,13 +283,17 @@ public sealed class QaEngine(FFmpeg ff)
             foreach (var f in faces)
             {
                 double fy0 = f.Y * H, fy1 = (f.Y + f.H) * H, ov = Math.Min(bottom, fy1) - Math.Max(top, fy0);
-                if (ov > 0.3 * (fy1 - fy0)) hits.Add($"{t.Id}@{mid:F1}s");
+                if (ov > 0.3 * (fy1 - fy0))
+                {
+                    hits.Add($"{t.Id}@{mid:F1}s");
+                    if (items.All(x => x.Target != t.Id)) items.Add(new(t.Id, "telop", "顔にテロップが重なっています", Math.Round(InsertMap.ToFinal(ins, t.Start), 3), Math.Round(InsertMap.ToFinal(ins, t.End, true), 3)));
+                }
             }
         }
-        return new("S-05", hits.Count == 0 ? QaStatus.Pass : QaStatus.Warn, hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3)), "顔にテロップが重ならない", "顔とテロップの重なり");
-    }
+        return new("S-05", hits.Count == 0 ? QaStatus.Pass : QaStatus.Warn, hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3)),         "顔にテロップが重ならない", "顔とテロップの重なり") { Items = items };
+            }
 
-    /// <summary>Long series parts have hundreds of captions; the measurement keeps the widest ones (most likely to overflow) plus an even spread.</summary>
+            /// <summary>Long series parts have hundreds of captions; the measurement keeps the widest ones (most likely to overflow) plus an even spread.</summary>
     public const int MaxSafeZoneSamples = 160;
 
     public static List<Telop> SafeZoneSample(List<Telop> telops)
@@ -271,17 +313,19 @@ public sealed class QaEngine(FFmpeg ff)
         var cards = InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0).ToList();
         if (telops.Count == 0 && cards.Count == 0) return new("H-05", QaStatus.Pass, "no telops", "safe zone", "テロップの安全領域");
         Directory.CreateDirectory(workDir);
-        var violations = new List<string>();
-        var groups = new List<(string Name, bool Top, EditPlan Plan, List<double> Times, double Dur)>();
+        var violations = new List<string>(); var items = new List<QaItem>();
+        var groups = new List<(string Name, bool Top, EditPlan Plan, List<double> Times, double Dur, List<(string Id, string Kind, double Start, double End)> Owners)>();
         foreach (var g in new[] { telops.Where(t => t.Type is not (TelopType.Hook or TelopType.Headline)).ToList(), telops.Where(t => t.Type is TelopType.Hook or TelopType.Headline).ToList() })
         {
             if (g.Count == 0) continue;
             bool top = g[0].Type is TelopType.Hook or TelopType.Headline;
-            groups.Add((top ? "qa_top" : "qa_body", top, ctx.Plan with { Telops = g, Inserts = [] }, g.Select(t => t.Start + Math.Min(0.6, (t.End - t.Start) / 2)).ToList(), ctx.Plan.Duration));
+            groups.Add((top ? "qa_top" : "qa_body", top, ctx.Plan with { Telops = g, Inserts = [] }, g.Select(t => t.Start + Math.Min(0.6, (t.End - t.Start) / 2)).ToList(), ctx.Plan.Duration,
+                g.Select(t => (t.Id, "telop", InsertMap.ToFinal(ins, t.Start), InsertMap.ToFinal(ins, t.End, true))).ToList()));
         }
         if (cards.Count > 0)
-            groups.Add(("qa_cards", false, ctx.Plan with { Telops = [] }, cards.Select(x => x.Start + Math.Min(0.6, (x.End - x.Start) / 2)).ToList(), ctx.Plan.TotalDuration));
-        foreach (var (name, top, plan, times, total) in groups)
+            groups.Add(("qa_cards", false, ctx.Plan with { Telops = [] },             cards.Select(x => x.Start + Math.Min(0.6, (x.End - x.Start) / 2)).ToList(), ctx.Plan.TotalDuration,
+                            cards.Select(x => (x.Insert.Id, "insert", x.Start, x.End)).ToList()));
+                    foreach (var (name, top, plan, times, total, owners) in groups)
         {
             var ass = Path.Combine(workDir, name + ".ass");
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset), new UTF8Encoding(false), ct);
@@ -306,11 +350,15 @@ public sealed class QaEngine(FFmpeg ff)
                 var canvasH = ctx.Plan.Canvas.Height; var canvasW = ctx.Plan.Canvas.Width;
                 bool ok = top ? y1 >= SafeZone.Top && x1 >= SafeZone.Left && x2 <= canvasW - SafeZone.Right
                               : y1 >= SafeZone.Top && y2 <= canvasH - SafeZone.Bottom && x1 >= SafeZone.Left && x2 <= canvasW - SafeZone.Right;
-                if (!ok) violations.Add($"t≈{frames.ElementAtOrDefault(k) / fps:F1}s bbox x{x1}-{x2} y{y1}-{y2}");
+                if (ok) continue;
+                violations.Add($"t≈{frames.ElementAtOrDefault(k) / fps:F1}s bbox x{x1}-{x2} y{y1}-{y2}");
+                for (int o = 0; o < times.Count; o++)
+                    if ((int)Math.Round(times[o] * fps) == frames.ElementAtOrDefault(k) && items.All(x => x.Target != owners[o].Id))
+                        items.Add(new(owners[o].Id, owners[o].Kind, $"文字が安全領域からはみ出しています（x{x1}–{x2}, y{y1}–{y2}）", Math.Round(owners[o].Start, 3), Math.Round(owners[o].End, 3)));
             }
         }
         return new("H-05", violations.Count == 0 ? QaStatus.Pass : QaStatus.Fail, violations.Count == 0 ? "all telops inside (measured)" : string.Join("; ", violations.Take(3)),
-            $"x {SafeZone.Left}–{1080 - SafeZone.Right}, y {SafeZone.Top}–{1920 - SafeZone.Bottom}", "テロップの安全領域（実測）");
+            $"x {SafeZone.Left}–{1080 - SafeZone.Right}, y {SafeZone.Top}–{1920 - SafeZone.Bottom}", "テロップの安全領域（実測）") { Items = items };
     }
 
     /// <summary>S-06. Inserts are excluded: a scene card is a deliberate 1 s still, and bumpers may hold a title or fade to a solid colour.</summary>
