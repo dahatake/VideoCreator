@@ -128,10 +128,21 @@ public sealed class QaEngine(FFmpeg ff)
             { Items = wide.Select(t => TelopItem(t, $"{JapaneseText.DisplayWidth(t.Text)} 字")).ToList() });
 
         // S-08 禁則: every displayed caption line (incl. hand edits) obeys JIS X 4051 line-start/line-end rules, and a caption never starts with a particle/auxiliary of the previous caption
-        var wordText = tr.Words.GroupBy(w => w.Id).ToDictionary(g => g.Key, g => g.First().Text);
-        var kinsoku = caps.Select(t => (t, why: JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width))
-                .Concat(t.SourceWordIds.Count > 0 && wordText.TryGetValue(t.SourceWordIds[0], out var w0) && !JapaneseText.IsPunct(w0) && !JapaneseText.CanStartLine(w0) && t.Start > 0.01
-                    && caps.Any(o => o.End >= t.Start - 0.05 && o.Start < t.Start) ? [$"先頭が「{w0}」"] : Array.Empty<string>()).FirstOrDefault()))
+        var wordIndex = new Dictionary<string, int>();
+        for (int i = 0; i < tr.Words.Count; i++) wordIndex.TryAdd(tr.Words[i].Id, i);
+        static string Bare(string s) => new(JapaneseText.NormalizeTelop(s).Where(c => !char.IsWhiteSpace(c)).ToArray());
+        string? DetachedHead(Telop t)
+        {
+            if (t.SourceWordIds.Count == 0 || t.Start <= 0.01 || !wordIndex.TryGetValue(t.SourceWordIds[0], out var i0)) return null;
+            var w0 = tr.Words[i0].Text;
+            if (JapaneseText.IsPunct(w0) || JapaneseText.CanStartLine(w0)) return null;
+            // judged on what is shown: a head the filler cleaning / a hand edit removed is not on screen
+            if (Bare(w0) is not { Length: > 0 } b0 || !Bare(t.Text).StartsWith(b0, StringComparison.Ordinal)) return null;
+            // 「。で、えっと」: a conjunction opening a new sentence, not a particle left over from the previous caption
+            if (JapaneseText.CanStartSentence(w0) && i0 > 0 && JapaneseText.EndsSentence(tr.Words[i0 - 1].Text)) return null;
+            return caps.Any(o => o.End >= t.Start - 0.05 && o.Start < t.Start && o.Speaker == t.Speaker) ? $"先頭が「{w0}」" : null;
+        }
+        var kinsoku = caps.Select(t => (t, why: JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, plan.Canvas.Width)).FirstOrDefault() ?? DetachedHead(t)))
             .Where(x => x.why != null).ToList();
         res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則")
             { Items = kinsoku.Select(x => TelopItem(x.t, x.why!)).ToList() });
@@ -190,7 +201,7 @@ public sealed class QaEngine(FFmpeg ff)
                 { Items = soft.Select(x => InsertItem(x.i, $"{x.s:0.##} 倍に拡大されます")).ToList() });
         }
         var hash = EditPlanFingerprint.Of(plan);
-        return res.Select(q => QaAdvisor.Attach(q) with { Stage = "plan", PlanHash = hash }).ToList();
+        return res.Select(q => QaAdvisor.Attach(q, plan) with { Stage = "plan", PlanHash = hash }).ToList();
     }
 
     /// <summary>Series chapters on the rendered file's timeline (shifted past the opening and cards).</summary>

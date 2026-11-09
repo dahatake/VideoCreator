@@ -105,11 +105,6 @@ public static class PlanBuilder
             };
         }
         else telops = TelopBuilder.Build(clips, telopTr, p, Masking.MaskText(r.Candidate.HookText, maskWords), Masking.MaskText(r.Candidate.Headline, maskWords), r.Candidate.EmphasisWords.Select(w => Masking.MaskText(w, maskWords)).ToList(), notes);
-        if (r.Llm != null)
-        {
-            try { var (sh, ch) = await CaptionShortener.ApplyAsync(r.Llm, telops, p.Telop.Caption.MaxCps, ct); telops = sh; if (ch > 0) notes.Add($"表示が間に合わない字幕 {ch} 件を、文字を削って短くしました（言い換えなし）"); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("字幕の短縮に失敗しました: " + ex.Message); }
-        }
         int n = telops.Count + 100;
         var tsukkomi = new List<(double At, string Text)>();
         var mapped = TelopBuilder.MapWords(clips, telopTr);

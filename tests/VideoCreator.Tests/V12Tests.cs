@@ -9,7 +9,7 @@ using VideoCreator.Selection;
 
 namespace VideoCreator.Tests;
 
-/// <summary>Follow-ups to v1.1: cross-fade, caption shortening, loop ending, laughter, speaker auto-assignment.</summary>
+/// <summary>Follow-ups to v1.1: cross-fade, verbatim captions, loop ending, laughter, speaker auto-assignment.</summary>
 public class V12Tests : IAsyncLifetime
 {
     static readonly Transcript Tr = Fixtures.Talk;
@@ -57,25 +57,52 @@ public class V12Tests : IAsyncLifetime
         Assert.True(hardBefore.b > 170 && hardAfter.b > 170);
     }
 
-    [Fact] // FR-TEL-02 stage 3: only deletions are accepted
-    public async Task Caption_shortening_accepts_only_pure_deletions()
+    [Fact]
+    public async Task Plan_generation_keeps_captions_verbatim_with_or_without_an_llm()
     {
-        Assert.True(CaptionShortener.IsDeletionOf("1万円を使い切る", "えーと、1万円をですね使い切る"));
-        Assert.False(CaptionShortener.IsDeletionOf("1万円を使いきる", "えーと、1万円をですね使い切る"));   // paraphrase (kana changed)
-        Assert.False(CaptionShortener.IsDeletionOf("2万円を使い切る", "1万円を使い切る"));                  // new number
-        Assert.False(CaptionShortener.IsDeletionOf("1万円を使い切る", "1万円を使い切る"));                  // not shorter
-        var telops = new List<Telop>
+        var p = Fixtures.Presets["P4"];
+        var asset = new SourceAsset { Id = "a1", ProjectId = "p", Path = "unused.mp4", Sha256 = "x", Media = Fixtures.Landscape() };
+        var candidate = new Candidate { Id = "c1", Segments = [new Interval(8.8, 40)] };
+        var job = new Job { Id = "j", ProjectId = "p", PresetIds = ["P4"] };
+        int calls = 0;
+        var llm = new Json2("""{"items":[{"id":"t1","text":"短く"}]}""")
         {
-            new() { Id = "t1", Type = TelopType.Caption, Start = 0, End = 1.0, Text = "えーと、あのですね、1万円を使い切る" },   // way over 6 cps
-            new() { Id = "t2", Type = TelopType.Caption, Start = 1, End = 2.0, Text = "もう買いたくないですよね本当に" },
-            new() { Id = "t3", Type = TelopType.Caption, Start = 2, End = 5.0, Text = "ゆっくり読める字幕" },
+            Respond = _ => { calls++; return """{"items":[{"id":"t1","text":"短く"}]}"""; },
         };
-        var llm = new Json2("""{"items":[{"id":"t1","text":"1万円を使い切る"},{"id":"t2","text":"もう欲しくない"},{"id":"t3","text":"短く"}]}""");
-        var (res, changed) = await CaptionShortener.ApplyAsync(llm, telops, 6, Ct);
-        Assert.Equal(1, changed);
-        Assert.Equal("1万円を使い切る", res[0].Text);
-        Assert.Equal(telops[1].Text, res[1].Text);   // paraphrase rejected
-        Assert.Equal(telops[2].Text, res[2].Text);   // was not over the limit
+        var request = new PlanRequest(candidate, Tr, Fixtures.Signals(Tr), p, [asset], asset, "p", job, new Dictionary<string, List<FaceSample>>(), null, llm,
+            OverrideSegments: candidate.Segments);
+        var (withAi, _) = await PlanBuilder.BuildAsync(request, Ct);
+        var (withoutAi, _) = await PlanBuilder.BuildAsync(request with { Llm = null }, Ct);
+        var caps = withAi.Telops.Where(t => t.Type == TelopType.Caption).ToList();
+        Assert.NotEmpty(caps);
+        Assert.Equal(0, calls);
+        Assert.Equal(withoutAi.Telops.Where(t => t.Type == TelopType.Caption).Select(t => t.Text), caps.Select(t => t.Text));
+        var words = Tr.Words.ToDictionary(w => w.Id);
+        Assert.All(caps, t => Assert.Equal(JapaneseText.NormalizeTelop(string.Concat(t.SourceWordIds.Select(id => words[id].Text))), t.Text));
+        Assert.Equal(TelopBuilder.MapWords(withAi.Timeline, Tr).Where(w => !JapaneseText.IsPunct(w.Word.Text)).Select(w => w.Word.Id),
+            caps.SelectMany(t => t.SourceWordIds).Where(id => !JapaneseText.IsPunct(words[id].Text)));
+        Assert.All(caps, t => Assert.Contains(t.Text, AssWriter.Srt(withAi, p)));
+        Assert.Contains(VideoCreator.Qa.QaEngine.PlanChecks(new(withAi, p, Tr, ["a1"], [])), q => q.CheckId == "S-01" && q.Status == QaStatus.Warn);
+    }
+
+    [Fact]
+    public void Identical_emphasis_does_not_remove_the_caption_or_its_srt()
+    {
+        const string text = "あの今日は晴れですね";
+        var tr = new Transcript
+        {
+            Provider = "fixed", Duration = 5, Words = [new Word("w0", 1, 3, text, 1)],
+            Sentences = [new Sentence(0, 1, 3, text, 1, 0, 0)],
+        };
+        var clips = new List<Clip> { new() { ClipId = "c1", AssetId = "a1", SrcIn = 0, SrcOut = 5 } };
+        var p = Fixtures.Presets["P4"];
+        var ts = TelopBuilder.Build(clips, tr, p, "", "", [text], []);
+        var caption = Assert.Single(ts);
+        Assert.Equal(TelopType.Caption, caption.Type);
+        Assert.Equal(text, caption.Text);
+        Assert.Equal(["w0"], caption.SourceWordIds);
+        var plan = new EditPlan { EditplanId = "e", ProjectId = "p", Preset = p.Ref, Timeline = clips, Telops = ts, Audio = new AudioSpec { Master = "a1" } };
+        Assert.Contains(text, AssWriter.Srt(plan, p));
     }
 
     [Fact] // FR-SOL-06: the end whose last sentence connects best to the opening wins

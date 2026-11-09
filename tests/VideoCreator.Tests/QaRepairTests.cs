@@ -36,7 +36,16 @@ public sealed class QaRepairTests
 
     static QaResult Check(QaContext ctx, string id) => QaEngine.PlanChecks(ctx).Single(q => q.CheckId == id);
 
-    /// <summary>Answers every requested id with a fixed text and records the prompt.</summary>
+    static void AssertCaptionWordsPreserved(EditPlan before, EditPlan after)
+    {
+        static List<Telop> Caps(EditPlan p) => p.Telops.Where(t => t.Enabled && t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
+        static string Text(List<Telop> ts) => new(string.Concat(ts.Select(t => t.Text)).Where(c => !char.IsWhiteSpace(c)).ToArray());
+        var a = Caps(before); var b = Caps(after);
+        Assert.Equal(Text(a), Text(b));
+        Assert.Equal(a.SelectMany(t => t.SourceWordIds), b.SelectMany(t => t.SourceWordIds));
+    }
+
+    /// <summary>Answers every requested id with fixed text and records the prompt.</summary>
     sealed class RepairLlm(Func<string, string> answer) : IHighlightSelector
     {
         public List<string> Prompts { get; } = [];
@@ -45,7 +54,7 @@ public sealed class QaRepairTests
         public Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct)
         {
-            Prompts.Add(user);
+            lock (Prompts) Prompts.Add(user);
             var ids = user.Split('\n').Where(l => l.StartsWith("id: ")).Select(l => l[4..].Trim());
             return Task.FromResult(JsonSerializer.Serialize(new { items = ids.Select(id => new { id, text = answer(id) }) }));
         }
@@ -99,7 +108,6 @@ public sealed class QaRepairTests
     }
 
     const string Long = "今日はみんなでパワーアップの方法を話します";
-    static readonly string[] LongWords = ["今日は", "みんなで", "パワーアップの", "方法を", "話します"];
 
     /// <summary>One utterance split into recogniser words, 0.4 s each from <paramref name="t0"/>.</summary>
     static Transcript Words(double t0, params string[] words)
@@ -110,31 +118,30 @@ public sealed class QaRepairTests
 
     static string[] Ids(int n) => Enumerable.Range(0, n).Select(i => $"w{i}").ToArray();
 
-    [Fact] // S-01/S-02 on a caption: deletion of whole words is kept (and stays approved); paraphrase, added text or a word cut in half is rejected
-    public async Task Caption_shortening_is_deletion_of_whole_words_only()
+    [Theory]
+    [InlineData("あのちょっと今日は方法を話します", "今日は方法を話します")]
+    [InlineData("ちょうどいい落としどころかなと", "ちょうどいい落としどころかな")]
+    [InlineData("いいですかねこれはどうでしょうか", "ですかねこれはどうでしょうか")]
+    [InlineData("今日はみんなでパワーアップの方法を話します", "方法を紹介します")]
+    [InlineData("今日はみんなでパワーアップの方法を話します", "今日はみんなで方法を話")]
+    public async Task Caption_words_are_never_shortened_even_when_ai_could_clear_the_warning(string text, string answer)
     {
-        var tr = Words(1, LongWords);
-        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 3, Long, Ids(LongWords.Length))), tr);
-        var before = QaEngine.PlanChecks(ctx);
-        Assert.Contains(before, q => q.CheckId is "S-01" or "S-02" && q.Status == QaStatus.Warn);
-
-        var llm = new RepairLlm(_ => "方法を話します");
-        var ok = await QaRepair.RunAsync(ctx, null, llm, Ct);
-        var c = Assert.Single(ok.Changes);
-        Assert.Equal(("ai", false), (c.Method, c.NeedsApproval));
-        Assert.True(ok.Plan.Telops.Single().Approved);
-        Assert.All(ok.After.Where(q => q.CheckId is "S-01" or "S-02"), q => Assert.Equal(QaStatus.Pass, q.Status));
-        Assert.Contains("今日は｜みんなで｜パワーアップの｜方法を｜話します", llm.Prompts.Single());   // the LLM is told where the words are
-
-        var paraphrase = await QaRepair.RunAsync(ctx, null, new RepairLlm(_ => "強くなるコツを紹介"), Ct);
-        Assert.Empty(paraphrase.Changes);
-        Assert.Contains(paraphrase.Skipped, s => s.Reason.Contains("削除のみ"));
-        Assert.Equal(Long, paraphrase.Plan.Telops.Single().Text);
-
-        // a deletion, and short enough, but 「方法を」 is cut to 「方法」 (seen with a real model: 「こんにちは」→「こんにち」)
-        var cut = await QaRepair.RunAsync(ctx, null, new RepairLlm(_ => "パワーアップの方法"), Ct);
-        Assert.Empty(cut.Changes);
-        Assert.Contains(cut.Skipped, s => s.Reason.Contains("単語の途中"));
+        var tr = Words(1, text);
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 3, text, "w0")), tr);
+        Assert.Equal(QaStatus.Warn, Check(ctx, "S-02").Status);
+        Assert.Equal("rule", Check(ctx, "S-01").Advice!.Repair);
+        Assert.Equal("rule", Check(ctx, "S-02").Advice!.Repair);
+        var llm = new RepairLlm(_ => answer);
+        foreach (var filter in new IReadOnlyCollection<string>?[] { ["S-01"], ["S-02"], null })
+        {
+            var r = await QaRepair.RunAsync(ctx, filter, llm, Ct);
+            Assert.Empty(r.Changes);
+            Assert.Equal(EditPlanFingerprint.Of(ctx.Plan), EditPlanFingerprint.Of(r.Plan));
+            Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("話した言葉どおり") && s.Reason.Contains("警告を残します"));
+            Assert.Equal(QaStatus.Warn, r.After.Single(q => q.CheckId == "S-02").Status);
+            Assert.Null(r.Llm);
+        }
+        Assert.Empty(llm.Prompts);
     }
 
     [Fact] // S-01 is first fixed by timing: the caption stays on into the free time after it (≤0.5 s past its last word), words untouched
@@ -167,30 +174,115 @@ public sealed class QaRepairTests
         Assert.Equal(EditPlanFingerprint.Of(ctx.Plan), EditPlanFingerprint.Of(r.Plan));
     }
 
-    [Theory] // ja-JP recognisers return one character per word, so cuts are checked against 文節 boundaries (real model output on the left)
-    [InlineData("おはようございます", "お", false)]
-    [InlineData("撮りました", "撮りま", false)]
-    [InlineData("どんな時間に", "どんなに", false)]
-    [InlineData("ありがとうございます", "ございます", false)]
-    [InlineData("本当ですよね", "ですよね", false)]
-    [InlineData("いきたいと思ってます", "いきたいと", true)]
-    [InlineData("あの、今日はみんなで", "今日はみんなで", true)]
-    [InlineData("今日はみんなでパワーアップの方法を話します", "方法を話します", true)]
-    [InlineData("今日は「パワーアップ」の方法を話します", "今日は「", false)]
-    public void Caption_cuts_fall_on_phrase_boundaries(string original, string shortened, bool ok) =>
-        Assert.Equal(ok, QaRepair.CutsAtPhraseBoundaries(original, shortened));
+    [Fact]
+    public async Task Presentation_telop_can_be_shortened_by_ai_while_captions_stay_verbatim()
+    {
+        var tr = TranscriptOf((Condensable, 1), (Long, 1));
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 3, Condensable, "w0"),
+            T("e1", TelopType.Emphasis, 4, 6, Long, "w1")), tr);
+        Assert.Equal("ai", Check(ctx, "S-02").Advice!.Repair);
+        var llm = new RepairLlm(_ => "方法を話します");
+        var r = await QaRepair.RunAsync(ctx, ["S-02"], llm, Ct);
+        var c = Assert.Single(r.Changes);
+        Assert.Equal(("e1", "ai", "方法を話します", true), (c.Target, c.Method, c.After, c.NeedsApproval));
+        Assert.False(r.Plan.Telops.Single(t => t.Id == "e1").Approved);
+        Assert.Equal(Condensable, r.Plan.Telops.Single(t => t.Id == "c1").Text);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+        Assert.Contains(r.After.Single(q => q.CheckId == "S-02").Items!, i => i.Target == "c1");
+        Assert.DoesNotContain("id: c1", Assert.Single(llm.Prompts));
+    }
 
-    [Fact] // a short caption still too fast after the timing rule is left to a person, not cut
-    public async Task Short_fast_caption_is_not_sent_to_the_llm()
+    [Fact]
+    public async Task Short_content_caption_is_not_sent_to_the_llm()
     {
         var tr = Words(1, "撮", "り", "ま", "し", "た");
-        var ctx = Ctx(Plan(T("c0", TelopType.Caption, 0.5, 0.9, "はい", "w0"), T("c1", TelopType.Caption, 1, 1.4, "撮りました", Ids(5)), T("c2", TelopType.Caption, 1.5, 3, "それでは", "w0")), tr);
+        // neighbours by another speaker: no merge / move across a speaker change
+        var ctx = Ctx(Plan(T("c0", TelopType.Caption, 0.5, 0.9, "はい", "w0") with { Speaker = 2 }, T("c1", TelopType.Caption, 1, 1.4, "撮りました", Ids(5)), T("c2", TelopType.Caption, 1.5, 3, "それでは") with { Speaker = 2 }), tr);
         Assert.Contains("c1", Check(ctx, "S-01").Items!.Select(i => i.Target));
         var llm = new RepairLlm(_ => "撮りま");
-        var r = await QaRepair.RunAsync(ctx, null, llm, Ct);
+        var r = await QaRepair.RunAsync(ctx, ["S-01"], llm, Ct);
         Assert.DoesNotContain(r.Changes, c => c.Target == "c1");
-        Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("結合"));
+        Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("話した言葉どおり") && s.Reason.Contains("結合"));
         Assert.DoesNotContain("id: c1", string.Concat(llm.Prompts));
+    }
+
+    [Theory]
+    [InlineData("こんにちは", "こんにちは")]
+    [InlineData("はい", "うん")]
+    [InlineData("えっと", "あの")]
+    public async Task Short_repetitions_and_fillers_are_not_deleted(string first, string second)
+    {
+        var tr = Words(1, first, second, "始めましょう");
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 1.1, first, "w0"),
+            T("c2", TelopType.Caption, 1.1, 1.2, second, "w1") with { Speaker = 2 },
+            T("c3", TelopType.Caption, 1.2, 3.2, "始めましょう", "w2")), tr);
+        var llm = new RepairLlm(_ => "");
+        var r = await QaRepair.RunAsync(ctx, ["S-01"], llm, Ct);
+        Assert.All(r.Changes, c => Assert.Equal("rule", c.Method));
+        Assert.All(r.Plan.Telops, t => Assert.True(t.Enabled));
+        Assert.Equal([first, second, "始めましょう"], r.Plan.Telops.Select(t => t.Text));
+        Assert.Equal(["w0", "w1", "w2"], r.Plan.Telops.SelectMany(t => t.SourceWordIds));
+        Assert.Empty(llm.Prompts);
+    }
+
+    [Fact] // S-01 by regrouping: a flickering 「はい」 joins the caption after it (same speaker, no cut, short pause → a space)
+    public async Task Fast_short_caption_is_merged_with_its_neighbour()
+    {
+        var tr = Words(1, "はいはい", "じゃあ皆さん");
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 1.3, "はいはい", "w0"), T("c2", TelopType.Caption, 1.3, 3, "じゃあ皆さん", "w1")), tr with
+        {
+            Words = [new Word("w0", 1, 1.3, "はいはい", 1), new Word("w1", 1.7, 2.4, "じゃあ皆さん", 1)],
+        });
+        Assert.Contains("c1", Check(ctx, "S-01").Items!.Select(i => i.Target));
+        var r = await QaRepair.RunAsync(ctx, ["S-01"], null, Ct);
+        var c = Assert.Single(r.Changes);
+        Assert.Equal(("rule", "はいはい｜じゃあ皆さん", "はいはい　じゃあ皆さん"), (c.Method, c.Before, c.After));
+        var t = Assert.Single(r.Plan.Telops);
+        Assert.Equal((1.0, 3.0), (t.Start, t.End));
+        Assert.Equal(["w0", "w1"], t.SourceWordIds);
+        Assert.True(t.Approved);
+        Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "S-01").Status);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+
+        // never across a speaker change
+        var other = ctx with { Plan = ctx.Plan with { Telops = [.. ctx.Plan.Telops.Select(x => x.Id == "c2" ? x with { Speaker = 2 } : x)] } };
+        Assert.DoesNotContain((await QaRepair.RunAsync(other, ["S-01"], null, Ct)).Changes, x => x.Before!.Contains('｜'));
+    }
+
+    [Fact] // S-02 by regrouping: an over-long caption hands its first words to the caption before it, words and times move together
+    public async Task Long_caption_hands_words_to_its_neighbour()
+    {
+        var tr = Words(0.5, "はい", "それでは", "みんなで", "早速始めましょう");
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 0, 1, "はい", "w0"), T("c2", TelopType.Caption, 1, 5, "それではみんなで早速始めましょう", "w1", "w2", "w3")), tr);
+        Assert.Equal(QaStatus.Warn, Check(ctx, "S-02").Status);
+        var r = await QaRepair.RunAsync(ctx, ["S-02"], null, Ct);
+        var c = Assert.Single(r.Changes);
+        Assert.Equal(("rule", "はいそれでは｜みんなで早速始めましょう"), (c.Method, c.After));
+        var (a, b) = (r.Plan.Telops[0], r.Plan.Telops[1]);
+        Assert.Equal(["w0", "w1"], a.SourceWordIds);
+        Assert.Equal(["w2", "w3"], b.SourceWordIds);
+        Assert.Equal(1.3, b.Start, 3);   // 「みんなで」 starts at 1.3 s
+        Assert.True(a.End <= b.Start);
+        Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "S-02").Status);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+    }
+
+    [Fact] // S-08 judges what is on screen: a head removed by filler cleaning, a conjunction after 「。」 or another speaker's caption is no left-over particle
+    public void Leading_particle_check_ignores_sentence_starts_and_hidden_heads()
+    {
+        static Transcript Tr(params string[] w) => new()
+        {
+            Provider = "fixed", Duration = 30, Sentences = [],
+            Words = w.Select((x, i) => new Word($"w{i}", 1 + i * 0.4, 1.4 + i * 0.4, x, 1)).ToList(),
+        };
+        static List<string> Flagged(Transcript tr, params Telop[] ts) => Check(Ctx(Plan(ts), tr), "S-08").Items!.Select(i => $"{i.Target} {i.Detail}").ToList();
+        var tr = Tr("話ですね", "。", "で", "コメントを");
+        var c1 = T("c1", TelopType.Caption, 1, 1.8, "話ですね", "w0", "w1");
+        Assert.Equal([], Flagged(tr, c1, T("c2", TelopType.Caption, 1.8, 2.6, "でコメントを", "w2", "w3")));            // 「。で、」 opens a sentence
+        Assert.Equal(["c2 先頭が「で」"], Flagged(Tr("話ですね", "で", "コメントを"), T("c1", TelopType.Caption, 1, 1.4, "話ですね", "w0"), T("c2", TelopType.Caption, 1.4, 2.2, "でコメントを", "w1", "w2")));
+        Assert.Equal([], Flagged(Tr("来た", "でも", "Copilot", "はね"), T("c1", TelopType.Caption, 1, 1.4, "来た", "w0"), T("c2", TelopType.Caption, 1.4, 2.6, "Copilotはね", "w1", "w2", "w3")));   // 「でも」 is not shown
+        Assert.Equal([], Flagged(Tr("はい", "が", "実はね"), T("c1", TelopType.Caption, 1, 1.4, "はい", "w0") with { Speaker = 2 }, T("c2", TelopType.Caption, 1.4, 2.2, "が実はね", "w1", "w2")));
+        Assert.Equal(["c2 先頭が「が」"], Flagged(Tr("はい", "が", "実はね"), T("c1", TelopType.Caption, 1, 1.4, "はい", "w0"), T("c2", TelopType.Caption, 1.4, 2.2, "が実はね", "w1", "w2")));
     }
 
     [Fact] // S-08 rule: the particle at the head of a caption moves (text, words, time) to the end of the previous caption
@@ -209,6 +301,18 @@ public sealed class QaRepairTests
         Assert.Equal(["w2"], c2.SourceWordIds);
         Assert.True(c1.End <= c2.Start);
         Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "S-08").Status);
+        AssertCaptionWordsPreserved(ctx.Plan, r.Plan);
+
+        var otherSpeaker = ctx with { Plan = ctx.Plan with { Telops = [ctx.Plan.Telops[0], ctx.Plan.Telops[1] with { Speaker = 2 }] } };
+        Assert.Empty((await QaRepair.RunAsync(otherSpeaker, ["S-08"], null, Ct)).Changes);
+        var acrossCut = ctx with { Plan = ctx.Plan with { Timeline = [
+            new Clip { ClipId = "c1", AssetId = "a", SrcIn = 0, SrcOut = 4 },
+            new Clip { ClipId = "c2", AssetId = "a", SrcIn = 4, SrcOut = 30 },
+        ] } };
+        Assert.Equal(QaStatus.Warn, Check(acrossCut, "S-08").Status);
+        var blocked = await QaRepair.RunAsync(acrossCut, ["S-08"], null, Ct);
+        Assert.Empty(blocked.Changes);
+        AssertCaptionWordsPreserved(acrossCut.Plan, blocked.Plan);
     }
 
     [Fact] // H-11 rule: a telop whose evidence ids are missing is re-bound to the utterance it quotes, without an LLM
@@ -238,37 +342,41 @@ public sealed class QaRepairTests
         Assert.DoesNotContain("1万円", r.Plan.Telops.Single(t => t.Id == "k").Text);
     }
 
-    [Fact] // a plan with hundreds of findings: bounded LLM work per click, H-* first, the rest reported for the next click
+    /// <summary>A hand-edited caption with fillers that must stay verbatim.</summary>
+    const string Condensable = "あの　ちょっと今日の方法を話します";
+
+    [Fact] // a plan with hundreds of findings: bounded LLM work per click, a few requests in flight, H-* first, the rest reported for the next click
     public async Task Llm_work_is_batched_and_capped_per_run()
     {
         var n = QaRepair.MaxAiTargets + 5;
         var tr = TranscriptOf(Enumerable.Range(0, n).Select(_ => (Long, 1)).ToArray());
-        var telops = Enumerable.Range(0, n).Select(i => T($"c{i}", TelopType.Caption, 1 + i * 3, 3 + i * 3, Long, $"w{i}")).ToArray();
+        var telops = Enumerable.Range(0, n).Select(i => T($"c{i}", TelopType.Emphasis, 1 + i * 3, 3 + i * 3, Long, $"w{i}")).ToArray();
         telops[^1] = telops[^1] with { Type = TelopType.Emphasis, Text = "A社500万円" };   // the last one in time, but blocking (H-11)
-        var llm = new RepairLlm(id => id == telops[^1].Id ? Long[..4] : "方法を話します");
-        var r = await QaRepair.RunAsync(Ctx(Plan(telops), tr), null, llm, Ct);
+        var llm = new RepairLlm(_ => Long[..4]);
+        var plan = Plan(telops) with { Timeline = [new Clip { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = n * 3 + 1 }] };
+        var r = await QaRepair.RunAsync(Ctx(plan, tr with { Duration = plan.Duration }), null, llm, Ct);
         Assert.Equal((QaRepair.MaxAiTargets + QaRepair.BatchSize - 1) / QaRepair.BatchSize, llm.Prompts.Count);
         Assert.All(llm.Prompts, p => Assert.True(p.Split('\n').Count(l => l.StartsWith("id: ")) <= QaRepair.BatchSize));
-        Assert.Contains($"id: {telops[^1].Id}", llm.Prompts[0]);
+        Assert.Contains(llm.Prompts, p => p.Contains($"id: {telops[^1].Id}\n"));
         Assert.Equal(5, r.Skipped.Where(s => s.Reason.Contains("上限")).Select(s => s.Target).Distinct().Count());
         Assert.Equal(QaRepair.MaxAiTargets, llm.Prompts.SelectMany(p => p.Split('\n')).Count(l => l.StartsWith("id: ")));
+        Assert.InRange(r.Changes.Count(c => c.Method == "ai"), QaRepair.MaxAiTargets - 1, QaRepair.MaxAiTargets);
     }
 
     [Fact] // no LLM configured: AI items are skipped with a reason, and the check filter limits what is touched
     public async Task Without_llm_ai_items_are_skipped_and_filter_is_honoured()
     {
         var tr = TranscriptOf((Long, 1), ("A社は100万円、B社は500万円", 1));
-        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 3, Long, "w0"), T("e1", TelopType.Emphasis, 4, 6, "A社500万円", "w1")), tr);
+        var ctx = Ctx(Plan(T("c1", TelopType.Caption, 1, 3, Condensable, "w0"), T("e1", TelopType.Emphasis, 4, 6, "A社500万円", "w1")), tr);
         var r = await QaRepair.RunAsync(ctx, null, null, Ct);
-        Assert.Empty(r.Changes);
-        Assert.Null(r.Llm);
+        Assert.DoesNotContain(r.Changes, c => c.Method == "ai");   // timing rules still apply
         Assert.Contains(r.Skipped, s => s.Target == "e1" && s.Reason.Contains("LLM が設定されていない"));
-        Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("LLM が設定されていない"));
+        Assert.Contains(r.Skipped, s => s.Target == "c1" && s.Reason.Contains("話した言葉どおり"));
 
         var llm = new RepairLlm(id => id == "c1" ? "方法を話します" : "A社100万円");
         var only = await QaRepair.RunAsync(ctx, ["H-11"], llm, Ct);
         Assert.Equal(["e1"], only.Changes.Select(c => c.Target));
         Assert.DoesNotContain("id: c1", llm.Prompts.Single());
-        Assert.Equal(Long, only.Plan.Telops.Single(t => t.Id == "c1").Text);
+        Assert.Equal(Condensable, only.Plan.Telops.Single(t => t.Id == "c1").Text);
     }
 }

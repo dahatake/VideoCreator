@@ -173,41 +173,6 @@ public static class SfxPlanner
     }
 }
 
-/// <summary>FR-TEL-02 stage 3: when splitting and holding cannot bring a caption under the CPS limit, the LLM may only DELETE characters (no paraphrase). Verified in code as a subsequence of the original.</summary>
-public static class CaptionShortener
-{
-    const string Schema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","text"],"properties":{"id":{"type":"string"},"text":{"type":"string"}}}}}}""";
-    const string System = "あなたは字幕の編集者です。各字幕を、表示時間内に読めるよう文字を削って短くします。規則: 言い換えをしない。元の文字を順番どおりに残し、新しい文字・数字・固有名詞を足さない。意味が変わる削り方をしない。助詞や「えーと」などの言いよどみ、重複を優先して削る。これ以上削れない字幕は元のまま返す。";
-
-    public static bool IsDeletionOf(string shortened, string original)
-    {
-        static string Clean(string s) => new(s.Where(c => !char.IsWhiteSpace(c) && !JapaneseText.IsPunct(c.ToString())).ToArray());
-        var a = Clean(shortened); var b = Clean(original);
-        if (a.Length == 0 || a.Length >= b.Length) return false;
-        int j = 0;
-        foreach (var c in b) if (j < a.Length && a[j] == c) j++;
-        return j == a.Length;
-    }
-
-    public static async Task<(List<Telop> Telops, int Changed)> ApplyAsync(Selection.IHighlightSelector llm, List<Telop> telops, double maxCps, CancellationToken ct)
-    {
-        var over = telops.Where(t => t.Type == TelopType.Caption && t.Enabled && JapaneseText.DisplayWidth(t.Text) / Math.Max(0.05, t.End - t.Start) > maxCps + 0.01).ToList();
-        if (over.Count == 0) return (telops, 0);
-        var user = string.Join("\n", over.Select(t => $"{t.Id}\t表示{t.End - t.Start:F1}秒・上限{(int)Math.Floor(maxCps * (t.End - t.Start))}文字\t{t.Text}"));
-        var json = await llm.CompleteJsonAsync(System, user, "shorten", Schema, ct);
-        using var doc = JsonDocument.Parse(json);
-        var map = new Dictionary<string, string>();
-        foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray()) map[it.GetProperty("id").GetString() ?? ""] = (it.GetProperty("text").GetString() ?? "").Trim();
-        int changed = 0;
-        var res = telops.Select(t =>
-        {
-            if (!map.TryGetValue(t.Id, out var s) || !over.Contains(t) || !IsDeletionOf(s, t.Text)) return t;
-            changed++; return t with { Text = JapaneseText.NormalizeTelop(s) };
-        }).ToList();
-        return (res, changed);
-    }
-}
-
 /// <summary>FR-SOL-06: for loop presets, pick the end position whose last sentence leads best back into the first sentence (LLM-judged).</summary>
 public static class LoopEnding
 {

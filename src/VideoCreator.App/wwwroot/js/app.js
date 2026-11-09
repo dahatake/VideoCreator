@@ -1360,6 +1360,19 @@ async function review(epId) {
     : '<span class="qa-seek none" aria-hidden="true">—</span>';
   const SPARKLE = '<svg slot="start" class="ico" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="currentColor"><path d="M9 2.2l1.7 4.4c.2.6.7 1.1 1.3 1.3L16.4 9.6l-4.4 1.7c-.6.2-1.1.7-1.3 1.3L9 17l-1.7-4.4c-.2-.6-.7-1.1-1.3-1.3L1.6 9.6 6 7.9c.6-.2 1.1-.7 1.3-1.3z"/><path d="M15.5 1.5l.6 1.6c.1.2.2.3.4.4l1.6.6-1.6.6c-.2.1-.3.2-.4.4l-.6 1.6-.6-1.6c-.1-.2-.2-.3-.4-.4l-1.6-.6 1.6-.6c.2-.1.3-.2.4-.4z"/></svg>';
   const BULB = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M8 1a5 5 0 0 0-3 9v1.5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5V10a5 5 0 0 0-3-9zm2 8.4V11H6V9.4l-.2-.2A4 4 0 1 1 10.2 9.2zM6 13h4v1a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1z"/></svg>';
+  const resultBlock = (r) => {
+    // the reasons, most frequent first, so a click that fixes little still says why
+    const reasons = [...r.skipped.reduce((m, s) => m.set(s.reason, (m.get(s.reason) ?? 0) + 1), new Map())].sort((a, b) => b[1] - a[1]);
+    return `<div class="qa-result" role="status" tabindex="-1">
+      <div class="row" style="justify-content:space-between"><b>${r.scope ? `${esc(r.scope)}: ` : ''}${r.fixed_count ? `${r.fixed_count} 件を修復しました` : '修復できた項目はありませんでした'}${r.skipped.length ? `（直せなかった ${r.skipped.length} 件）` : ''}</b>
+        ${r.repair_id ? `<fluent-button size="small" id="qaUndo">元に戻す</fluent-button>` : ''}</div>
+      ${r.changes.length ? `<ul class="qa-changes">${r.changes.map(c => `<li>${seekBtn(c, c.check_id)}<span><b>${esc(c.check_id)}</b> <span class="repair-tag ${esc(c.method)}">${c.method === 'ai' ? 'AI' : 'ルール'}</span>${c.needs_approval ? ' <span class="repair-tag manual">要承認</span>' : ''}
+        <span class="qa-diff"><del>${esc(c.before ?? '')}</del> → <ins>${esc(c.after ?? '')}</ins></span></span></li>`).join('')}</ul>` : ''}
+      ${r.changes.some(c => c.needs_approval) ? '<p class="caption">AI が書き直した文は未承認です。内容を確認して「承認」してください。</p>' : ''}
+      ${reasons.length ? `<p class="caption"><b>直せなかった理由</b></p><ul class="qa-reasons">${reasons.slice(0, 4).map(([why, n]) => `<li><b>${n} 件</b> ${esc(why)}</li>`).join('')}</ul>
+        <details><summary class="caption">直せなかった項目 ${r.skipped.length} 件</summary><ul class="qa-changes">${r.skipped.map(s => `<li>${seekBtn(s, s.check_id)}<span><b>${esc(s.check_id)}</b> ${esc(s.target)} <span class="caption">${esc(s.reason)}</span></span></li>`).join('')}</ul></details>` : ''}
+      <p class="caption">字幕は話した言葉どおりに、言いよどみ・語尾・繰り返しも残し、表示時間・区切り・結合だけで直します（設定済みの伏せ字を除く）。演出テロップ・カードは見た目を優先して AI で修正し、要承認にします。変更ごとに自動チェックをやり直し、ほかの項目が悪くならないものだけを残しています。</p></div>`;
+  };
   const qaPanel = () => {
     const issues = qa.filter(q => q.status === 'fail' || q.status === 'warn').sort((a, b) => (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1));
     const passed = qa.filter(q => q.status === 'pass' || q.status === 'not_run');
@@ -1377,27 +1390,22 @@ async function review(epId) {
         <div class="qa-issue-head"><span class="qa-status ${q.status}">${statusName[q.status]}</span><b>${esc(q.check_id)}</b><span>${esc(q.message)}</span></div>
         <p class="caption qa-measure">${esc(q.measured)}（基準 ${esc(q.threshold)}${q.stage ? `・${esc(q.stage)}` : ''}）</p>
         ${q.advice ? `<div class="qa-advice">${BULB}<div><b>推奨する修正</b> <span class="repair-tag ${esc(q.advice.repair)}">${repairName[q.advice.repair] ?? ''}</span><p>${esc(q.advice.recommendation)}</p>
-          ${q.advice.repair !== 'manual' ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}この項目を修復</fluent-button>` : ''}</div></div>` : ''}
+          ${q.advice.repair !== 'manual' ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}${repairing === q.check_id ? '修復しています…' : 'この項目を修復'}</fluent-button>
+            ${repairing === q.check_id ? '<fluent-progress-bar aria-label="この項目の修復の進み具合"></fluent-progress-bar>' : ''}` : ''}</div></div>` : ''}
+        ${lastRepair && lastRepair.scope === q.check_id ? resultBlock(lastRepair) : ''}
         ${items.length ? `<ul class="qa-items">${items.slice(0, 12).map(row).join('')}</ul>${items.length > 12 ? `<details><summary class="caption">ほか ${items.length - 12} 件</summary><ul class="qa-items">${items.slice(12).map(row).join('')}</ul></details>` : ''}` : ''}
       </li>`;
     };
     const r = lastRepair;
-    const result = !r ? '' : `<div class="qa-result" role="status">
-      <div class="row" style="justify-content:space-between"><b>${r.fixed_count ? `${r.fixed_count} 件を修復しました` : '修復できる項目はありませんでした'}</b>
-        ${r.repair_id ? `<fluent-button size="small" id="qaUndo">元に戻す</fluent-button>` : ''}</div>
-      ${r.changes.length ? `<ul class="qa-changes">${r.changes.map(c => `<li>${seekBtn(c, c.check_id)}<span><b>${esc(c.check_id)}</b> <span class="repair-tag ${esc(c.method)}">${c.method === 'ai' ? 'AI' : 'ルール'}</span>${c.needs_approval ? ' <span class="repair-tag manual">要承認</span>' : ''}
-        <span class="qa-diff"><del>${esc(c.before ?? '')}</del> → <ins>${esc(c.after ?? '')}</ins></span></span></li>`).join('')}</ul>` : ''}
-      ${r.changes.some(c => c.needs_approval) ? '<p class="caption">AI が書き直した文は未承認です。内容を確認して「承認」してください。</p>' : ''}
-      ${r.skipped.length ? `<details><summary class="caption">直さなかった項目 ${r.skipped.length} 件</summary><ul class="qa-changes">${r.skipped.map(s => `<li>${seekBtn(s, s.check_id)}<span><b>${esc(s.check_id)}</b> ${esc(s.target)} <span class="caption">${esc(s.reason)}</span></span></li>`).join('')}</ul></details>` : ''}
-      <p class="caption">修復はテロップの文字・根拠発話だけを変え、変更ごとに自動チェックをやり直して、ほかの項目が悪くならないものだけを残しています。</p></div>`;
+    const result = !r || issues.some(q => q.check_id === r.scope) ? '' : resultBlock(r);
     return `<section class="card qa-panel" aria-labelledby="qa-title">
       <div class="row" style="justify-content:space-between"><h2 id="qa-title">自動チェック</h2>
         <div class="row"><span class="qa-count fail">不合格 ${fails}</span><span class="qa-count warnc">警告 ${warns}</span><span class="qa-count pass">合格 ${passed.filter(q => q.status === 'pass').length}</span></div></div>
       <div class="qa-timeline" role="group" aria-label="指摘の位置（動画の時間）">${markers}<div class="qa-playhead" aria-hidden="true"></div></div>
       <div class="row caption" style="justify-content:space-between"><span>0:00.0</span><span id="qaNow" aria-live="off">0:00.0</span><span>${tc(total)}</span></div>
       ${issues.length ? `<div class="qa-repair">
-        <fluent-button appearance="primary" id="qaRepair" ${repairable.length && !repairing ? '' : 'disabled'} aria-describedby="qaRepairNote">${SPARKLE}${repairing ? '修復しています…' : 'Copilotで自動修復'}</fluent-button>
-        ${repairing ? '<fluent-progress-bar aria-label="自動修復の進み具合"></fluent-progress-bar>' : ''}
+        <fluent-button appearance="primary" id="qaRepair" ${repairable.length && !repairing ? '' : 'disabled'} aria-describedby="qaRepairNote">${SPARKLE}${repairing === 'all' ? '修復しています…' : 'Copilotで自動修復'}</fluent-button>
+        ${repairing === 'all' ? '<fluent-progress-bar aria-label="自動修復の進み具合"></fluent-progress-bar>' : ''}
         <p class="caption" id="qaRepairNote">${repairable.length ? `${repairable.length} 項目が対象。` : '自動で直せる項目はありません。'}${llmDest ? `AI の修正にはテロップの文字と前後の書き起こしを ${esc(llmDest)} に送ります。` : 'LLM が未設定のため、ルールで直せる項目だけを修復します。'}</p></div>` : '<p class="pass">すべての自動チェックに合格しています。</p>'}
       <div id="qaRepairMsg">${result}</div>
       ${issues.length ? `<ul class="qa-issues">${issues.map(issueCard).join('')}</ul>` : ''}
@@ -1412,13 +1420,15 @@ async function review(epId) {
     row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
   const runRepair = async (checkIds) => {
-    repairing = true; draw();
+    repairing = checkIds ? checkIds[0] : 'all'; draw();
     try {
       const r = await api(`/api/editplans/${epId}/qa/repair`, { method: 'POST', body: { check_ids: checkIds } });
       const v = r.result; plan = v.plan; qa = v.qa; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale;
-      lastRepair = r.repair;
+      lastRepair = { ...r.repair, scope: checkIds ? checkIds[0] : null };
     } catch (e) { lastRepair = null; repairing = false; draw(); $('#qaRepairMsg').innerHTML = errorBar(e); return; }
     repairing = false; draw();
+    const res = $('.qa-panel .qa-result');
+    if (res) { res.scrollIntoView({ block: 'nearest' }); res.focus({ preventScroll: true }); }
   };
   const wireQaPanel = () => {
     const video = $('#pv video');

@@ -182,6 +182,10 @@ table.list tr.off td { opacity: .45; }
 .qa-repair p { margin: 0; }
 .qa-result { border: 1px solid var(--colorBrandStroke2, #b4d6fa); background: var(--colorBrandBackground2, #ebf3fc); border-radius: var(--borderRadiusMedium, 4px); padding: var(--s8) var(--s12); margin-bottom: var(--s12); font-size: 13px; }
 .qa-result p { margin: var(--s4) 0 0; }
+.qa-result:focus { outline: none; }
+.qa-issue .qa-result { margin: var(--s8) 0 0; }
+ul.qa-reasons { margin: 2px 0 var(--s4); padding-left: var(--s16, 16px); overflow-wrap: anywhere; }
+ul.qa-reasons li { margin: 2px 0; }
 ul.qa-issues, ul.qa-items, ul.qa-changes { list-style: none; margin: 0; padding: 0; }
 .qa-issue { border-left: 3px solid; padding: var(--s8) 0 var(--s8) var(--s12); margin-bottom: var(--s12); font-size: 13px; }
 .qa-issue.fail { border-color: var(--colorPaletteRedBorder2, #d13438); }

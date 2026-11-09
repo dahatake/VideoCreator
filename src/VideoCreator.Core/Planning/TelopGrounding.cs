@@ -103,6 +103,9 @@ public static partial class TelopGrounding
     [GeneratedRegex(@"[A-Za-z][A-Za-z0-9\-']*")]
     private static partial Regex LatinName();
 
+    /// <summary>Says no (〜ない、〜ません、〜ず): S-09 / H-11 keep it, and auto-repair never drops it.</summary>
+    public static bool HasNegation(string text) => Negation().IsMatch(text);
+
     [GeneratedRegex(@"ない|なかった|なかっ|ません|じゃない|ではない|(?:せ|れ|ら|か|き|し|でき)ず")]
     private static partial Regex Negation();
 }

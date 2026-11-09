@@ -75,14 +75,14 @@ public static class TelopBuilder
                 var start = hit!.Value.start;
                 var end = Math.Min(total, Math.Max(hit.Value.end, start + EmphasisSeconds));
                 var text = JapaneseText.NormalizeTelop(w);
+                // Keep verbatim captions (including SRT); omit only the redundant presentation telop.
+                if (telops.Any(t => t.Type == TelopType.Caption && t.Start < end && t.End > start && t.Text == text)) continue;
                 var prevIdx = telops.FindLastIndex(t => t.Type == TelopType.Emphasis);
                 if (prevIdx >= 0 && telops[prevIdx].End > start)
                 {
                     if (start - telops[prevIdx].Start >= 0.8) telops[prevIdx] = telops[prevIdx] with { End = R(start) };
                     else { notes.Add($"強調語「{w}」は直前の強調と重なるため表示しません"); continue; }
                 }
-                // an emphasis identical to the caption on screen replaces that caption (no duplicated text)
-                telops.RemoveAll(t => t.Type == TelopType.Caption && t.Start < end && t.End > start && t.Text == text);
                 telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Emphasis, Start = R(start), End = R(end), Text = text, Style = "Emph", Animation = "pop", SourceWordIds = hit.Value.ids });
             }
         }

@@ -56,6 +56,11 @@ public static partial class JapaneseText
     public static bool CanStartLine(string token) => token.Length > 0 && !NoLineStart.Contains(token[0]) && !IsParticle(token) && !Attached.Contains(token);
     public static bool CanEndLine(string token) => token.Length > 0 && !NoLineEnd.Contains(token[^1]);
 
+    /// <summary>Particles that also work as a sentence-opening conjunction (「。で、えっと」「。でも」): fine at the head of a caption right after 。？！.</summary>
+    static readonly HashSet<string> Conjunctions = ["で", "でも", "では", "と", "が", "けど", "けれど", "ので"];
+    public static bool CanStartSentence(string token) => Conjunctions.Contains(token);
+    public static bool EndsSentence(string token) => token.Length > 0 && "。！？!?".Contains(token[^1]);
+
     /// <summary>A break the layout must not make unless nothing else fits (kinsoku / inseparable).</summary>
     public const double Forbidden = 60;
     /// <summary>Starting a caption with a particle/auxiliary: avoided like kinsoku, but when every option breaks a rule this is the lesser evil.</summary>
