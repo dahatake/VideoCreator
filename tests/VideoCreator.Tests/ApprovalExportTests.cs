@@ -126,8 +126,11 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         using (var r = await ExportAsync("c1", "c2"))
         {
             Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
-            var detail = (await r.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("error").GetProperty("detail");
-            Assert.Equal("c2", Assert.Single(detail.EnumerateArray()).GetProperty("candidate_id").GetString());
+            var error = (await r.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("error");
+            Assert.Equal("E-PLAN-STALE", error.GetProperty("code").GetString());
+            var item = Assert.Single(error.GetProperty("detail").EnumerateArray());
+            Assert.Equal("c2", item.GetProperty("candidate_id").GetString());
+            Assert.Equal("E-PLAN-STALE", item.GetProperty("code").GetString());
         }
         Assert.Empty(Q.Exports);
 
@@ -138,6 +141,29 @@ public sealed class ApprovalExportTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
             Assert.Equal("E-QA-HARDFAIL", Code(await r.Content.ReadFromJsonAsync<JsonElement>(Ct)));
         }
+        // ...nor exported: the batch answers with the same status and code as the single-export route (Q-10)
+        using (var single = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
+        using (var batch = await ExportAsync("c1"))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, single.StatusCode);
+            Assert.Equal("E-QA-HARDFAIL", Code(await single.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+            Assert.Equal(single.StatusCode, batch.StatusCode);
+            var error = (await batch.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("error");
+            Assert.Equal("E-QA-HARDFAIL", error.GetProperty("code").GetString());
+            var item = Assert.Single(error.GetProperty("detail").EnumerateArray());
+            Assert.Equal("E-QA-HARDFAIL", item.GetProperty("code").GetString());
+            Assert.NotEmpty(item.GetProperty("detail").EnumerateArray());
+        }
+        // mixed reasons: the response code is the first one the single-export checks hit (not approved before a hard failure); each item keeps its own
+        using (var r = await ExportAsync("c1", "c3"))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+            var error = (await r.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("error");
+            Assert.Equal("E-NOT-APPROVED", error.GetProperty("code").GetString());
+            Assert.Equal(["c1:E-QA-HARDFAIL", "c3:E-NOT-APPROVED"],
+                error.GetProperty("detail").EnumerateArray().Select(x => $"{x.GetProperty("candidate_id").GetString()}:{x.GetProperty("code").GetString()}"));
+        }
+        Assert.Empty(Q.Exports);
         ConfirmRights(true);
 
         using (var r = await ApproveAsync("c2", true)) r.EnsureSuccessStatusCode();
@@ -157,9 +183,15 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal(["c1", "c2", "c3"], started.Select(x => x.Cid));
         // the third is still waiting behind two full renders: withdraw it
         using (var r = await _http.PostAsync($"/api/renders/{started[2].Rid}/cancel", null, Ct)) Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        // a second request for something already exporting is refused, and so is the single-export route
-        using (var r = await ExportAsync("c1")) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
-        using (var r = await _http.PostAsync("/api/editplans/ep1/render", null, Ct)) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        // a second request for something already exporting is refused with the same code by both routes
+        using (var batch = await ExportAsync("c1"))
+        using (var single = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, batch.StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict, single.StatusCode);
+            Assert.Equal("E-EXPORT-BUSY", Code(await batch.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+            Assert.Equal("E-EXPORT-BUSY", Code(await single.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
         // queued plans cannot change under an approved export (AT-15).
         using (var r = await _http.PatchAsJsonAsync("/api/editplans/ep2", new { ops = new[] { new { op = "set_sfx", enabled = true } } }, Ct))
         {

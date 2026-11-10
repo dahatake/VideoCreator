@@ -144,6 +144,13 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .headline { font-size: 16px; font-weight: 600; line-height: 22px; }
 .badges { display: flex; gap: var(--s4); flex-wrap: wrap; }
 ul.notes { margin: var(--s4) 0 0; padding-left: var(--s20); font-size: 12px; color: var(--colorNeutralForeground2); }
+/* several videos per job: review queue nav (step 5), progress summary (step 4/6), batch export list (step 6) */
+.video-nav { gap: var(--s4); }
+.video-nav select.native { max-width: 320px; }
+.work-progress { margin-bottom: var(--s16); }
+ol.video-status { display: flex; flex-wrap: wrap; gap: var(--s4) var(--s16); margin: var(--s8) 0 0; padding-left: var(--s20); font-size: 13px; }
+ol.video-status li { display: flex; align-items: center; gap: var(--s4); }
+.export-list { gap: var(--s12); }
 
 table.list { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.list th { text-align: left; font-weight: 600; font-size: 12px; color: var(--colorNeutralForeground3); padding: var(--s8); border-bottom: 1px solid var(--colorNeutralStroke2); position: sticky; top: 0; background: var(--colorNeutralBackground1); z-index: 1; }
@@ -170,6 +177,9 @@ table.list tr.off td { opacity: .45; }
 /* 自動チェック panel */
 .qa-panel h2 { margin: 0; }
 .qa-panel .ico { flex: none; }
+.qa-review { margin: var(--s12) 0; }
+.qa-review p { margin: var(--s8) 0; }
+.qa-approval { flex-wrap: wrap; margin-bottom: var(--s8); }
 .qa-count { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .qa-timeline { position: relative; height: 28px; margin-top: var(--s12); background: var(--colorNeutralBackground3, #f5f5f5); border: 1px solid var(--colorNeutralStroke2, #e0e0e0); border-radius: var(--borderRadiusMedium, 4px); }
 .qa-mark { position: absolute; top: 3px; bottom: 3px; min-width: 4px; padding: 0; border: 0; border-radius: 2px; cursor: pointer; opacity: .85; }

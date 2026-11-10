@@ -20,7 +20,8 @@ Content-Type: application/json
 
 {"approved":false}
 
-### Export one or more approved candidates: 202 with a render id each; 409 E-NOT-APPROVED (nothing started) lists the reasons.
+### Export one or more approved candidates: 202 with a render id each. If any cannot be exported nothing starts; the status/code is the first one
+### the single-export route would hit (404 E-NOT-FOUND, 409 E-NOT-APPROVED, 409 E-PLAN-STALE, 422 E-QA-HARDFAIL, 409 E-EXPORT-BUSY), and detail lists each candidate with its own code.
 POST {{baseUrl}}/api/jobs/{{jobId}}/exports
 X-VideoCreator: 1
 Content-Type: application/json

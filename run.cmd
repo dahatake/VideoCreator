@@ -69,8 +69,10 @@ if not "%RC%"=="0" (
   pause
   exit /b %RC%
 )
-echo Starting VideoCreator at http://127.0.0.1:8765/  (close this window or press Ctrl+C to stop)
-dotnet run --project src\VideoCreator.App -c Release --no-build
+echo Starting VideoCreator and opening its URL in your default web browser...
+echo Close this window or press Ctrl+C to stop.
+rem Open the configured URL only after the app is listening, using its ApplicationStarted handler.
+dotnet run --project src\VideoCreator.App -c Release --no-build --no-launch-profile -- --VideoCreator:OpenBrowser=true
 set "RC=%errorlevel%"
 if not "%RC%"=="0" (
   echo [ERROR] VideoCreator exited with code %RC%. To diagnose: run.cmd --check

@@ -110,6 +110,14 @@ public sealed class ProjectWorkflowResumeTests : IAsyncLifetime
         var savedCandidates = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
         Assert.Equal("candidates", savedCandidates.GetProperty("resume_state").GetProperty("step").GetString());
 
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "exports", job_id = jobId }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.OK, stateResponse.StatusCode);
+        var savedExports = await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", TestContext.Current.CancellationToken);
+        Assert.Equal("exports", savedExports.GetProperty("resume_state").GetProperty("step").GetString());
+        Assert.Equal(jobId, savedExports.GetProperty("resume_state").GetProperty("job_id").GetString());
+        using (var stateResponse = await _http.PutAsJsonAsync($"/api/projects/{_id}/workflow-state", new { step = "exports", job_id = jobId, edit_plan_id = "ep_x" }, TestContext.Current.CancellationToken))
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, stateResponse.StatusCode);
+
         var planId = "ep_resume";
         var plan = new EditPlan
         {

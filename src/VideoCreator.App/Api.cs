@@ -22,6 +22,8 @@ public static class Api
     public sealed record PatchPlan(List<PlanOp> Ops);
     /// <summary>「Copilotで自動修復」: the checks to repair (null/empty = every repairable warn/fail).</summary>
     public sealed record QaRepairRequest(List<string>? CheckIds);
+    public sealed record QaApprovalTarget(string CheckId, string ResultHash);
+    public sealed record QaApprovalRequest(string? PlanHash, List<QaApprovalTarget>? Checks, bool Approved);
     /// <summary>Plan as it was before an auto-repair; undo restores it only while the plan is still exactly the repaired one.</summary>
     public sealed record QaRepairSnapshot(string Id, string EditplanId, EditPlan Before, string AfterHash, DateTimeOffset At);
     public sealed record Settings(string LlmProvider);
@@ -49,6 +51,14 @@ public static class Api
     public sealed record BatchExportItem(string CandidateId, string RenderId);
     /// <summary>The exports started by a batch request.</summary>
     public sealed record BatchExportResponse(List<BatchExportItem> Exports);
+    /// <summary>Why one candidate of a refused batch cannot be exported. <c>code</c> is what <c>/editplans/{id}/render</c> would return for it;
+    /// <c>detail</c> is the failed hard QA checks (<c>E-QA-HARDFAIL</c>) or the running export (<c>E-EXPORT-BUSY</c>).</summary>
+    public sealed record BatchExportProblem(string CandidateId, string Name, string Code, string Reason, object? Detail = null)
+    {
+        /// <summary>Order of the single-export checks: a refused batch answers with the first code that any candidate hit.</summary>
+        public static readonly (string Code, int Status)[] Precedence =
+            [("E-NOT-FOUND", 404), ("E-NOT-APPROVED", 409), ("E-PLAN-STALE", 409), ("E-QA-HARDFAIL", 422), ("E-EXPORT-BUSY", 409)];
+    }
 
     /// <summary>Approval as shown in the UI: <c>stale</c> = approved, but the plan was edited afterwards.</summary>
     static object? ApprovalView(Candidate c, EditPlan? plan) => c.Approval is not { } a ? null : new
@@ -66,7 +76,7 @@ public static class Api
         {
             if (saved.Step is "project" or "settings" && saved.JobId == null && saved.EditPlanId == null && saved.RenderId == null)
                 return saved;
-            if (saved.Step is "job" or "candidates" && saved.JobId is string jobId
+            if (saved.Step is "job" or "candidates" or "exports" && saved.JobId is string jobId
                 && rt.Store.Get<Job>(Kinds.Job, jobId) is { ProjectId: var jobProject } job && jobProject == project.Id)
             {
                 if (saved.Step == "job" || job.Status is JobStatus.Ready or JobStatus.Done)
@@ -240,11 +250,12 @@ public static class Api
                         break;
                     case "job":
                     case "candidates":
+                    case "exports":
                     {
                         var job = state.JobId == null ? null : rt.Store.Get<Job>(Kinds.Job, state.JobId);
                         if (job?.ProjectId != id || state.EditPlanId != null || state.RenderId != null)
                             return Error(422, "E-VALIDATION", "このプロジェクトの生成ジョブを指定してください");
-                        if (state.Step == "candidates" && job!.Status is not (JobStatus.Ready or JobStatus.Done))
+                        if (state.Step != "job" && job!.Status is not (JobStatus.Ready or JobStatus.Done))
                             return Error(422, "E-VALIDATION", "完了した生成ジョブだけ候補画面を保存できます");
                         saved = state with { UpdatedAt = DateTimeOffset.UtcNow };
                         break;
@@ -624,22 +635,28 @@ public static class Api
             var all = rt.Store.List<Candidate>(Kinds.Candidate, jobId).ToDictionary(c => c.Id);
             var runner = rt.CreateRunner();
             var picked = new List<(Candidate C, EditPlan Plan)>();
-            var problems = new List<object>();
-            bool stale = false;
-            // all-or-nothing: every selected candidate is checked before any export starts
+            var problems = new List<BatchExportProblem>();
+            // all-or-nothing: every selected candidate is checked before any export starts, in the same order as /editplans/{id}/render
             foreach (var id in ids)
             {
                 if (!all.TryGetValue(id, out var c)) return Error(404, "E-NOT-FOUND", "この候補一覧にない候補が含まれています");
                 var plan = c.EditPlanId is string ep ? rt.Store.Get<EditPlan>(Kinds.EditPlan, ep) : null;
                 string name = c.Series?.Label ?? $"#{c.Rank}";
-                if (plan == null) { problems.Add(new { candidate_id = id, name, reason = "編集計画がありません" }); continue; }
-                if (c.Approval == null) problems.Add(new { candidate_id = id, name, reason = "承認されていません" });
-                else if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) { stale = true; problems.Add(new { candidate_id = id, name, reason = "承認後に修正されています。もう一度確認して承認してください" }); }
-                else if (q.ActiveExport(plan.EditplanId) != null) problems.Add(new { candidate_id = id, name, reason = "書き出し中です" });
-                else if (QaEngine.PlanChecks(runner.QaContextFor(plan)).Any(x => x.Hard && x.Status == QaStatus.Fail)) problems.Add(new { candidate_id = id, name, reason = "自動チェックで不合格の項目があります" });
-                else picked.Add((c, plan));
+                BatchExportProblem Problem(string code, string reason, object? failures = null) => new(id, name, code, reason, failures);
+                if (plan == null) { problems.Add(Problem("E-NOT-FOUND", "編集計画がありません")); continue; }
+                if (c.Approval == null) { problems.Add(Problem("E-NOT-APPROVED", "承認されていません")); continue; }
+                if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) { problems.Add(Problem("E-PLAN-STALE", "承認後に修正されています。もう一度確認して承認してください")); continue; }
+                var hard = QaEngine.PlanChecks(runner.QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
+                if (hard.Count > 0) { problems.Add(Problem("E-QA-HARDFAIL", "自動チェックで不合格の項目があります", hard)); continue; }
+                if (q.ActiveExport(plan.EditplanId) is { } active) { problems.Add(Problem("E-EXPORT-BUSY", "書き出し中です", new { render_id = active.RenderId })); continue; }
+                picked.Add((c, plan));
             }
-            if (problems.Count > 0) return Error(409, stale ? "E-PLAN-STALE" : "E-NOT-APPROVED", "書き出せない候補があるため、どれも書き出していません", problems);
+            if (problems.Count > 0)
+            {
+                // the response code is the one the single-export route would return first; each item keeps its own code
+                var top = BatchExportProblem.Precedence.First(p => problems.Any(x => x.Code == p.Code));
+                return Error(top.Status, top.Code, "書き出せない候補があるため、どれも書き出していません", problems);
+            }
             var started = new List<BatchExportItem>();
             foreach (var (c, plan) in picked.OrderBy(x => x.C.Series?.Part ?? x.C.Rank))
             {
@@ -756,7 +773,13 @@ public static class Api
         static List<QaResult> ShownQa(Runtime rt, PipelineRunner runner, EditPlan plan)
         {
             var ctx = runner.QaContextFor(plan);
-            return QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), rt.Llm != null);
+            var checks = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), rt.Llm != null);
+            var hash = EditPlanFingerprint.Of(plan);
+            var preview = rt.Store.List<Render>(Kinds.Render, plan.EditplanId)
+                .FirstOrDefault(r => r.Kind == "preview" && !RenderValidity.IsStale(r, plan));
+            if (preview != null)
+                checks.AddRange(preview.Qa.Where(q => q.PlanHash == hash && checks.All(c => c.CheckId != q.CheckId)));
+            return QaApproval.Attach(plan, checks);
         }
         object PlanView(Runtime rt, PipelineRunner runner, EditPlan before, EditPlan updated)
         {
@@ -766,6 +789,36 @@ public static class Api
                 preview_stale = EditPlanFingerprint.Of(updated) != EditPlanFingerprint.Of(before),
                 approval = c == null ? null : ApprovalView(c, updated), qa_stale = finalStale, final_render_stale = finalStale };
         }
+        api.MapPut("/editplans/{id}/qa/approval", (Runtime rt, string id, QaApprovalRequest req) => rt.Store.Atomic<IResult>(() =>
+        {
+            var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
+            if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
+            if (req.Checks == null || req.Checks.Count == 0 || req.Checks.Any(c => c == null || string.IsNullOrWhiteSpace(c.CheckId) || string.IsNullOrWhiteSpace(c.ResultHash))
+                || req.Checks.Select(c => c.CheckId).Distinct().Count() != req.Checks.Count)
+                return Error(422, "E-VALIDATION", "承認するチェック項目を重複なく指定してください");
+            var planHash = EditPlanFingerprint.Of(plan);
+            if (req.PlanHash != planHash) return StaleError();
+            var runner = rt.CreateRunner();
+            var checks = ShownQa(rt, runner, plan);
+            foreach (var target in req.Checks)
+            {
+                var check = checks.FirstOrDefault(c => c.CheckId == target.CheckId);
+                if (check == null || check.Status == QaStatus.NotRun)
+                    return Error(422, "E-VALIDATION", "存在しない項目・未実施の項目は承認できません");
+                if (check.ReviewHash != target.ResultHash)
+                    return Error(409, "E-QA-STALE", "チェック結果が変更されています。画面を再読み込みして内容を確認してください");
+            }
+            var ids = req.Checks.Select(c => c.CheckId).ToHashSet();
+            var approvals = (plan.QaApprovals ?? []).Where(a => !ids.Contains(a.CheckId)).ToList();
+            var now = DateTimeOffset.Now;
+            if (req.Approved)
+                approvals.AddRange(req.Checks.Select(c => plan.QaApprovals?.FirstOrDefault(a =>
+                    a.CheckId == c.CheckId && a.PlanHash == planHash && a.ResultHash == c.ResultHash)
+                    ?? new QaCheckApproval(c.CheckId, planHash, c.ResultHash, now, Environment.UserName)));
+            var updated = plan with { QaApprovals = approvals.Count == 0 ? null : approvals };
+            rt.Store.Put(Kinds.EditPlan, id, plan.ProjectId, updated);
+            return Results.Json(PlanView(rt, runner, plan, updated), Json.Options);
+        })).WithSummary("Acknowledge or withdraw reviewed QA results without changing verdicts or export constraints");
         api.MapPost("/editplans/{id}/qa/repair", async (Runtime rt, JobQueue q, string id, QaRepairRequest? req, CancellationToken ct) =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);

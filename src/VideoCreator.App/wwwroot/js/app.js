@@ -255,6 +255,7 @@ function workflowRoute(id, state) {
   if (state.step === 'project') return `#/p/${id}`;
   if (state.step === 'settings') return `#/p/${id}/settings`;
   if (state.step === 'job' || state.step === 'candidates') return state.job_id ? `#/job/${state.job_id}` : null;
+  if (state.step === 'exports') return state.job_id ? `#/job/${state.job_id}/exports` : null;
   if (state.step === 'review') return state.edit_plan_id ? `#/ep/${state.edit_plan_id}` : null;
   if (state.step === 'render') return state.render_id ? `#/render/${state.render_id}` : state.edit_plan_id ? `#/ep/${state.edit_plan_id}` : null;
   return null;
@@ -269,11 +270,16 @@ const routes = [
   [/^#\/p\/([\w-]+)$/, (id) => project(id)],
   [/^#\/p\/([\w-]+)\/settings$/, (id) => project(id, true)],
   [/^#\/job\/([\w-]+)$/, job],
+  [/^#\/job\/([\w-]+)\/exports$/, exportsView],
   [/^#\/ep\/([\w-]+)$/, review],
   [/^#\/render\/([\w-]+)$/, exportView],
 ];
 let cleanup = null;
+// a route that awaited the API after the user navigated elsewhere must not overwrite the newer page
+let routeSeq = 0;
+function routeGuard() { const seq = routeSeq; return () => seq !== routeSeq; }
 async function router() {
+  routeSeq++;
   if (cleanup) { cleanup(); cleanup = null; }
   document.body.classList.remove('fit');
   const hash = location.hash || '#/';
@@ -1002,7 +1008,9 @@ async function loadPatterns(projectId, presets) {
 
 // ---------------- job: progress (SSE) + candidates ----------------
 async function job(jobId) {
+  const gone = routeGuard();
   const j = await api(`/api/jobs/${jobId}`);
+  if (gone()) return;
   if (j.status === 'ready' || j.status === 'done') return candidates(j);
   await saveWorkflowState(j.project_id, { step: 'job', job_id: j.id });
   setSteps(2, 2, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
@@ -1084,9 +1092,12 @@ async function job(jobId) {
 }
 
 async function candidates(j) {
+  const gone = routeGuard();
   setSteps(3, 3, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
   const list = await api(`/api/jobs/${j.id}/candidates`);
+  if (gone()) return;
   await saveWorkflowState(j.project_id, { step: 'candidates', job_id: j.id });
+  setSteps(3, 3, jobStepLinks(j, list));
   if (list.length && list[0].candidate.series) return seriesView(j, list);
   const bar = (label, v) => `<span>${label}</span><span class="bar"><span style="width:${v * 10}%"></span></span><span>${Number(v).toFixed(v % 1 ? 1 : 0)}</span>`;
   main.innerHTML = `
@@ -1094,6 +1105,7 @@ async function candidates(j) {
       <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">選定: ${esc(j.llm_model ?? '')} · プロンプト ${esc(j.prompt_version ?? '')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
+    ${workProgress(j, list)}
     <div class="grid cols-cands">
       ${list.map(({ candidate: c, preview_url, preview, preview_stale }) => `
         <article class="card stack" aria-label="候補 ${c.rank}">
@@ -1133,9 +1145,10 @@ function seriesView(j, list) {
       <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">素材・パターンに戻る</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(w, 'warning')).join('')}
     <p class="caption">${first.requested_parts ? `${first.requested_parts}本に指定（1本あたり 約${(first.target_sec / 60).toFixed(1)}分）` : `1本あたり 約${(first.target_sec / 60).toFixed(1)}分の指定`} · 合計 ${fmt(total)} · 章分け: ${esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : '書き起こしの語彙の変化（AI なし）')} · 実績コスト 約 ¥${(j.cost?.estimated_jpy ?? 0).toFixed(2)} · 所要 ${Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)} 秒</p>
-    <div class="grid cols-cands">
-      ${list.map(({ candidate: c, preview_url, preview, preview_stale }) => {
-        const se = c.series;
+        ${workProgress(j, list)}
+        <div class="grid cols-cands">
+          ${list.map(({ candidate: c, preview_url, preview, preview_stale }) => {
+            const se = c.series;
         return `
         <article class="card stack" aria-label="${esc(se.label)}">
           <div class="card-head"><b>${esc(se.label)}</b><span class="badges">${preview_stale ? '<fluent-badge appearance="tint" color="warning">プレビュー・QAは編集前の結果</fluent-badge>' : qaBadges(preview?.qa)}<fluent-badge appearance="tint" color="brand">${preview ? fmt(preview.duration) : '—'}</fluent-badge></span></div>
@@ -1156,7 +1169,43 @@ function seriesView(j, list) {
   wireApprovals(j, list);
 }
 
-// ---------------- approval & export of one or more candidates (candidates / series screens) ----------------
+// ---------------- approval & export of one or more candidates (candidates / series / export screens) ----------------
+// One job can yield several videos: each is reviewed and approved on its own (step 5), then the approved ones are exported together (step 6).
+function videoName(x) { return x.candidate.series?.label ?? `候補 #${x.candidate.rank}`; }
+function videoStatus(x) {
+  const e = x.export;
+  if (e && (e.state === 'queued' || e.state === 'rendering')) return { key: 'exporting', label: '書き出し中', color: 'informative' };
+  if (x.approval?.stale) return { key: 'stale', label: '要再承認', color: 'warning' };
+  if (x.approval && x.final_render_id) return { key: 'exported', label: '書き出し済み', color: 'success' };
+  if (x.approval) return { key: 'approved', label: '承認済み', color: 'brand' };
+  return { key: 'todo', label: '未確認', color: 'informative' };
+}
+const isReviewed = (x) => ['approved', 'exported', 'exporting'].includes(videoStatus(x).key);
+// the review queue: the next unapproved video after the current one (wrapping), never the current one itself; null = go to step 6
+function nextToReview(list, epId) {
+  const i = list.findIndex(x => x.candidate.edit_plan_id === epId);
+  return [...list.slice(i + 1), ...list.slice(0, Math.max(0, i))].find(x => x.candidate.edit_plan_id !== epId && !isReviewed(x)) ?? null;
+}
+function jobStepLinks(j, list = []) {
+  const settings = `#/p/${j.project_id}/settings`;
+  const first = list.find(x => !isReviewed(x)) ?? list[0];
+  return { 0: settings, 1: settings, 2: `#/job/${j.id}`, 3: `#/job/${j.id}`, ...(first?.candidate.edit_plan_id ? { 4: `#/ep/${first.candidate.edit_plan_id}` } : {}), 5: `#/job/${j.id}/exports` };
+}
+// "n of N reviewed" + where to go next; shown on the candidates screen
+function workProgress(j, list, onExports = false) {
+  if (list.length < 2) return '';
+  const reviewed = list.filter(isReviewed).length, exported = list.filter(x => videoStatus(x).key === 'exported').length;
+  const next = list.find(x => !isReviewed(x));
+  return `<section class="card work-progress" id="workProgress" aria-label="確認と書き出しの進み具合">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <div class="stack" style="gap:4px"><b>確認の進み具合: 承認 ${reviewed} / ${list.length} 本 · 書き出し済み ${exported} / ${list.length} 本</b>
+        <span class="caption">1本ずつ「確認・修正」で内容を確かめて承認し、承認した動画を「書き出し」でまとめて書き出します。</span></div>
+      <div class="row">${next ? `<fluent-anchor-button id="nextReview" href="#/ep/${esc(next.candidate.edit_plan_id)}">次の未承認（${esc(videoName(next))}）を確認</fluent-anchor-button>` : ''}
+        ${onExports ? '' : `<fluent-anchor-button id="toExports" href="#/job/${esc(j.id)}/exports" ${reviewed ? 'appearance="primary"' : ''}>書き出しへ進む${reviewed ? `（承認 ${reviewed} 本）` : ''}</fluent-anchor-button>`}</div>
+    </div>
+    <ol class="video-status">${list.map(x => { const s = videoStatus(x); return `<li><a href="#/ep/${esc(x.candidate.edit_plan_id)}">${esc(videoName(x))}</a> <fluent-badge appearance="tint" color="${s.color}">${s.label}</fluent-badge></li>`; }).join('')}</ol>
+  </section>`;
+}
 function approvalBadge(a) {
   if (!a) return '<fluent-badge appearance="tint" color="informative">未承認</fluent-badge>';
   if (a.stale) return '<fluent-badge appearance="tint" color="warning">承認後に修正あり（再承認が必要）</fluent-badge>';
@@ -1184,7 +1233,7 @@ function batchBox() {
     <div id="batchMsg" aria-live="polite"></div>
   </section>`;
 }
-function wireApprovals(j, list) {
+function wireApprovals(j, list, steps = [3, 3]) {
   const items = new Map(list.map(x => [x.candidate.id, x]));
   const key = `exportBatch:${j.id}`;
   let batch = JSON.parse(sessionStorage.getItem(key) ?? '[]'); // render ids of the last batch started here
@@ -1193,6 +1242,16 @@ function wireApprovals(j, list) {
   const approved = (x) => x.approval && !x.approval.stale;
   const active = (x) => x.export && (x.export.state === 'queued' || x.export.state === 'rendering');
   const setHtml = (el, html) => { if (el.innerHTML !== html) el.innerHTML = html; };
+  const progressSig = (all) => all.map(x => `${x.candidate.id}:${videoStatus(x).key}`).join(',');
+  let progressKey = progressSig(list);
+  const renderProgress = () => {
+    const box = $('#workProgress'), all = [...items.values()];
+    const k = progressSig(all);
+    if (k === progressKey) return;
+    progressKey = k;
+    if (box) box.outerHTML = workProgress(j, all, steps[0] === 5);
+    setSteps(...steps, jobStepLinks(j, all));
+  };
   const picked = () => [...items.values()].filter(x => block(x.candidate.id)?.querySelector('.exp-pick')?.checked && approved(x) && !active(x));
   const updateButton = () => {
     const n = picked().length, b = $('#batchExport');
@@ -1245,7 +1304,7 @@ function wireApprovals(j, list) {
   const refresh = async () => {
     const fresh = await api(`/api/jobs/${j.id}/candidates`);
     for (const x of fresh) { items.set(x.candidate.id, x); show(x); }
-    showBatch(); updateButton();
+    showBatch(); updateButton(); renderProgress();
     if ([...items.values()].some(active) && !timer) timer = setInterval(() => refresh().catch(() => { }), 1000);
   };
   for (const x of items.values()) {
@@ -1257,7 +1316,7 @@ function wireApprovals(j, list) {
       try {
         const r = await api(`/api/jobs/${j.id}/candidates/${encodeURIComponent(x.candidate.id)}/approval`, { method: 'PUT', body: { approved: !approved(items.get(x.candidate.id)) } });
         const cur = { ...items.get(x.candidate.id), approval: r.approval ?? null };
-        items.set(x.candidate.id, cur); show(cur);
+        items.set(x.candidate.id, cur); show(cur); renderProgress();
         if (approved(cur)) el.querySelector('.exp-pick').checked = true;
       } catch (e) { el.querySelector('.appr-msg').innerHTML = errorBar(e) + (e.detail ? qaList(e.detail) : ''); show(items.get(x.candidate.id)); }
       updateButton();
@@ -1287,7 +1346,8 @@ function wireApprovals(j, list) {
       $('#batchMsg').innerHTML = info(`${batch.length} 本の書き出しを始めました。この画面で進み具合を確認できます（ほかの画面に移っても書き出しは続きます）。`, 'success');
       await refresh();
     } catch (e) {
-      const reasons = Array.isArray(e.detail) ? `<ul class="notes">${e.detail.map(d => `<li>${esc(d.name)}: ${esc(d.reason)}</li>`).join('')}</ul>` : '';
+      // each item: video name and reason; for a hard QA failure also the failed checks (as in single export)
+      const reasons = Array.isArray(e.detail) ? `<ul class="notes">${e.detail.map(d => `<li>${esc(d.name)}: ${esc(d.reason)}${d.code === 'E-QA-HARDFAIL' && Array.isArray(d.detail) ? qaList(d.detail) : ''}</li>`).join('')}</ul>` : '';
       $('#batchMsg').innerHTML = errorBar(e) + reasons;
       await refresh().catch(() => { });
     }
@@ -1299,13 +1359,18 @@ function wireApprovals(j, list) {
 
 // ---------------- review & edit ----------------
 async function review(epId) {
+  const gone = routeGuard();
   setSteps(4);
-  let { plan, qa, approval, final_render_stale: finalStale } = await api(`/api/editplans/${epId}`);
+  let { plan, qa, plan_hash: planHash, approval, final_render_stale: finalStale } = await api(`/api/editplans/${epId}`);
+  if (gone()) return;
   await saveWorkflowState(plan.project_id, { step: 'review', edit_plan_id: epId });
   const job = await api(`/api/jobs/${plan.provenance.job_id}`);
-  setSteps(4, 4, { 0: `#/p/${plan.project_id}/settings`, 1: `#/p/${plan.project_id}/settings`, 2: `#/job/${job.id}`, 3: `#/job/${job.id}` });
   const cands = await api(`/api/jobs/${job.id}/candidates`);
+  if (gone()) return;
+  setSteps(4, 4, jobStepLinks(job, cands));
   const me = cands.find(x => x.candidate.edit_plan_id === epId);
+  const meIdx = cands.indexOf(me);
+  const nextTodo = cands.length < 2 ? null : nextToReview(cands, epId);
   const bgmList = await api(`/api/bgm?project_id=${encodeURIComponent(plan.project_id)}`);
   const projAssets = (await api(`/api/projects/${plan.project_id}`)).assets;
   const assetName = (aid) => (projAssets.find(a => a.id === aid)?.path ?? aid).split(/[\\/]/).pop();
@@ -1322,7 +1387,8 @@ async function review(epId) {
   const insertStart = (ins) => { let off = 0; for (const i of active()) { if (i.id === ins.id) break; off += i.duration; } return ins.at + off; };
   const insertName = { opening: 'オープニング', closing: 'クロージング', card: '場面転換カード' };
   const llmDest = (await api('/api/settings').catch(() => null))?.transmission?.llm_destination ?? null;
-  let lastRepair = null, repairing = false;
+  if (gone()) return;
+  let lastRepair = null, repairing = false, approvingQa = false;
   Object.assign(typeLabel, insertName);
   // one list for telops and inserts; the type switches turn a whole type on/off (tsukkomi = overlay telops + pause cards)
   const isTsukkomiCard = (i) => i.kind === 'card' && i.id.startsWith('tsukkomi');
@@ -1376,6 +1442,11 @@ async function review(epId) {
       <p class="caption">字幕は話した言葉どおりに、言いよどみ・語尾・繰り返しも残し、表示時間・区切り・結合だけで直します（設定済みの伏せ字を除く）。演出テロップ・カードは見た目を優先して AI で修正し、要承認にします。変更ごとに自動チェックをやり直し、ほかの項目が悪くならないものだけを残しています。</p></div>`;
   };
   const qaPanel = () => {
+    const reviewed = qa.filter(q => q.status !== 'not_run' && q.review_hash);
+    const pending = reviewed.filter(q => !q.review_approval);
+    const approvalControl = (q) => q.status === 'not_run' || !q.review_hash ? '' : `<div class="row qa-approval">
+      <span class="caption">${q.review_approval ? `承認済み · ${esc(new Date(q.review_approval.at).toLocaleString('ja-JP'))}` : '未承認'}</span>
+      <fluent-button size="small" data-qa-approve="${esc(q.check_id)}" aria-label="${esc(q.check_id)} ${q.review_approval ? '承認を取り消す' : '承認'}" ${approvingQa || repairing ? 'disabled' : ''}>${q.review_approval ? '承認を取り消す' : '承認'}</fluent-button></div>`;
     const issues = qa.filter(q => q.status === 'fail' || q.status === 'warn').sort((a, b) => (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1));
     const passed = qa.filter(q => q.status === 'pass' || q.status === 'not_run');
     const fails = issues.filter(q => q.status === 'fail').length, warns = issues.length - fails;
@@ -1394,6 +1465,7 @@ async function review(epId) {
       return `<li class="qa-issue ${q.status}" data-check="${esc(q.check_id)}">
         <div class="qa-issue-head"><span class="qa-status ${q.status}">${statusName[q.status]}</span><b>${esc(q.check_id)}</b><span>${esc(q.message)}</span></div>
         <p class="caption qa-measure">${esc(q.measured)}（基準 ${esc(q.threshold)}${q.stage ? `・${esc(q.stage)}` : ''}）</p>
+        ${approvalControl(q)}
         ${q.advice ? `<div class="qa-advice">${BULB}<div><b>推奨する修正</b> <span class="repair-tag ${esc(q.advice.repair)}">${repairName[q.advice.repair] ?? ''}</span><p>${esc(q.advice.recommendation)}</p>
           ${n > 0 ? `<fluent-button size="small" appearance="subtle" data-repair-one="${esc(q.check_id)}" ${repairing ? 'disabled' : ''}>${SPARKLE}${repairing === q.check_id ? '修復しています…' : assessed && all.length > 1 ? `この項目を修復（${n} 件が対象）` : 'この項目を修復'}</fluent-button>
             ${repairing === q.check_id ? '<fluent-progress-bar aria-label="この項目の修復の進み具合"></fluent-progress-bar>' : ''}` : ''}
@@ -1408,6 +1480,12 @@ async function review(epId) {
     return `<section class="card qa-panel" aria-labelledby="qa-title">
       <div class="row" style="justify-content:space-between"><h2 id="qa-title">自動チェック</h2>
         <div class="row"><span class="qa-count fail">不合格 ${fails}</span><span class="qa-count warnc">警告 ${warns}</span><span class="qa-count pass">合格 ${passed.filter(q => q.status === 'pass').length}</span></div></div>
+      <div class="qa-review">
+        <div class="row"><fluent-button id="qaApproveAll" ${pending.length && !approvingQa && !repairing ? '' : 'disabled'}>一括承認${pending.length ? `（${pending.length} 項目）` : ''}</fluent-button>
+          <span class="caption" id="qaApprovalCount">承認済み ${reviewed.length - pending.length} / ${reviewed.length} 項目</span></div>
+        <p class="caption">承認はチェック結果を確認した記録です。不合格・警告は残り、書き出し条件やテロップ・カードの承認は変わりません。編集・判定結果の変更後は再承認が必要です。未実施は対象外です。</p>
+        <div id="qaApprovalMsg" role="status"></div>
+      </div>
       <div class="qa-timeline" role="group" aria-label="指摘の位置（動画の時間）">${markers}<div class="qa-playhead" aria-hidden="true"></div></div>
       <div class="row caption" style="justify-content:space-between"><span>0:00.0</span><span id="qaNow" aria-live="off">0:00.0</span><span>${tc(total)}</span></div>
       ${issues.length ? `<div class="qa-repair">
@@ -1416,7 +1494,7 @@ async function review(epId) {
         <p class="caption" id="qaRepairNote">${repairable.length ? `${repairable.length} 項目・${fixTotal} 件が対象。` : '自動で直せる項目はありません。'}${llmDest ? `AI の修正にはテロップの文字と前後の書き起こしを ${esc(llmDest)} に送ります。` : 'LLM が未設定のため、ルールで直せる項目だけを修復します。'}</p></div>` : '<p class="pass">すべての自動チェックに合格しています。</p>'}
       <div id="qaRepairMsg">${result}</div>
       ${issues.length ? `<ul class="qa-issues">${issues.map(issueCard).join('')}</ul>` : ''}
-      ${passed.length ? `<details class="qa-passed"><summary class="caption">合格・未実施 ${passed.length} 件</summary>${qaList(passed)}</details>` : ''}
+      ${passed.length ? `<details class="qa-passed"><summary class="caption">合格・未実施 ${passed.length} 件</summary>${passed.map(q => `<div data-check="${esc(q.check_id)}">${qaList([q])}${approvalControl(q)}</div>`).join('')}</details>` : ''}
     </section>`;
   };
   const focusTarget = (target, kind) => {
@@ -1427,10 +1505,11 @@ async function review(epId) {
     row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
   const runRepair = async (checkIds) => {
+    if (repairing || approvingQa) return;
     repairing = checkIds ? checkIds[0] : 'all'; draw();
     try {
       const r = await api(`/api/editplans/${epId}/qa/repair`, { method: 'POST', body: { check_ids: checkIds } });
-      const v = r.result; plan = v.plan; qa = v.qa; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale;
+      const v = r.result; plan = v.plan; qa = v.qa; planHash = v.plan_hash; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale;
       lastRepair = { ...r.repair, scope: checkIds ? checkIds[0] : null };
     } catch (e) { lastRepair = null; repairing = false; draw(); $('#qaRepairMsg').innerHTML = errorBar(e); return; }
     repairing = false; draw();
@@ -1438,6 +1517,24 @@ async function review(epId) {
     if (res) { res.scrollIntoView({ block: 'nearest' }); res.focus({ preventScroll: true }); }
   };
   const wireQaPanel = () => {
+    const approveChecks = async (checks, approved) => {
+      if (approvingQa || repairing || !checks.length) return;
+      approvingQa = true;
+      $$('[data-qa-approve], #qaApproveAll, #qaRepair, [data-repair-one], #qaUndo').forEach(b => b.setAttribute('disabled', ''));
+      try {
+        const v = await api(`/api/editplans/${epId}/qa/approval`, { method: 'PUT', body: {
+          plan_hash: planHash, checks: checks.map(q => ({ check_id: q.check_id, result_hash: q.review_hash })), approved,
+        } });
+        plan = v.plan; qa = v.qa; planHash = v.plan_hash; approval = v.approval; finalStale = v.final_render_stale;
+        approvingQa = false; draw();
+        $('#qaApprovalMsg').textContent = `${checks.length} 項目の${approved ? '承認を保存しました' : '承認を取り消しました'}。`;
+      } catch (e) { approvingQa = false; draw(); $('#qaApprovalMsg').innerHTML = errorBar(e); }
+    };
+    $('#qaApproveAll')?.addEventListener('click', () => approveChecks(qa.filter(q => q.status !== 'not_run' && q.review_hash && !q.review_approval), true));
+    $$('[data-qa-approve]').forEach(b => b.addEventListener('click', () => {
+      const q = qa.find(q => q.check_id === b.dataset.qaApprove);
+      approveChecks([q], !q.review_approval);
+    }));
     const video = $('#pv video');
     const seek = (el) => {
       const time = Number(el.dataset.time);
@@ -1450,7 +1547,7 @@ async function review(epId) {
     $('#qaUndo')?.addEventListener('click', async () => {
       try {
         const v = await api(`/api/editplans/${epId}/qa/repair/${encodeURIComponent(lastRepair.repair_id)}/undo`, { method: 'POST' });
-        plan = v.plan; qa = v.qa; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale; lastRepair = null; draw();
+        plan = v.plan; qa = v.qa; planHash = v.plan_hash; approval = v.approval; finalStale = v.final_render_stale; stale = stale || v.preview_stale; lastRepair = null; draw();
       } catch (e) { $('#qaRepairMsg').innerHTML = errorBar(e); }
     });
     if (!video) return;
@@ -1475,8 +1572,16 @@ async function review(epId) {
     const hardFail = qa.some(q => q.check_id.startsWith('H-') && q.status === 'fail'
       && !(q.check_id === 'H-08' && approval?.stale && !unapprovedText));
     const maxW = capStyle.max_chars_per_line ?? 14, maxCps = capStyle.max_cps ?? 6, maxLines = capStyle.max_lines ?? 1;
+    const dis = hardFail ? 'disabled' : '';
+    const multi = !!me && cands.length > 1;
+    const navItem = (i) => i === meIdx ? { ...cands[i], approval } : cands[i];
     main.innerHTML = `
       <div class="row" style="justify-content:space-between"><h1>確認・修正</h1>
+        ${multi ? `<nav class="row video-nav" aria-label="動画の切り替え">
+          ${meIdx > 0 ? `<fluent-anchor-button size="small" appearance="subtle" id="prevVideo" href="#/ep/${esc(cands[meIdx - 1].candidate.edit_plan_id)}">‹ 前の動画</fluent-anchor-button>` : ''}
+          <label class="caption">動画 ${meIdx + 1} / ${cands.length} <select class="native" id="videoSel" aria-label="確認する動画を選ぶ">${cands.map((x, i) => `<option value="${esc(x.candidate.edit_plan_id)}" ${i === meIdx ? 'selected' : ''}>${i + 1}. ${esc(videoName(x))} — ${videoStatus(navItem(i)).label}</option>`).join('')}</select></label>
+          ${meIdx < cands.length - 1 ? `<fluent-anchor-button size="small" appearance="subtle" id="nextVideo" href="#/ep/${esc(cands[meIdx + 1].candidate.edit_plan_id)}">次の動画 ›</fluent-anchor-button>` : ''}
+        </nav>` : ''}
         <div class="row">${safeToggle()}<fluent-anchor-button href="#/job/${esc(job.id)}" appearance="subtle">候補に戻る</fluent-anchor-button></div></div>
       <div class="grid cols-review with-qa" style="align-items:start">
         <section class="card stack">
@@ -1500,7 +1605,12 @@ async function review(epId) {
           <div class="row"><fluent-button size="small" data-adj="end:-1">終了を1文前へ</fluent-button><fluent-button size="small" data-adj="end:1">終了を1文後へ</fluent-button></div>`}
           <div id="review-approval">${approvalBadge(approval)}</div>
           ${finalStale ? info('編集後のため、本番QA・書き出し結果は失効しています。現在の内容で再承認・再書き出ししてください。', 'warning') : ''}
-          <fluent-button appearance="primary" id="export" ${hardFail ? 'disabled' : ''}>この内容を承認して書き出す（1080×1920）</fluent-button>
+          ${multi ? `<fluent-button appearance="primary" id="approveNext" ${dis}>${nextTodo ? `承認して次の動画へ（${esc(videoName(nextTodo))}）` : '承認して書き出しへ進む'}</fluent-button>
+          <fluent-button id="approveBack" ${dis}>この内容で承認して候補に戻る</fluent-button>
+          <fluent-button appearance="subtle" id="export" ${dis}>この1本だけ今すぐ書き出す（1080×1920）</fluent-button>
+          <p class="caption">承認した動画は「6 書き出し」でほかの動画とまとめて書き出せます。承認したあとに直すと、承認はやり直しになります。</p>`
+          : `<fluent-button appearance="primary" id="export" ${dis}>この内容を承認して書き出す（1080×1920）</fluent-button>
+          ${me ? `<fluent-button id="approveBack" ${dis}>承認だけして候補に戻る</fluent-button>` : ''}`}
           ${hardFail ? '<span class="caption fail">不合格の項目を直すと書き出せます（右の「自動チェック」）</span>' : ''}
           <div id="msg"></div>
         </section>
@@ -1545,7 +1655,7 @@ async function review(epId) {
       video.currentTime = Number.isFinite(video.duration) ? Math.min(time, video.duration) : time;
     }));
     const patch = async (ops) => {
-      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; lastRepair = null; draw(); }
+      try { const r = await api(`/api/editplans/${epId}`, { method: 'PATCH', body: { ops } }); plan = r.plan; qa = r.qa; planHash = r.plan_hash; approval = r.approval; finalStale = r.final_render_stale; stale = stale || r.preview_stale; lastRepair = null; draw(); }
       catch (e) { $('#msg').innerHTML = errorBar(e); }
     };
     $$('input.wd').forEach(inp => inp.addEventListener('change', async () => {
@@ -1577,18 +1687,79 @@ async function review(epId) {
           $('#rpStep').textContent = p.step ?? '';
         } catch { }
       }, 700);
-      try { const r = await api(`/api/editplans/${epId}/preview`, { method: 'POST' }); clearInterval(tick); previewUrl = r.preview_url; stale = false; qa = r.render.qa; draw(); }
+      try {
+        const r = await api(`/api/editplans/${epId}/preview`, { method: 'POST' });
+        clearInterval(tick); previewUrl = r.preview_url; stale = false;
+        const v = await api(`/api/editplans/${epId}`);
+        plan = v.plan; qa = v.qa; planHash = v.plan_hash; approval = v.approval; finalStale = v.final_render_stale; draw();
+      }
       catch (e) { clearInterval(tick); $('#msg').innerHTML = errorBar(e); $('#repreview').removeAttribute('disabled'); }
     });
-    $('#export').addEventListener('click', async () => {
+    const approveThen = async (go) => {
+      const btns = ['#approveNext', '#approveBack', '#export'].map(s => $(s)).filter(Boolean);
+      btns.forEach(b => b.setAttribute('disabled', ''));
+      $('#msg').innerHTML = '';
       try {
-        await api(`/api/jobs/${job.id}/candidates/${encodeURIComponent(me.candidate.id)}/approval`, { method: 'PUT', body: { approved: true } });
-        const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`;
+        // approval is bound to the current plan hash; re-approving an up-to-date approval is skipped
+        if (!approval || approval.stale) {
+          const r = await api(`/api/jobs/${job.id}/candidates/${encodeURIComponent(me.candidate.id)}/approval`, { method: 'PUT', body: { approved: true } });
+          approval = r.approval;
+        }
+        await go();
       }
-      catch (e) { $('#msg').innerHTML = errorBar(e) + (e.detail ? qaList(e.detail) : ''); }
-    });
+      catch (e) { $('#msg').innerHTML = errorBar(e) + (e.detail ? qaList(e.detail) : ''); btns.forEach(b => b.removeAttribute('disabled')); }
+    };
+    $('#videoSel')?.addEventListener('change', (e) => { location.hash = `#/ep/${e.target.value}`; });
+    // re-read the queue after approving: other videos may have been approved since this screen opened
+    $('#approveNext')?.addEventListener('click', () => approveThen(async () => {
+      const next = nextToReview(await api(`/api/jobs/${job.id}/candidates`).catch(() => cands), epId);
+      location.hash = next ? `#/ep/${next.candidate.edit_plan_id}` : `#/job/${job.id}/exports`;
+    }));
+    $('#approveBack')?.addEventListener('click', () => approveThen(() => { location.hash = `#/job/${job.id}`; }));
+    $('#export').addEventListener('click', () => approveThen(async () => {
+      const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`;
+    }));
   };
   draw();
+}
+
+// ---------------- step 6: export the approved videos of one job together ----------------
+async function exportsView(jobId) {
+  const gone = routeGuard();
+  const j = await api(`/api/jobs/${jobId}`);
+  if (gone()) return;
+  if (j.status !== 'ready' && j.status !== 'done') { location.hash = `#/job/${jobId}`; return; }
+  const list = await api(`/api/jobs/${j.id}/candidates`);
+  if (gone()) return;
+  await saveWorkflowState(j.project_id, { step: 'exports', job_id: j.id });
+  setSteps(5, 5, jobStepLinks(j, list));
+  const dur = (x) => x.preview?.duration ?? x.candidate.segments.reduce((a, s) => a + s.t1 - s.t0, 0);
+  main.innerHTML = `
+    <div class="row" style="justify-content:space-between"><h1>書き出し（${list.length}本）</h1>
+      <div class="row"><fluent-anchor-button href="#/job/${esc(j.id)}" appearance="subtle">候補に戻る</fluent-anchor-button></div></div>
+    <p class="caption">承認した動画に印を付けて、まとめて書き出します。まだ承認していない動画は「確認・修正」で内容を確かめて承認してください。</p>
+    ${workProgress(j, list, true)}
+    <div class="stack export-list">
+      ${list.map(x => `
+        <article class="card export-item" aria-label="${esc(videoName(x))}">
+          <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div class="stack" style="gap:2px"><b>${esc(videoName(x))}</b>
+              <span class="headline">${esc(x.candidate.headline || x.candidate.hook_text || '（見出しなし）')}</span>
+              <span class="caption">${fmt(dur(x))}${x.preview_stale ? ' · プレビュー・QAは編集前の結果' : ''}</span></div>
+            <div class="row"><span class="badges">${x.preview_stale ? '' : qaBadges(x.preview?.qa)}</span>
+              <fluent-anchor-button size="small" href="#/ep/${esc(x.candidate.edit_plan_id)}">確認・修正</fluent-anchor-button></div>
+          </div>
+          ${approvalBlock(x, videoName(x))}
+        </article>`).join('')}
+    </div>
+    ${batchBox()}`;
+  wireApprovals(j, list, [5, 5]);
+  // preselect what is ready and not yet exported
+  for (const x of list) {
+    const pick = main.querySelector(`.approval[data-cand="${CSS.escape(x.candidate.id)}"] .exp-pick`);
+    const s = videoStatus(x).key;
+    if (pick && !pick.disabled && s === 'approved') { pick.checked = true; pick.dispatchEvent(new Event('change')); }
+  }
 }
 
 // ---------------- export ----------------
@@ -1605,9 +1776,10 @@ async function exportView(renderId) {
       clearInterval(timer);
       const r = s.render, files = r.outputs;
       const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
-      setSteps(5, 6, { 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}` });
+      const jobId = await api(`/api/editplans/${s.editplan_id}`).then(v => v.plan?.provenance?.job_id).catch(() => null);
+      setSteps(5, 6, { 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}`, ...(jobId ? { 2: `#/job/${jobId}`, 3: `#/job/${jobId}`, 5: `#/job/${jobId}/exports` } : {}) });
       main.innerHTML = `
-        <div class="row" style="justify-content:space-between"><h1>書き出しが完了しました</h1>${safeToggle()}</div>
+        <div class="row" style="justify-content:space-between"><h1>書き出しが完了しました</h1><div class="row">${safeToggle()}${jobId ? `<fluent-anchor-button href="#/job/${esc(jobId)}" appearance="subtle">候補に戻る（ほかの動画を確認）</fluent-anchor-button><fluent-anchor-button href="#/job/${esc(jobId)}/exports" appearance="subtle">書き出し一覧</fluent-anchor-button>` : ''}</div></div>
         ${info(`自動チェック: ハード制約 ${hard.filter(q => q.status === 'pass').length}/${hard.length} 合格（ffprobe / loudnorm / 実測による検証）`, 'success')}
         <div class="grid cols-review" style="align-items:start">
           <section class="card stack">${phone(`/api/renders/${renderId}/files/mp4`)}

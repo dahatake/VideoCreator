@@ -66,7 +66,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | Project | GET / POST `/projects` | 一覧／`{"name":"作業名"}` で作成 |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 詳細（`resume_state` に再開段階と対象IDを返す）／`{"name":"新しい名前"}`／削除 |
 | Project | PUT `/projects/{id}/generation-settings` | パターンと生成オプションをプロジェクトに保存 |
-| Project | PUT `/projects/{id}/workflow-state` | 現在の段階（`project` / `settings` / `job` / `candidates` / `review` / `render`）を保存 |
+| Project | PUT `/projects/{id}/workflow-state` | 現在の段階（`project` / `settings` / `job` / `candidates` / `exports` / `review` / `render`）を保存。`exports` は `job_id` 必須で、Job が `ready` / `done` のときだけ |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`。コピーしない |
 | Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
@@ -87,9 +87,10 @@ dotnet run --project src\VideoCreator.App -c Release
 | Job | GET `/jobs/{id}/events` | SSE（EventSource）、stage・progress等 |
 | 候補 | GET `/jobs/{id}/candidates` | candidate、preview、preview_url、approval、export、final_render_id |
 | 承認 | PUT `/jobs/{id}/candidates/{candidateId}/approval` | `{"approved":true}`／falseで取り消し |
-| 一括 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`。全件事前検証後202 |
+| 一括 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`。全件事前検証後202。不可が1件でもあれば何も始めず、単独の書き出しと同じコード（`E-NOT-APPROVED`・`E-PLAN-STALE`・422 `E-QA-HARDFAIL`・`E-EXPORT-BUSY` のうち最も先に当たったもの）と、候補ごとの `code`・`reason` を返す |
 | 再生成 | POST `/jobs/{id}/regenerate` | instruction、exclude_candidate_ids。前候補を除外して再選定 |
 | 編集 | GET / PATCH `/editplans/{id}` | 計画と計画QA／opsで編集 |
+| QA承認 | PUT `/editplans/{id}/qa/approval` | `plan_hash`、`checks:[{check_id,result_hash}]`、`approved`。結果の確認記録。falseで取り消し |
 | Preview | POST `/editplans/{id}/preview` | その計画のプレビュー再作成 |
 | Preview | GET `/editplans/{id}/preview/progress` | running、progress、step |
 | 直接出力 | POST `/editplans/{id}/render` | 計画QAを確認して単独書き出し受付 |
@@ -100,6 +101,8 @@ dotnet run --project src\VideoCreator.App -c Release
 | Media | GET `/media/{renderId}` | 主にプレビュー動画。Range対応 |
 
 BGM multipartの権利確認等は[Api.csの実装](../src/VideoCreator.App/Api.cs)を参照してください。パスを渡すAPIやOSダイアログは単一ローカルユーザー向けで、リモート操作の汎用契約ではありません。
+
+QA承認のハッシュは編集計画のGET応答の `plan_hash` と各QA項目の `review_hash` を使います。個別は1項目、一括は実施済み・未承認の全項目を送ります。承認状態は `review_approval` に返ります。空・重複・未知・未実施の項目は422、計画や結果が変わっていれば409で、部分保存はしません。判定やテロップ・カード・候補の承認状態は変更しません。
 
 ## Job.Options
 

@@ -79,7 +79,17 @@ app.Lifetime.ApplicationStarted.Register(() =>
     var url = $"http://127.0.0.1:{options.Port}/";
     app.Logger.LogInformation("VideoCreator is running at {Url}", url);
     if (options.OpenBrowser && OperatingSystem.IsWindows())
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    {
+        try
+        {
+            using var browser = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            app.Logger.LogInformation("Opened {Url} in the default web browser", url);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            app.Logger.LogWarning(ex, "Could not open the default web browser. Open {Url} manually", url);
+        }
+    }
 });
 app.Run();
 

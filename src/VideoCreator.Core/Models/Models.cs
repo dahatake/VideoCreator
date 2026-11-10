@@ -212,7 +212,7 @@ public static class EditPlanFingerprint
 {
     /// <summary>SHA-256 of the plan's canonical JSON: every edit (telops, cuts, BGM, inserts…) changes it.</summary>
     public static string Of(EditPlan plan) =>
-        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Serialize(plan))));
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Json.Serialize(plan with { QaApprovals = null }))));
 }
 
 // ---- Series (前編/後編): a long source edited into consecutive parts of a user-chosen length ----
@@ -367,6 +367,8 @@ public sealed record EditPlan
     public SeriesInfo? Series { get; init; }
     /// <summary>Opening / closing videos and scene-change cards placed between timeline clips. Telops, SFX and chapters stay on the BODY timeline; see Planning.InsertMap.</summary>
     public List<Insert> Inserts { get; init; } = [];
+    /// <summary>Review acknowledgements, excluded from the rendered-content fingerprint.</summary>
+    public List<QaCheckApproval>? QaApprovals { get; init; }
     /// <summary>Length of the edited body (the timeline) — what the preset's duration range applies to.</summary>
     public double Duration => Timeline.Sum(c => c.Length);
     /// <summary>Length of the rendered file: body + enabled inserts.</summary>
@@ -523,6 +525,8 @@ public sealed record Job
 
 public enum QaStatus { Pass, Warn, Fail, NotRun }
 
+public sealed record QaCheckApproval(string CheckId, string PlanHash, string ResultHash, DateTimeOffset At, string By);
+
 public sealed record QaResult(string CheckId, QaStatus Status, string Measured, string Threshold, string Message)
 {
     public bool Hard => CheckId.StartsWith("H-", StringComparison.Ordinal);
@@ -532,6 +536,8 @@ public sealed record QaResult(string CheckId, QaStatus Status, string Measured, 
     public List<QaItem>? Items { get; init; }
     /// <summary>Recommended fix for a Warn/Fail result (Qa.QaAdvice).</summary>
     public QaAdvice? Advice { get; init; }
+    public string? ReviewHash { get; init; }
+    public QaCheckApproval? ReviewApproval { get; init; }
 }
 
 /// <summary>One finding. Target is a telop / insert / clip id (Kind says which); Start/End are seconds in the rendered file (inserts included).</summary>

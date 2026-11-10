@@ -36,6 +36,7 @@ try {
       preview: { qa: qa() }, preview_stale: stale, approval: approval(), final_render_stale: stale,
     }] });
     if (path === '/api/projects/p-at') return route.fulfill({ json: { assets: [{ id: 'a', path: 'source.mp4' }] } });
+    if (path === '/api/projects/p-at/workflow-state') return route.fulfill({ json: {} });
     if (path === '/api/assets/a/transcript') return route.fulfill({ json: transcript });
     if (path === '/api/bgm') return route.fulfill({ json: [] });
     if (path === '/api/editplans/ep-at') {
