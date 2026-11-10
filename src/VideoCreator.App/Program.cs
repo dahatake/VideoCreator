@@ -77,7 +77,7 @@ _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     var url = $"http://127.0.0.1:{options.Port}/";
-    app.Logger.LogInformation("VideoCreator is running at {Url}", url);
+    app.Logger.LogInformation("VideoCreator {Version} is running at {Url}", AppVersion.InformationalVersion, url);
     if (options.OpenBrowser && OperatingSystem.IsWindows())
     {
         try

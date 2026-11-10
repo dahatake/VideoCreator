@@ -124,6 +124,42 @@ dotnet run --project src/VideoCreator.App -c Release
 | `DataDir` / `ProjectsDir` | `%LOCALAPPDATA%\VideoCreator` / `ビデオ\VideoCreator` | データベース・キャッシュ / プロジェクトと書き出し先（`ProjectsDir` は［設定］画面で変更でき、画面で選んだ値が優先されます） |
 | `Dictionary` | [] | 固有名詞（書き起こしのフレーズリストとテロップの事実確認に使用） |
 
+## バージョン管理
+
+アプリのバージョンはルートの [Directory.Build.props](Directory.Build.props) の
+`VersionPrefix` だけで管理します。App / Core のアセンブリ、`dotnet build` / `dotnet publish`
+の成果物に共通で適用されます。画面の［設定］の「アプリのバージョン」、
+`GET /api/health` の `version`、起動ログから確認できます。
+`informational_version` と画面の「ビルド情報」には、Gitからビルドした場合は
+.NET SDKが付与するコミット識別子（`+...`）も含まれます。未コミットの変更内容までは識別しません。
+
+更新は Semantic Versioning（`MAJOR.MINOR.PATCH`）に従い、互換性を壊す変更は MAJOR、
+互換性のある機能追加は MINOR、修正は PATCH を上げます。
+`ui/package.json` のバージョンは非公開のUIビルドツール用で、アプリのバージョンではありません。
+プリセットや保存データのスキーマのバージョンも独立です。
+
+リリース時の手順:
+
+1. `Directory.Build.props` の `VersionPrefix` を更新します。各 `.csproj` への重複指定はしません。
+2. 次のテストとビルドを実行し、設定画面と `/api/health` の値を確認します。
+3. 変更をコミットした後、そのコミットに `v<version>`（例: `v1.0.0`）タグを付けます。
+   タグは記録用で、バージョンを自動変更しません。公開済みタグは付け替えません。
+
+```powershell
+dotnet test --project tests\VideoCreator.Tests --filter-class "*VersionTests"
+dotnet build src\VideoCreator.App -c Release
+# 起動中のアプリのAPIと設定画面をEdgeで検証（uiの依存関係が必要）
+node ui\verify-version.mjs http://127.0.0.1:8765 1.0.0
+# 必要な場合のみ配布用成果物を生成
+dotnet publish src\VideoCreator.App -c Release
+# プレリリースの例（正式版は VersionSuffix を指定しない）
+dotnet build src\VideoCreator.App -c Release -p:VersionSuffix=rc.1
+```
+
+アセンブリとファイルの数値バージョンはSDK標準の `MAJOR.MINOR.PATCH.0`、
+表示・製品バージョンは `MAJOR.MINOR.PATCH[-suffix][+commit]` です。
+プレリリース検証後は、通常のビルドを再実行して正式版の成果物に戻してください。
+
 ## テスト
 
 ```powershell

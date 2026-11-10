@@ -140,6 +140,8 @@ public static class Api
 
         api.MapGet("/health", async (Runtime rt) => Results.Json(new
         {
+            version = AppVersion.Version,
+            informational_version = AppVersion.InformationalVersion,
             ffmpeg = await rt.Ff.VersionAsync(),
             missing_filters = await rt.Ff.MissingFiltersAsync(),
             asr = rt.Asr?.Name ?? "none",

@@ -154,7 +154,7 @@ $('#settings-btn').addEventListener('click', async () => {
     <fluent-divider style="margin:16px 0"></fluent-divider>
     ${projectsDirSection(pd)}
     <fluent-divider style="margin:16px 0"></fluent-divider>
-    <dl class="facts"><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>不足フィルタ</dt><dd>${esc(h.missing_filters.join(', ') || 'なし')}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? '未検出')}</dd><dt>パターン数</dt><dd>${h.presets}</dd></dl>`;
+    <dl class="facts"><dt>アプリのバージョン</dt><dd id="app-version">${esc(h.version)}</dd><dt>ビルド情報</dt><dd>${esc(h.informational_version)}</dd><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>不足フィルタ</dt><dd>${esc(h.missing_filters.join(', ') || 'なし')}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? '未検出')}</dd><dt>パターン数</dt><dd>${h.presets}</dd></dl>`;
   wireProjectsDir(pd);
   $('#llm')?.addEventListener('change', async () => {
     const radios = $$('#llm fluent-radio');
