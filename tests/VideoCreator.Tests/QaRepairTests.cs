@@ -404,6 +404,37 @@ public sealed class QaRepairTests
         Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "H-11").Status);
     }
 
+    [Fact]
+    public async Task H11_rebinds_the_shortest_matching_words_inside_a_mixed_speaker_sentence()
+    {
+        var words = new[]
+        {
+            new Word("w0", 1, 1.4, "前置き、", 2),
+            new Word("w1", 1.4, 1.8, "A社", 1),
+            new Word("w2", 1.8, 2.1, "は", 1),
+            new Word("w3", 2.1, 2.5, "100万円", 1),
+            new Word("w4", 2.5, 2.9, "です。", 2),
+        };
+        var tr = new Transcript
+        {
+            Provider = "fixed", Duration = 30, Words = words.ToList(),
+            Sentences = [new Sentence(0, 1, 2.9, "前置き、A社は100万円です。", 1, 0, 4)],
+        };
+        var ctx = Ctx(Plan(T("e1", TelopType.Headline, 1.4, 2.5, "A社100万円")) with
+        {
+            Timeline = [new Clip { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 30 }],
+        }, tr);
+
+        Assert.Equal(QaStatus.Fail, Check(ctx, "H-11").Status);
+        var shown = QaRepair.Assess(ctx, QaEngine.PlanChecks(ctx), llm: false).Single(q => q.CheckId == "H-11");
+        Assert.Equal(("rule", 1), (shown.Advice!.Repair, shown.Advice.Fixable));
+        var r = await QaRepair.RunAsync(ctx, ["H-11"], null, Ct);
+
+        Assert.Equal(("H-11", "rule", false), (Assert.Single(r.Changes).CheckId, r.Changes[0].Method, r.Changes[0].NeedsApproval));
+        Assert.Equal(["w1", "w2", "w3"], r.Plan.Telops.Single().SourceWordIds);
+        Assert.Equal(QaStatus.Pass, r.After.Single(q => q.CheckId == "H-11").Status);
+    }
+
     [Fact] // H-10 rule: a hand edit that brought a hidden word back is masked again
     public async Task Leaked_mask_word_is_masked_by_rule()
     {

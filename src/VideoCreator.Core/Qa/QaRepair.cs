@@ -24,6 +24,7 @@ public static class QaRepair
 規則:
 - 発話（文字起こし）に出てこない数字・固有名詞・事実を足さない。数字と単位と対象の組み合わせは発話どおりにする
 - 発話の否定（〜ない、〜ません など）を落とさない
+- H-11 の修正では、根拠発話にある連続した語句をそのまま使い、言い換えない。根拠に結び付けられない場合は元の文字を返す
 - 字幕は修正対象外。演出テロップ・カードだけを、読みやすさと見た目を優先して修正する
 - 字数の上限を守る
 - 直せない場合は元の文字をそのまま返す
@@ -402,7 +403,7 @@ public static class QaRepair
     static Proposal? BindProposal(EditPlan plan, QaContext ctx, QaItem item)
     {
         if (plan.Telops.FirstOrDefault(t => t.Id == item.Target) is not { } t || !TelopGrounding.Applies(t)) return null;
-        var bound = TelopGrounding.Bind(t with { SourceWordIds = [] }, plan.Timeline, ctx.Transcript);
+        var bound = TelopGrounding.Bind(t with { SourceWordIds = [] }, plan.Timeline, ctx.Transcript, ctx.Dictionary, plan.Series);
         if (bound.SourceWordIds.Count == 0 || bound.SourceWordIds.SequenceEqual(t.SourceWordIds)
             || TelopGrounding.Problems(bound, plan.Timeline, ctx.Transcript, ctx.Dictionary, plan.Series).Count > 0) return null;
         string Words(Telop x) => string.Concat(ctx.Transcript.Words.Where(w => x.SourceWordIds.Contains(w.Id)).Select(w => w.Text));
@@ -690,7 +691,7 @@ public static class QaRepair
                 default:
                     var kept = t with { Text = s, Approved = false };
                     var cand = TelopGrounding.Problems(kept, plan.Timeline, ctx.Transcript, ctx.Dictionary, plan.Series).Count == 0 && !TelopGrounding.NegationDropped(kept, plan.Timeline, ctx.Transcript)
-                        ? kept : TelopGrounding.Bind(kept with { SourceWordIds = [] }, plan.Timeline, ctx.Transcript);
+                        ? kept : TelopGrounding.Bind(kept with { SourceWordIds = [] }, plan.Timeline, ctx.Transcript, ctx.Dictionary, plan.Series);
                     if (TelopGrounding.Problems(cand, plan.Timeline, ctx.Transcript, ctx.Dictionary, plan.Series).Count > 0) return (null, "修正案を根拠発話で確認できませんでした");
                     if (TelopGrounding.NegationDropped(cand, plan.Timeline, ctx.Transcript)) return (null, "修正案で否定が抜けています");
                     return (new(check, item, "ai", SetTelop(plan, t.Id, _ => cand), t.Text, s, true), null);

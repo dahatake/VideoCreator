@@ -57,19 +57,45 @@ public static partial class TelopGrounding
         return problems;
     }
 
-    public static Telop Bind(Telop t, IReadOnlyList<Clip> clips, Transcript tr)
+    public static Telop Bind(Telop t, IReadOnlyList<Clip> clips, Transcript tr, IEnumerable<string>? dictionary = null, SeriesInfo? series = null)
     {
         if (!Applies(t) || t.SourceWordIds.Count > 0) return t;
+        var claim = Canonical(t.Text);
+        if (claim.Length == 0) return t;
+        var mapped = TelopBuilder.MapWords(clips, tr);
+        var candidates = new List<(Telop Telop, double Distance, int WordCount, double Start)>();
         foreach (var sentence in tr.Sentences)
         {
-            var words = tr.Words.Skip(sentence.FirstWord).Take(sentence.LastWord - sentence.FirstWord + 1)
-                .Where(w => clips.Any(c => w.T0 >= c.MasterIn - 0.15 && w.T1 <= c.MasterOut + 0.15)).ToList();
-            if (words.Count == 0) continue;
-            var bound = t with { SourceWordIds = words.Select(w => w.Id).ToList() };
-            if (Problems(bound, clips, tr).Count == 0 && Canonical(string.Concat(words.Select(w => w.Text))).Contains(Canonical(t.Text), StringComparison.Ordinal))
-                return bound;
+            var sentenceWords = tr.Words.Skip(sentence.FirstWord).Take(sentence.LastWord - sentence.FirstWord + 1).ToList();
+            for (var clipIndex = 0; clipIndex < clips.Count; clipIndex++)
+            {
+                var clip = clips[clipIndex];
+                for (var first = 0; first < sentenceWords.Count; first++)
+                {
+                    if (!Inside(sentenceWords[first], clip)) continue;
+                    var source = new StringBuilder();
+                    for (var last = first; last < sentenceWords.Count && Inside(sentenceWords[last], clip); last++)
+                    {
+                        source.Append(sentenceWords[last].Text);
+                        if (!Canonical(source.ToString()).Contains(claim, StringComparison.Ordinal)) continue;
+                        var words = sentenceWords.Skip(first).Take(last - first + 1).ToList();
+                        var bound = t with { SourceWordIds = words.Select(w => w.Id).ToList() };
+                        if (Problems(bound, clips, tr, dictionary, series).Count > 0) continue;
+                        var firstMapped = mapped.FirstOrDefault(m => m.ClipIndex == clipIndex && m.Word.Id == words[0].Id);
+                        var lastMapped = mapped.FirstOrDefault(m => m.ClipIndex == clipIndex && m.Word.Id == words[^1].Id);
+                        if (firstMapped == null || lastMapped == null) continue;
+                        candidates.Add((bound, Distance(firstMapped.Start, lastMapped.End, t.Start, t.End), words.Count, firstMapped.Start));
+                        break;
+                    }
+                }
+            }
         }
-        return t;
+        return candidates.OrderBy(x => x.Distance).ThenBy(x => x.WordCount).ThenBy(x => x.Start)
+            .Select(x => x.Telop).FirstOrDefault() ?? t;
+
+        static bool Inside(Word word, Clip clip) => word.T0 >= clip.MasterIn - 0.15 && word.T1 <= clip.MasterOut + 0.15;
+        static double Distance(double start, double end, double targetStart, double targetEnd) =>
+            end < targetStart ? targetStart - end : targetEnd < start ? start - targetEnd : 0;
     }
 
     public static bool NegationDropped(Telop t, IReadOnlyList<Clip> clips, Transcript tr) =>
