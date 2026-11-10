@@ -1255,6 +1255,7 @@ function batchBox() {
   </section>`;
 }
 function wireApprovals(j, list, steps = [3, 3]) {
+  const gone = routeGuard();
   const items = new Map(list.map(x => [x.candidate.id, x]));
   const key = `exportBatch:${j.id}`;
   let batch = JSON.parse(sessionStorage.getItem(key) ?? '[]'); // render ids of the last batch started here
@@ -1305,6 +1306,15 @@ function wireApprovals(j, list, steps = [3, 3]) {
       : e?.state === 'cancelled' ? `書き出しを取り消しました。${last ? ` 前回の ${last}` : ''}`
       : x.final_render_stale ? '<span class="warnc">編集後のため、本番QA・書き出し結果は失効しています。</span>'
       : last ? `書き出し済み: ${last}` : '');
+    const result = el.closest('.export-item')?.querySelector('.export-result');
+    if (result) {
+      const id = x.final_render_stale ? '' : x.final_render_id ?? '';
+      if (result.dataset.render !== id) {
+        result.dataset.render = id;
+        result.innerHTML = id ? '<div class="stack artifact-body"></div>' : '';
+        if (id) exportArtifacts(id, result.firstElementChild);
+      }
+    }
   };
   const showBatch = () => {
     const xs = [...items.values()].filter(x => x.export && batch.includes(x.export.render_id));
@@ -1324,6 +1334,7 @@ function wireApprovals(j, list, steps = [3, 3]) {
   };
   const refresh = async () => {
     const fresh = await api(`/api/jobs/${j.id}/candidates`);
+    if (gone()) return;
     for (const x of fresh) { items.set(x.candidate.id, x); show(x); }
     showBatch(); updateButton(); renderProgress();
     if ([...items.values()].some(active) && !timer) timer = setInterval(() => refresh().catch(() => { }), 1000);
@@ -1814,6 +1825,7 @@ async function exportsView(jobId) {
   const list = await api(`/api/jobs/${j.id}/candidates`);
   if (gone()) return;
   await saveWorkflowState(j.project_id, { step: 'exports', job_id: j.id });
+  if (gone()) return;
   setSteps(5, 5, jobStepLinks(j, list));
   const dur = (x) => x.preview?.duration ?? x.candidate.segments.reduce((a, s) => a + s.t1 - s.t0, 0);
   main.innerHTML = `
@@ -1832,6 +1844,7 @@ async function exportsView(jobId) {
               <fluent-anchor-button size="small" href="#/ep/${esc(x.candidate.edit_plan_id)}">確認・修正</fluent-anchor-button></div>
           </div>
           ${approvalBlock(x, videoName(x))}
+          <div class="export-result" data-render=""></div>
         </article>`).join('')}
     </div>
     ${batchBox()}`;
@@ -1844,8 +1857,115 @@ async function exportsView(jobId) {
   }
 }
 
+// ---------------- actual exported files (shared by the list and the single-export screen) ----------------
+async function copySnippet(text, button, feedback, field) {
+  button.disabled = true;
+  try {
+    await navigator.clipboard.writeText(text);
+    feedback.innerHTML = info('コピーしました。貼り付け先で Ctrl+V を押してください。', 'success');
+  } catch {
+    if (field) { field.focus(); field.select(); }
+    feedback.innerHTML = info('クリップボードにコピーできませんでした。テキストを選択して Ctrl+C でコピーしてください。', 'warning');
+  } finally { button.disabled = false; }
+}
+
+async function exportArtifacts(renderId, box) {
+  box.innerHTML = '<p class="caption" role="status">書き出したファイルを確認しています…</p>';
+  const base = `/api/renders/${encodeURIComponent(renderId)}`;
+  let result;
+  try { result = await api(`${base}/artifacts`); }
+  catch (e) {
+    if (!box.isConnected) return;
+    box.innerHTML = `${errorBar(e)}<fluent-button class="artifact-retry">成果物を再読み込み</fluent-button>`;
+    $('.artifact-retry', box).addEventListener('click', () => exportArtifacts(renderId, box));
+    return;
+  }
+  if (!box.isConnected) return;
+  const names = { mp4: '完成動画', srt: '字幕（SRT）', ass: '字幕・演出（ASS）', editplan: '編集計画（JSON）', metadata: '投稿用メタデータ', post: '投稿文データ（JSON）' };
+  const fileUrl = key => `${base}/files/${encodeURIComponent(key)}`;
+  box.innerHTML = `
+    <div class="grid artifact-layout">
+      <section class="stack artifact-video">
+        <div class="row"><h3>書き出した動画のプレビュー</h3>${safeToggle()}</div>
+        <p class="caption">編集用の低解像度プレビューではなく、保存済みの完成動画です。</p>
+        ${result.available ? phone(`/api/media/${encodeURIComponent(renderId)}`) : info('動画ファイルが見つかりません。保存先を確認してください。', 'warning')}
+        <div class="video-feedback" role="status"></div>
+        <label class="stack">動画ファイルの保存先
+          <textarea class="artifact-path" rows="3" readonly aria-label="動画ファイルの保存先">${esc(result.path)}</textarea></label>
+        <div class="row"><fluent-button class="path-copy">パスをコピー</fluent-button>
+          <fluent-button class="folder-open" appearance="primary" ${result.available ? '' : 'disabled'}>フォルダーを開く</fluent-button></div>
+        <div class="artifact-feedback" role="status"></div>
+      </section>
+      <section class="stack artifact-post"><h3>投稿用の文章（コピーして貼り付け）</h3>
+        <div class="post-body stack"></div>
+      </section>
+    </div>
+    <details class="artifact-files"><summary>その他の成果物（${result.files.length} 件）・プレビュー</summary>
+      <div class="stack">${result.files.map(f => `
+        <section class="artifact-file stack" data-key="${esc(f.key)}">
+          <div class="row"><b>${esc(names[f.key] ?? (f.key.startsWith('thumb') ? `サムネイル候補 ${f.key.slice(5)}` : f.key))}</b>
+            ${f.available ? `<a href="${fileUrl(f.key)}" target="_blank" rel="noopener">開く</a><a href="${fileUrl(f.key)}" download="${esc(f.path.split(/[\\/]/).pop())}">保存</a>` : '<span class="fail">ファイルが見つかりません</span>'}</div>
+          <code class="artifact-file-path">${esc(f.path)}</code>
+          ${!f.available ? '' : f.preview_type === 'image' ? `<a href="${fileUrl(f.key)}" target="_blank" rel="noopener"><img class="artifact-image" src="${fileUrl(f.key)}" loading="lazy" alt="${esc(names[f.key] ?? f.key)}"></a><div class="image-feedback" role="status"></div>`
+            : f.preview_type === 'text' ? '<details class="text-preview"><summary>内容をプレビュー</summary><div class="preview-body"></div></details>'
+            : f.preview_type === 'video' ? '<p class="caption">上の動画プレイヤーで確認できます。</p>' : '<p class="caption">この形式のプレビューはありません。「開く」または「保存」を使ってください。</p>'}
+        </section>`).join('')}</div>
+    </details>`;
+  const feedback = $('.artifact-feedback', box), path = $('.artifact-path', box);
+  $('.path-copy', box).addEventListener('click', e => copySnippet(path.value, e.currentTarget, feedback, path));
+  $('.folder-open', box).addEventListener('click', async e => {
+    const button = e.currentTarget;
+    button.disabled = true;
+    try {
+      await api(`${base}/open-folder`, { method: 'POST' });
+      if (box.isConnected) feedback.innerHTML = info('エクスプローラーに保存先を開くよう依頼しました。', 'success');
+    } catch (err) { if (box.isConnected) feedback.innerHTML = errorBar(err); }
+    finally { button.disabled = false; }
+  });
+  const video = $('video', box);
+  if (video) { video.classList.add('final-video'); video.setAttribute('aria-label', '書き出した完成動画'); }
+  wireSafeToggle(box);
+  video?.addEventListener('error', () => {
+    if (!video.isConnected) return;
+    $('.video-feedback', box).innerHTML = info('動画を再生できませんでした。ファイルの有無・対応形式を確認し、成果物を再読み込みしてください。', 'warning');
+  });
+  $$('.artifact-image', box).forEach(img => img.addEventListener('error', () => {
+    if (!img.isConnected) return;
+    $('.image-feedback', img.closest('.artifact-file')).innerHTML = info('画像を読み込めませんでした。「開く」で保存済みファイルを確認してください。', 'warning');
+  }));
+  $$('.text-preview', box).forEach(details => details.addEventListener('toggle', async () => {
+    if (!details.open || details.dataset.loaded) return;
+    details.dataset.loaded = 'true';
+    const body = $('.preview-body', details);
+    body.textContent = '読み込んでいます…';
+    try {
+      const preview = await api(`${fileUrl(details.closest('.artifact-file').dataset.key)}/preview`);
+      if (!body.isConnected) return;
+      body.innerHTML = `<pre class="artifact-text"></pre>${preview.truncated ? info('先頭65,536文字のみ表示しています。全文は「開く」または「保存」で確認してください。') : ''}`;
+      $('pre', body).textContent = preview.text;
+    } catch (err) {
+      if (!body.isConnected) return;
+      body.innerHTML = errorBar(err);
+      delete details.dataset.loaded;
+    }
+  }));
+  const postBody = $('.post-body', box);
+  const loadPost = () => postPanel(renderId, postBody);
+  if (result.files.some(f => f.key === 'post' && f.available)) loadPost();
+  else {
+    postBody.innerHTML = `<p class="caption">投稿文はまだ生成されていないか、ファイルが見つかりません。</p><fluent-button class="post-create">投稿用の文章を作る</fluent-button>`;
+    $('.post-create', postBody).addEventListener('click', loadPost);
+  }
+  const reload = document.createElement('fluent-button');
+  reload.textContent = '成果物を再読み込み';
+  reload.className = 'artifact-reload';
+  reload.addEventListener('click', () => exportArtifacts(renderId, box));
+  box.append(reload);
+}
+
 // ---------------- posting texts (YouTube / Viva Engage / chapters) ----------------
 async function postPanel(renderId, box, regenerate = false) {
+  box.innerHTML = '<p class="caption" role="status">投稿用の文章を読み込んでいます…</p>';
   let k;
   try { k = await api(`/api/renders/${renderId}/post`, regenerate ? { method: 'POST' } : {}); }
   catch (e) { if (box.isConnected) box.innerHTML = errorBar(e); return; }
@@ -1857,29 +1977,28 @@ async function postPanel(renderId, box, regenerate = false) {
         <div class="row"><span class="caption post-count" data-limit="${limit ?? ''}"></span>
           <fluent-button class="post-copy" data-key="${key}" size="small" appearance="primary">コピー</fluent-button></div></div>
       ${hint ? `<p class="caption" style="margin:0">${esc(hint)}</p>` : ''}
-      <textarea class="post-text" data-key="${key}" rows="${Math.min(18, Math.max(4, text.split('\n').length + 1))}" aria-label="${esc(title)}" spellcheck="false" style="width:100%;box-sizing:border-box;font:inherit;resize:vertical">${esc(text)}</textarea>
+      <textarea class="post-text" data-key="${key}" rows="${Math.min(12, Math.max(4, text.split('\n').length + 1))}" aria-label="${esc(title)}" readonly spellcheck="false" style="width:100%;box-sizing:border-box;font:inherit;resize:vertical">${esc(text)}</textarea>
+      <div class="post-feedback" role="status"></div>
     </div>`;
   box.innerHTML = `
-    <p class="caption">${k.source === 'ai' ? 'AI が書き起こしをもとに作った案です（発話にない数字・名前は自動で除いています）。' : 'ひな形から作った案です。'}投稿前に内容を確認し、必要なら直してからコピーしてください。</p>
+    <p class="caption">${k.source === 'ai' ? 'AI が書き起こしをもとに作った案です（発話にない数字・名前は自動で除いています）。' : 'ひな形から作った案です。'}保存済みの文章を表示しています。投稿前に内容を確認し、修正は貼り付け先で行ってください。</p>
     ${(k.notes ?? []).length ? `<fluent-message-bar intent="warning" layout="multiline"><ul class="notes" style="margin:0">${k.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></fluent-message-bar>` : ''}
     ${block('youtube', 'YouTube の説明文', k.youtube, 5000, '説明欄にそのまま貼り付けます。最初の1〜2行が「もっと見る」の前に表示されます。')}
     ${block('engage', 'Viva Engage の投稿', k.engage, 10000, '社内向けの投稿文です。動画を添付して貼り付けます。')}
     ${k.chapters ? block('chapters', 'チャプター（タイムコード）', k.chapters, null, '書き出した動画の実際の時刻です（オープニング・カードの分も反映）。YouTube の説明欄に入れるとチャプターになります。') : `<p class="caption">チャプター: YouTube の条件（00:00 から・3つ以上・各10秒以上）を満たさないため付けません。</p>`}
-    <div class="row"><fluent-button id="postAgain" appearance="subtle">別の案を作る</fluent-button></div>`;
+    <div class="row"><fluent-button class="post-again" appearance="subtle">別の案を作る</fluent-button>
+      <a href="/api/renders/${encodeURIComponent(renderId)}/files/post" target="_blank" rel="noopener">投稿文データ（JSON）を開く</a></div>`;
   const count = (ta) => {
     const c = ta.closest('.post-block').querySelector('.post-count'), lim = Number(c.dataset.limit);
     c.textContent = `${ta.value.length.toLocaleString()} 文字${lim ? ` / ${lim.toLocaleString()}` : ''}`;
     c.style.color = lim && ta.value.length > lim ? 'var(--colorPaletteRedForeground1, #c50f1f)' : '';
   };
-  $$('.post-text', box).forEach(ta => { count(ta); ta.addEventListener('input', () => count(ta)); });
+  $$('.post-text', box).forEach(count);
   $$('.post-copy', box).forEach(b => b.addEventListener('click', async () => {
     const ta = $(`.post-text[data-key="${b.dataset.key}"]`, box);
-    try { await navigator.clipboard.writeText(ta.value); }
-    catch { ta.select(); document.execCommand('copy'); }
-    b.textContent = 'コピーしました';
-    setTimeout(() => { b.textContent = 'コピー'; }, 1500);
+    await copySnippet(ta.value, b, $('.post-feedback', ta.closest('.post-block')), ta);
   }));
-  $('#postAgain', box).addEventListener('click', () => {
+  $('.post-again', box).addEventListener('click', () => {
     box.innerHTML = '<p class="caption" aria-live="polite">別の案を作っています…</p>';
     postPanel(renderId, box, true);
   });
@@ -1887,43 +2006,32 @@ async function postPanel(renderId, box, regenerate = false) {
 
 // ---------------- export ----------------
 async function exportView(renderId) {
+  const gone = routeGuard();
   setSteps(5);
   let timer = null, finished = false, workflowSaved = false;
   const stop = () => { finished = true; clearInterval(timer); };
+  cleanup = stop;
   const poll = async () => {
     const s = await api(`/api/renders/${renderId}`);
-    if (finished) return;   // an earlier poll already showed the result; re-rendering would wipe the post texts
+    if (finished || gone()) return;   // an earlier poll already showed the result; re-rendering would wipe the post texts
     if (!workflowSaved && s.project_id) {
       await saveWorkflowState(s.project_id, { step: 'render', edit_plan_id: s.editplan_id, render_id: renderId });
+      if (finished || gone()) return;
       workflowSaved = true;
     }
     if (s.state === 'done') {
       stop();
-      const r = s.render, files = r.outputs;
+      const r = s.render;
       const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
       const jobId = await api(`/api/editplans/${s.editplan_id}`).then(v => v.plan?.provenance?.job_id).catch(() => null);
+      if (gone()) return;
       setSteps(5, 6, { 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}`, ...(jobId ? { 2: `#/job/${jobId}`, 3: `#/job/${jobId}`, 5: `#/job/${jobId}/exports` } : {}) });
       main.innerHTML = `
-        <div class="row" style="justify-content:space-between"><h1>書き出しが完了しました</h1><div class="row">${safeToggle()}${jobId ? `<fluent-anchor-button href="#/job/${esc(jobId)}" appearance="subtle">候補に戻る（ほかの動画を確認）</fluent-anchor-button><fluent-anchor-button href="#/job/${esc(jobId)}/exports" appearance="subtle">書き出し一覧</fluent-anchor-button>` : ''}</div></div>
+        <div class="row" style="justify-content:space-between"><h1>書き出しが完了しました</h1><div class="row">${jobId ? `<fluent-anchor-button href="#/job/${esc(jobId)}" appearance="subtle">候補に戻る（ほかの動画を確認）</fluent-anchor-button><fluent-anchor-button href="#/job/${esc(jobId)}/exports" appearance="subtle">書き出し一覧</fluent-anchor-button>` : ''}</div></div>
         ${info(`自動チェック: ハード制約 ${hard.filter(q => q.status === 'pass').length}/${hard.length} 合格（ffprobe / loudnorm / 実測による検証）`, 'success')}
-        <div class="grid cols-review" style="align-items:start">
-          <section class="card stack">${phone(`/api/renders/${renderId}/files/mp4`)}
-            <fluent-button id="open" appearance="primary">フォルダを開く</fluent-button>
-            <p class="caption">${esc(r.path)}</p></section>
-          <section class="card stack">
-            <h2>ファイル</h2>
-            <ul>${Object.entries(files).filter(([k]) => !k.startsWith('thumb') && k !== 'post').map(([k, f]) => `<li><a href="/api/renders/${renderId}/files/${esc(k)}" target="_blank" rel="noopener">${esc(f.split(/[\\/]/).pop())}</a></li>`).join('')}</ul>
-            <h3>サムネイル候補</h3>
-            <div class="thumbs">${Object.keys(files).filter(k => k.startsWith('thumb')).map(k => `<a href="/api/renders/${renderId}/files/${k}" target="_blank" rel="noopener"><img src="/api/renders/${renderId}/files/${k}" alt="サムネイル候補 ${k.slice(5)}"></a>`).join('')}</div>
-            <h3>自動チェック（QA）</h3>
-            <div>${qaList(r.qa)}</div>
-            <p class="caption">投稿用のタイトル候補などは「.metadata.md」にもあります。投稿前に内容を確認してください。</p>
-          </section>
-        </div>
-        <section class="card stack" id="post" aria-labelledby="postH"><h2 id="postH">投稿用の文章（コピーして貼り付け）</h2><div id="postBody"><p class="caption" aria-live="polite">文章を作っています…</p></div></section>`;
-      wireSafeToggle();
-      $('#open').addEventListener('click', () => api(`/api/renders/${renderId}/open-folder`, { method: 'POST' }).catch(() => { }));
-      postPanel(renderId, $('#postBody'));
+        <section class="card stack artifact-body"></section>
+        <section class="card stack"><h2>自動チェック（QA）</h2>${qaList(r.qa)}</section>`;
+      exportArtifacts(renderId, $('.artifact-body'));
     } else if (s.state === 'cancelled') {
       stop();
       main.innerHTML = `<h1>書き出しを取り消しました</h1>${info(s.message ?? '書き出しを取り消しました')}
@@ -1951,8 +2059,9 @@ async function exportView(renderId) {
     }
   };
   await poll();
-  if (!finished) timer = setInterval(() => poll().catch(() => { }), 1000);
-  cleanup = () => clearInterval(timer);
+  if (!finished && !gone()) timer = setInterval(() => poll().catch(e => {
+    if (!finished && !gone()) { stop(); main.innerHTML = errorBar(e); }
+  }), 1000);
 }
 
 refreshProvider();

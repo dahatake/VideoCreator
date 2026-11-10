@@ -279,31 +279,34 @@ public sealed class QaEngine(FFmpeg ff)
         return new("S-15", ok ? QaStatus.Pass : QaStatus.Warn, $"{ld}（下位10% {Math.Min(m.LdP10, 99):0.0} LU・{m.SpeechBlocks * 0.1:0} 秒分）{gap}", threshold, name);
     }
 
-    /// <summary>S-05: detect faces in the rendered frames (independent of the planner's own face data) and check that no caption-type telop covers a face.</summary>
+    /// <summary>S-05: independently detect faces near the start, middle and end of sampled rendered telops, including top bars and SFX.</summary>
     public async Task<QaResult> FaceOverlapAsync(QaContext ctx, string rendered, CancellationToken ct)
     {
-        int H = ctx.Plan.Canvas.Height;
-        (double top, double bottom)? Band(Telop t) => AssWriter.Band(t.Type, ctx.Preset, H);
-        var cand = ctx.Plan.Telops.Where(t => t.Enabled && Band(t) != null).OrderBy(t => t.Start).ToList();
+        int H = ctx.Plan.Canvas.Height, W = ctx.Plan.Canvas.Width;
+        var layout = TelopLayout.Resolve(ctx.Plan, ctx.Preset);
+        var cand = ctx.Plan.Telops.Where(t => t.Enabled && layout[t.Id].Bounds != null).OrderBy(t => t.Start).ToList();
         if (cand.Count == 0) return new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
         int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>(); var items = new List<QaItem>();
         var ins = InsertMap.Active(ctx.Plan);
         for (int i = 0; i < cand.Count; i += step)
         {
-            var t = cand[i]; var mid = InsertMap.ToFinal(ins, (t.Start + t.End) / 2); var (top, bottom) = Band(t)!.Value;
-            var faces = await Faces!.DetectAtAsync(rendered, mid, ct); checkedN++;
-            foreach (var f in faces)
+            var t = cand[i]; var bounds = layout[t.Id].Bounds!;
+            foreach (double bodyTime in new[] { t.Start + Math.Min(0.25, (t.End - t.Start) / 4), (t.Start + t.End) / 2, t.End - Math.Min(0.1, (t.End - t.Start) / 4) }.Distinct())
             {
-                double fy0 = f.Y * H, fy1 = (f.Y + f.H) * H, ov = Math.Min(bottom, fy1) - Math.Max(top, fy0);
-                if (ov > 0.3 * (fy1 - fy0))
+                var mid = InsertMap.ToFinal(ins, bodyTime);
+                var faces = await Faces!.DetectAtAsync(rendered, mid, ct); checkedN++;
+                foreach (var f in faces)
                 {
-                    hits.Add($"{t.Id}@{mid:F1}s");
-                    if (items.All(x => x.Target != t.Id)) items.Add(new(t.Id, "telop", "顔にテロップが重なっています", Math.Round(InsertMap.ToFinal(ins, t.Start), 3), Math.Round(InsertMap.ToFinal(ins, t.End, true), 3)));
+                    if (bounds.Intersects(new TelopLayout.Rect(f.X * W, f.Y * H, (f.X + f.W) * W, (f.Y + f.H) * H)))
+                    {
+                        hits.Add($"{t.Id}@{mid:F1}s");
+                        if (items.All(x => x.Target != t.Id)) items.Add(new(t.Id, "telop", "顔にテロップが重なっています", Math.Round(InsertMap.ToFinal(ins, t.Start), 3), Math.Round(InsertMap.ToFinal(ins, t.End, true), 3)));
+                    }
                 }
             }
         }
         return new("S-05", hits.Count == 0 ? QaStatus.Pass : QaStatus.Warn, hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3)),         "顔にテロップが重ならない", "顔とテロップの重なり") { Items = items };
-            }
+    }
 
             /// <summary>Long series parts have hundreds of captions; the measurement keeps the widest ones (most likely to overflow) plus an even spread.</summary>
     public const int MaxSafeZoneSamples = 160;
@@ -340,7 +343,7 @@ public sealed class QaEngine(FFmpeg ff)
                     foreach (var (name, top, plan, times, total, owners) in groups)
         {
             var ass = Path.Combine(workDir, name + ".ass");
-            await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset), new UTF8Encoding(false), ct);
+            await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset, TelopLayout.Resolve(ctx.Plan, ctx.Preset)), new UTF8Encoding(false), ct);
             const int W = 540, H = 960; const double fps = 10;
             var frames = times.Select(t => (int)Math.Round(t * fps)).Distinct().OrderBy(x => x).ToList();
             var select = string.Join("+", frames.Select(f => $"eq(n,{f})"));

@@ -33,6 +33,20 @@
 
 音量等のQAが通る合成データを使ったことは、本物の音声との内容一致を検証した証拠ではありません。実利用では、自分の許諾済み素材で最初の1本を確認してください。
 
+## 書き出し成果物UIの回帰確認（2026-11-11追加）
+
+- [ExportArtifactTests](../tests/VideoCreator.Tests/ExportArtifactTests.cs)：成果物の絶対パス・欠損・形式、保存済み投稿文、テキストの65,536文字制限、全文取得、動画Range応答、編集後の失効を実APIで確認。
+- [verify-export-artifacts.mjs](../ui/verify-export-artifacts.mjs)：Edgeで実際の合成H.264動画の再生・シーク、動画ごとのパスとコピー対象、保存時の元ファイル名、投稿文の読み取り専用表示、画像・テキストのプレビュー、完了後の自動表示、失敗表示・再試行、狭い画面、画面遷移の競合を確認。APIはfixtureで、クリップボードもユーザーの内容を上書きしないテスト用実装。エクスプローラーの実起動やSNS投稿は行わない。
+- [verify-multi-export.mjs](../ui/verify-multi-export.mjs)：既存の承認・一括書き出しフローの回帰確認。
+
+隔離したアプリを起動し、health応答を確認した後に実行します（URLは起動したポートに合わせます）。
+
+```powershell
+dotnet test --project tests\VideoCreator.Tests --filter-class VideoCreator.Tests.ExportArtifactTests VideoCreator.Tests.ApprovalExportTests VideoCreator.Tests.PostCopyTests
+node ui\verify-export-artifacts.mjs http://127.0.0.1:18788
+node ui\verify-multi-export.mjs http://127.0.0.1:18788
+```
+
 ## スクリーンショットの再作成
 
 ### 1. 前提

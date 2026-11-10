@@ -113,9 +113,13 @@ public static class AssWriter
         return sb.ToString();
     }
 
-    public static string Write(EditPlan plan, Preset p) => p.Telop.IsVariety ? WriteVariety(plan, p) : WriteStandard(plan, p);
+    public static string Write(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement>? layout = null)
+    {
+        layout ??= TelopLayout.Resolve(plan, p);
+        return p.Telop.IsVariety ? WriteVariety(plan, p, layout) : WriteStandard(plan, p, layout);
+    }
 
-    static string WriteVariety(EditPlan plan, Preset p)
+    static string WriteVariety(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
     {
         var c = p.Telop.Caption; int sx = Variety.CaptionScaleX;
         var sb = new StringBuilder();
@@ -139,6 +143,8 @@ public static class AssWriter
         var keywords = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Emphasis).Select(t => t.Text.Trim()).Distinct().ToList();
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Start))
         {
+            var placement = layout[t.Id];
+            if (placement.Bounds == null) continue;
             bool caption = t.Type == TelopType.Caption;
             var layer = t.Type is TelopType.Hook or TelopType.Headline ? Variety.LayerTop : caption ? Variety.LayerCaption : Variety.LayerPunch;
             var style = t.Style;
@@ -146,7 +152,8 @@ public static class AssWriter
             var (size, outline, scaleX) = Metrics(style, p);
             var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, scaleX));
-            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "");
+            if (placement.Positioned) fit = placement.FontSize;
+            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
             {
@@ -158,9 +165,11 @@ public static class AssWriter
         return sb.ToString();
     }
 
-    static string Fx(Telop t, EditPlan plan, string fs)
+    static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement)
     {
-        var pos = t.Style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{SfxY})\frz-8" : "";
+        var pos = placement.Positioned && placement.Bounds is { } b
+            ? FormattableString.Invariant($@"\an5\pos({(b.Left + b.Right) / 2:0.###},{(b.Top + b.Bottom) / 2:0.###})")
+            : t.Style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{SfxY})\frz-8" : "";
         return t.Animation == "pop" ? $@"{{{pos}\fad(60,0){fs}\fscx70\fscy70\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}}" : (fs.Length > 0 || pos.Length > 0) ? $"{{{pos}{fs}}}" : "";
     }
 
@@ -200,7 +209,7 @@ public static class AssWriter
         }
     }
 
-    static string WriteStandard(EditPlan plan, Preset p)
+    static string WriteStandard(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
     {
         var c = p.Telop.Caption;
         var sb = new StringBuilder();
@@ -233,15 +242,16 @@ public static class AssWriter
         var ins = Planning.InsertMap.Active(plan);
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Start))
         {
+            var placement = layout[t.Id];
+            if (placement.Bounds == null) continue;
             var layer = t.Type is TelopType.Hook or TelopType.Headline ? 2 : t.Type is TelopType.Emphasis or TelopType.Counter or TelopType.Sfx or TelopType.Tsukkomi ? 1 : 0;
             var style = t.Style;
             if (t.Type == TelopType.Caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
             var (size, outline, _) = Metrics(style, p);
             var lines = t.Type == TelopType.Caption ? CaptionLines(t.Text, p, plan.Canvas.Width) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR));
-            var fs = fit < size ? $@"\fs{fit}" : "";
-            var pos = style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{SfxY})\frz-8" : "";
-            var fx = t.Animation == "pop" ? $@"{{{pos}\fad(60,0){fs}\fscx70\fscy70\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}}" : (fs.Length > 0 || pos.Length > 0) ? $"{{{pos}{fs}}}" : "";
+            if (placement.Positioned) fit = placement.FontSize;
+            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             // body time → file time; a telop running across a card or bumper is split around it
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{string.Join(@"\N", lines.Select(Escape))}");

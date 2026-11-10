@@ -353,10 +353,10 @@ public sealed class PipelineRunner(PipelineServices s)
 
         // faces are analysed only inside the ranges that will be used (2 fps from the proxy), then cached
         var faces = new Dictionary<string, List<FaceSample>>();
-        if (preset.Reframe == "auto" && s.Faces is { Available: true } fs)
+        if (s.Faces is { Available: true } fs)
         {
             Stage(JobStatus.Analyzing, 0.55, "顔の位置を解析しています");
-            foreach (var a in used.Where(a => a.Media.Aspect >= 0.9 && a.Media.Width > 0 && a.Id != screen?.ScreenAssetId))
+            foreach (var a in used.Where(a => a.Media.Width > 0))
             {
                 var ranges = outcome.Candidates.SelectMany(c => c.Segments).Select(x => new Interval(Math.Max(0, a.CameraTime(x.T0, main.Id)), a.CameraTime(x.T1, main.Id))).ToList();
                 var apx = a.Id == main.Id ? proxy : (await ProxyAsync(a, ct)).Item1;

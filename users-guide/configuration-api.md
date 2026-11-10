@@ -97,8 +97,11 @@ dotnet run --project src\VideoCreator.App -c Release
 | 直接出力 | POST `/editplans/{id}/render` | 計画QAを確認して単独書き出し受付 |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled等 |
 | Render | POST `/renders/{id}/cancel` | queuedのみ取り消し |
+| Artifacts | GET `/renders/{id}/artifacts` | 完了した書き出しの `path`（絶対パス）、`available`、`files:[{key,path,available,preview_type}]`。種類は `video` / `image` / `text`（非対応は省略）。記録済み成果物のみで、投稿文を生成しない |
 | Files | GET `/renders/{id}/files/{key}` | outputsのキーに対応するファイル。動画はRange対応 |
-| OS | POST `/renders/{id}/open-folder` | 完了ファイルをエクスプローラーで選択 |
+| Preview | GET `/renders/{id}/files/{key}/preview` | テキスト成果物の `{text,truncated}`。先頭65,536文字まで。非対応形式は422、ファイル欠損は404、失効は409 |
+| Post | GET / POST `/renders/{id}/post` | GETは保存済み投稿文を返す（なければ生成・保存）。POSTは別案で上書き。画面は保存済みファイルの有無を確認し、未生成時は明示操作で呼び出す |
+| OS | POST `/renders/{id}/open-folder` | 完了ファイルをエクスプローラーで選択。ファイル欠損は404、起動失敗は500 `E-OPEN-FOLDER`、Windows以外は501 `E-PLATFORM` |
 | Media | GET `/media/{renderId}` | 主にプレビュー動画。Range対応 |
 
 BGM multipartの権利確認等は[Api.csの実装](../src/VideoCreator.App/Api.cs)を参照してください。パスを渡すAPIやOSダイアログは単一ローカルユーザー向けで、リモート操作の汎用契約ではありません。

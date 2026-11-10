@@ -200,7 +200,12 @@ public static class PlanBuilder
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
             Series = series, Inserts = inserts,
+            TelopFaces = r.Assets.ToDictionary(a => a.Id, a => new TelopFaceSource(a.Media, r.Faces.GetValueOrDefault(a.Id) ?? [])),
         };
+        var layout = Rendering.TelopLayout.Resolve(plan, p);
+        foreach (var t in plan.Telops.Where(t => t.Enabled))
+            if (layout[t.Id].Reason is { } reason)
+                notes.Add($"テロップ「{t.Text}」: {reason}");
         var (min, max, durationCap) = Qa.QaEngine.DurationRange(plan, p);
         if (plan.Duration < min - 0.05 || plan.Duration > max + 0.05 || plan.TotalDuration > durationCap + 0.05)
             throw new PlanException("E-SOL-INFEASIBLE", $"編集後の尺（本編{plan.Duration:0.##}秒・全体{plan.TotalDuration:0.##}秒）が条件を満たしません");

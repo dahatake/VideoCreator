@@ -7,6 +7,7 @@ namespace VideoCreator.Planning;
 public static class TelopBuilder
 {
     public const double HookSeconds = 2.5, EmphasisSeconds = 1.6, CaptionHoldMax = 0.5;
+    public const double EmphasisInterval = 4;
 
     public sealed record Mapped(Word Word, double Start, double End, int ClipIndex);
 
@@ -68,12 +69,12 @@ public static class TelopBuilder
         if (p.HasTelop("emphasis"))
         {
             // in time order; emphasis telops share one screen row, so they must never overlap in time
-            var hits = emphasis.Select(w => (w, hit: FindPhrase(mapped, w))).ToList();
-            foreach (var (w, _) in hits.Where(h => h.hit == null)) notes.Add($"強調語「{w}」が切り出し範囲にないため表示しません");
-            foreach (var (w, hit) in hits.Where(h => h.hit != null).OrderBy(h => h.hit!.Value.start))
+            var hits = emphasis.Distinct().SelectMany(w => FindPhrases(mapped, w).Select(hit => (w, hit))).ToList();
+            foreach (var w in emphasis.Where(w => !hits.Any(h => h.w == w))) notes.Add($"強調語「{w}」が切り出し範囲にないため表示しません");
+            foreach (var (w, hit) in hits.OrderBy(h => h.hit.start))
             {
-                var start = hit!.Value.start;
-                var end = Math.Min(total, Math.Max(hit.Value.end, start + EmphasisSeconds));
+                var start = hit.start;
+                var end = Math.Min(total, Math.Max(hit.end, start + EmphasisSeconds));
                 var text = JapaneseText.NormalizeTelop(w);
                 // Keep verbatim captions (including SRT); omit only the redundant presentation telop.
                 if (telops.Any(t => t.Type == TelopType.Caption && t.Start < end && t.End > start && t.Text == text)) continue;
@@ -83,7 +84,18 @@ public static class TelopBuilder
                     if (start - telops[prevIdx].Start >= 0.8) telops[prevIdx] = telops[prevIdx] with { End = R(start) };
                     else { notes.Add($"強調語「{w}」は直前の強調と重なるため表示しません"); continue; }
                 }
-                telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Emphasis, Start = R(start), End = R(end), Text = text, Style = "Emph", Animation = "pop", SourceWordIds = hit.Value.ids });
+                telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Emphasis, Start = R(start), End = R(end), Text = text, Style = "Emph", Animation = "pop", SourceWordIds = hit.ids });
+            }
+            // Fill sparse stretches with short, verbatim phrases; never invent text or change captions.
+            foreach (var group in mapped.GroupBy(m => m.ClipIndex))
+            foreach (var chunk in Chunk(group.ToList(), 8))
+            {
+                var text = JapaneseText.NormalizeTelop(string.Concat(chunk.Select(m => m.Word.Text)));
+                double start = chunk[0].Start, end = Math.Min(clips.Take(group.Key + 1).Sum(c => c.Length), Math.Max(chunk[^1].End, start + EmphasisSeconds));
+                if (JapaneseText.DisplayWidth(text) is < 3 or > 10 || end - start < MinCaptionSec) continue;
+                if (telops.Any(t => t.Type == TelopType.Emphasis && (Math.Abs(t.Start - start) < EmphasisInterval || t.Start < end && t.End > start))) continue;
+                if (telops.Any(t => t.Type == TelopType.Caption && t.Start < end && t.End > start && t.Text == text)) continue;
+                telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Emphasis, Start = R(start), End = R(end), Text = text, Style = "Emph", Animation = "pop", SourceWordIds = chunk.Select(m => m.Word.Id).ToList() });
             }
         }
 
@@ -173,20 +185,28 @@ public static class TelopBuilder
         return res;
     }
 
-    static (double start, double end, List<string> ids)? FindPhrase(List<Mapped> mapped, string phrase)
+    static IEnumerable<(double start, double end, List<string> ids)> FindPhrases(List<Mapped> mapped, string phrase)
     {
         var target = Norm(phrase);
-        if (target.Length == 0) return null;
+        if (target.Length == 0) yield break;
         for (int i = 0; i < mapped.Count; i++)
         {
             var acc = ""; var ids = new List<string>();
             for (int j = i; j < mapped.Count && acc.Length < target.Length + 4; j++)
             {
+                if (mapped[j].ClipIndex != mapped[i].ClipIndex || mapped[j].Word.Speaker != mapped[i].Word.Speaker
+                    || j > i && (mapped[j].Start - mapped[j - 1].End > 0.6 || JapaneseText.BreakScore(mapped[j - 1].Word.Text) == 4)) break;
                 acc += Norm(mapped[j].Word.Text); ids.Add(mapped[j].Word.Id);
-                if (acc.Contains(target)) return (mapped[i].Start, mapped[j].End, ids);
+                if (acc.Contains(target))
+                {
+                    int first = i;
+                    while (first < j && Norm(string.Concat(mapped.Skip(first + 1).Take(j - first).Select(m => m.Word.Text))).Contains(target)) first++;
+                    yield return (mapped[first].Start, mapped[j].End, ids.Skip(first - i).ToList());
+                    i = j;
+                    break;
+                }
             }
         }
-        return null;
     }
 
     static string Norm(string s) => new(s.Normalize(System.Text.NormalizationForm.FormKC).Where(char.IsLetterOrDigit).ToArray());

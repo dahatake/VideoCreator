@@ -146,6 +146,7 @@ public sealed record FaceBox(double X, double Y, double W, double H, double Scor
 }
 
 public sealed record FaceSample(double T, List<FaceBox> Boxes);
+public sealed record TelopFaceSource(MediaInfo Media, List<FaceSample> Samples);
 
 public sealed record RightsConfirmation
 {
@@ -433,6 +434,8 @@ public sealed record EditPlan
     public Canvas Canvas { get; init; } = new();
     public List<Clip> Timeline { get; init; } = [];
     public List<Telop> Telops { get; init; } = [];
+    /// <summary>Source-coordinate face evidence for placement at render time. Null on legacy plans; regenerate to enable face avoidance.</summary>
+    public Dictionary<string, TelopFaceSource>? TelopFaces { get; init; }
     public required AudioSpec Audio { get; init; }
     public Provenance Provenance { get; init; } = new();
     public SeriesInfo? Series { get; init; }

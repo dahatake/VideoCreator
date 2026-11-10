@@ -108,7 +108,9 @@ public sealed class FaceService(FFmpeg ff, string modelPath)
         using var ms = new MemoryStream();
         var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-ss", t.ToString("0.###", CultureInfo.InvariantCulture), "-i", video, "-frames:v", "1", "-vf", $"scale={FaceDetector.W}:{FaceDetector.H}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], ct, stdout: ms);
         var buf = ms.ToArray();
-        return r.ExitCode == 0 && buf.Length >= FaceDetector.W * FaceDetector.H * 3 ? _det.Detect(buf, 0) : [];
+        if (r.ExitCode != 0 || buf.Length < FaceDetector.W * FaceDetector.H * 3)
+            throw new FFmpegException("顔検出用のフレーム抽出に失敗しました: " + FFmpeg.Tail(r.StdErr));
+        return _det.Detect(buf, 0);
     }
 }
 

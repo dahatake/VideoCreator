@@ -943,24 +943,71 @@ public static class Api
             q.CancelExport(id) ? Results.Json(q.Exports[id], Json.Options)
             : q.Exports.ContainsKey(id) ? Error(409, "E-NOT-QUEUED", "書き出しが始まっているため取り消せません") : Error(404, "E-NOT-FOUND", "書き出しがありません"))
             .WithSummary("Withdraw a queued export (a running export finishes)");
+        api.MapGet("/renders/{id}/artifacts", (Runtime rt, string id) =>
+        {
+            var r = rt.Store.Get<Render>(Kinds.Render, id);
+            if (r == null || r.Kind != "final") return Error(404, "E-NOT-FOUND", "書き出しがありません");
+            if (Stale(rt, r)) return StaleError();
+            return Results.Json(new
+            {
+                path = Path.GetFullPath(r.Path), available = File.Exists(r.Path),
+                files = r.Outputs.Select(f => new
+                {
+                    key = f.Key, path = Path.GetFullPath(f.Value), available = File.Exists(f.Value),
+                    preview_type = ArtifactPreviewType(f.Value),
+                }),
+            }, Json.Options);
+        }).WithSummary("Recorded export artifacts, absolute paths and current availability (no generation)");
+        api.MapGet("/renders/{id}/files/{key}/preview", async (Runtime rt, string id, string key, CancellationToken ct) =>
+        {
+            var r = rt.Store.Get<Render>(Kinds.Render, id);
+            if (r != null && Stale(rt, r)) return StaleError();
+            if (r == null || !r.Outputs.TryGetValue(key, out var file) || !File.Exists(file))
+                return Error(404, "E-NOT-FOUND", "ファイルがありません");
+            if (ArtifactPreviewType(file) != "text") return Error(422, "E-VALIDATION", "この形式はテキストプレビューに対応していません");
+            const int limit = 64 * 1024;
+            using var reader = File.OpenText(file);
+            var buffer = new char[limit + 1];
+            var length = await reader.ReadBlockAsync(buffer.AsMemory(), ct);
+            return Results.Json(new { text = new string(buffer, 0, Math.Min(length, limit)), truncated = length > limit }, Json.Options);
+        }).WithSummary("Plain-text preview of a recorded artifact (up to 65536 characters)");
         api.MapGet("/renders/{id}/files/{key}", (Runtime rt, string id, string key) =>
         {
             var r = rt.Store.Get<Render>(Kinds.Render, id);
             if (r != null && Stale(rt, r)) return StaleError();
             if (r == null || !r.Outputs.TryGetValue(key, out var f) || !File.Exists(f)) return Error(404, "E-NOT-FOUND", "ファイルがありません");
-            var type = Path.GetExtension(f) switch { ".png" => "image/png", ".mp4" => "video/mp4", ".srt" or ".md" or ".ass" => "text/plain; charset=utf-8", ".json" => "application/json", _ => "application/octet-stream" };
+            var type = Path.GetExtension(f).ToLowerInvariant() switch
+            {
+                ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp",
+                ".mp4" => "video/mp4", ".srt" or ".md" or ".ass" or ".txt" => "text/plain; charset=utf-8",
+                ".json" => "application/json", _ => "application/octet-stream",
+            };
             return Results.File(f, type, enableRangeProcessing: true);
         });
         api.MapGet("/renders/{id}/post", (Runtime rt, string id, CancellationToken ct) => PostKitFor(rt, id, false, ct))
             .WithSummary("Copy-and-paste YouTube / Viva Engage texts and chapters of an export (made once, then read from <video>.post.json)");
         api.MapPost("/renders/{id}/post", (Runtime rt, string id, CancellationToken ct) => PostKitFor(rt, id, true, ct))
             .WithSummary("Write the posting texts again (another AI draft)");
-        api.MapPost("/renders/{id}/open-folder", (Runtime rt, string id) =>
+        api.MapPost("/renders/{id}/open-folder", (Runtime rt, ILoggerFactory logs, string id) =>
         {
             var r = rt.Store.Get<Render>(Kinds.Render, id);
             if (r == null) return Error(404, "E-NOT-FOUND", "書き出しがありません");
             if (Stale(rt, r)) return StaleError();
-            if (OperatingSystem.IsWindows()) System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{r.Path}\"");
+            if (!File.Exists(r.Path)) return Error(404, "E-NOT-FOUND", "動画ファイルが見つかりません。表示された保存先を確認してください");
+            if (!OperatingSystem.IsWindows()) return Error(501, "E-PLATFORM", "フォルダーを開く操作は Windows のみ対応しています。保存先パスをコピーしてください");
+            try
+            {
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe")
+                {
+                    Arguments = $"/select,\"{Path.GetFullPath(r.Path)}\"",
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                logs.CreateLogger("ExportArtifacts").LogWarning(ex, "Could not open export folder for {RenderId}", id);
+                return Error(500, "E-OPEN-FOLDER", "フォルダーを開けませんでした。保存先パスをコピーしてエクスプローラーで開いてください");
+            }
             return Results.Accepted();
         });
         api.MapGet("/media/{renderId}", (Runtime rt, string renderId) =>
@@ -970,6 +1017,14 @@ public static class Api
             return r != null && File.Exists(r.Path) ? Results.File(r.Path, "video/mp4", enableRangeProcessing: true) : Error(404, "E-NOT-FOUND", "動画がありません");
         });
     }
+
+    static string? ArtifactPreviewType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".mp4" => "video",
+        ".png" or ".jpg" or ".jpeg" or ".webp" => "image",
+        ".srt" or ".ass" or ".md" or ".json" or ".txt" => "text",
+        _ => null,
+    };
 
     static async Task<IResult> PostKitFor(Runtime rt, string id, bool regenerate, CancellationToken ct)
     {
