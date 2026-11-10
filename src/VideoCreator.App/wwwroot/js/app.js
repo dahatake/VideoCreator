@@ -1245,9 +1245,9 @@ function approvalBlock(x, name) {
     <p class="caption exp-text" aria-live="polite"></p>
   </div>`;
 }
-function batchBox() {
+function batchBox(showHeading = true) {
   return `<section class="card stack" id="batchBox" style="margin-top:16px">
-    <h2>承認した動画を書き出す</h2>
+    ${showHeading ? '<h2>承認した動画を書き出す</h2>' : ''}
     <p class="caption">内容を確かめて「この内容で承認する」を押し、書き出す動画に印を付けてください（1本でも複数でも書き出せます）。承認したあとに「確認・修正」で直すと、承認はやり直しになります。書き出せない動画が1本でもあるときは、どれも書き出しません。書き出しは1本ずつ順番に行います（1080×1920）。</p>
     <div class="row"><fluent-button id="pickAll">承認済みをすべて選ぶ</fluent-button><fluent-button appearance="primary" id="batchExport" disabled>選んだ動画を書き出す</fluent-button></div>
     <div class="progress-row" id="batchRow" hidden><span class="caption" id="batchLabel"></span><fluent-progress-bar id="batchBar" max="100" aria-label="まとめて書き出しの全体の進み具合"></fluent-progress-bar><span class="caption pct" id="batchPct"></span></div>
@@ -1847,7 +1847,7 @@ async function exportsView(jobId) {
           <div class="export-result" data-render=""></div>
         </article>`).join('')}
     </div>
-    ${batchBox()}`;
+    ${batchBox(false)}`;
   wireApprovals(j, list, [5, 5]);
   // preselect what is ready and not yet exported
   for (const x of list) {
