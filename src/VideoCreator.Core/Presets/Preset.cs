@@ -79,6 +79,9 @@ public sealed record PresetAudio
     /// <summary>none | auto (beat-synced patterns pick a library track) | library track id.</summary>
     public string Bgm { get; init; } = "none";
     public double BgmDb { get; init; } = -16;
+    /// <summary>Scene-matched music (BgmPlanner): level in pauses relative to the speech (LU) and the speech-over-music difference while speaking (LU, ≥ 10).</summary>
+    public double BgmGapLu { get; init; } = -8;
+    public double BgmSpeechLd { get; init; } = 14;
     public bool Duck { get; init; } = true;
     public double DialogueGainDb { get; init; }
 }
@@ -158,6 +161,8 @@ public static class PresetStore
         Req(p.Reframe is "auto" or "blur", "reframe must be auto|blur");
         Req(p.Audio.Sfx is "none" or "light" or "heavy", "audio.sfx must be none|light|heavy");
         Req(p.Audio.BgmDb is >= -40 and <= -6, "audio.bgm_db -40..-6");
+        Req(p.Audio.BgmGapLu is >= -30 and <= 0, "audio.bgm_gap_lu -30..0");
+        Req(p.Audio.BgmSpeechLd is >= 10 and <= 30, "audio.bgm_speech_ld 10..30 (≥ 10 LU: Torcoli et al. 2019)");
         Req(p.Planner != "switch" || p.Switching is { MinHoldSec: >= 1.0 and <= 4.0 }, "switch planner needs switching.min_hold_sec 1..4 (FR-SWT-02)");
         Req(p.Screen is null || p.Screen is { MinHoldSec: >= 1.0 and <= 4.0, MaxZoom: >= 1.0 and <= 3.0, PipDiameter: >= 200 and <= 540 }, "screen: min_hold_sec 1..4, max_zoom 1..3, pip_diameter 200..540");
         Req(p.Cut.SpeedUp is null || p.Cut.SpeedUp.MaxFactor is >= 1 and <= 64, "speed_up.max_factor 1..64");

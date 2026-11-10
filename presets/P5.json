@@ -1,6 +1,6 @@
 {
   "id": "P5",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "ビート同期モンタージュ",
   "genre": "趣味/Vlog",
   "available": true,
@@ -53,7 +53,9 @@
     "bgm": "auto",
     "duck": false,
     "dialogue_gain_db": -12,
-    "bgm_db": -8
+    "bgm_db": -8,
+    "bgm_gap_lu": 0,
+    "bgm_speech_ld": 10
   },
   "loop": {
     "required": false,

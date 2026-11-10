@@ -1,6 +1,6 @@
 {
   "id": "P8",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "プロセス圧縮（料理/DIY）",
   "genre": "趣味",
   "available": true,
@@ -59,7 +59,9 @@
       "i": -14
     },
     "bgm": "chill",
-    "bgm_db": -14
+    "bgm_db": -14,
+    "bgm_gap_lu": -6,
+    "bgm_speech_ld": 14
   },
   "loop": {
     "required": false,

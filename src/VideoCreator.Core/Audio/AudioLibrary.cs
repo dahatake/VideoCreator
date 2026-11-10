@@ -36,7 +36,37 @@ public sealed class AudioLibrary(FFmpeg ff, string dir)
     public IReadOnlyList<BgmTrack> Tracks => TrackSpecs.Select(s => new BgmTrack
     {
         Id = s.Id, Name = s.Name, Path = TrackPath(s.Id), Bpm = s.Bpm, Phase = 0, Source = "library", RightsConfirmed = true,
+        Analysis = _analysis?.GetValueOrDefault(s.Id),
     }).ToList();
+
+    Dictionary<string, BgmAnalysis>? _analysis;
+    string AnalysisFile => Path.Combine(dir, $"analysis.{Recipe}.v{BgmAnalyzer.Version}.json");
+
+    /// <summary>The library tracks with their measurements (BgmAnalyzer), made once per recipe and cached next to the files.</summary>
+    public async Task<IReadOnlyList<BgmTrack>> MeasuredTracksAsync(CancellationToken ct = default)
+    {
+        await EnsureAsync(ct);
+        if (_analysis != null) return Tracks;
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (_analysis == null)
+            {
+                Dictionary<string, BgmAnalysis>? cached = null;
+                if (File.Exists(AnalysisFile))
+                    try { cached = Json.Deserialize<Dictionary<string, BgmAnalysis>>(await File.ReadAllTextAsync(AnalysisFile, ct)); } catch (System.Text.Json.JsonException) { }
+                if (cached == null || TrackSpecs.Any(s => !cached.ContainsKey(s.Id)))
+                {
+                    cached = [];
+                    foreach (var s in TrackSpecs) cached[s.Id] = await BgmAnalyzer.AnalyzeAsync(ff, TrackPath(s.Id), ct, s.Bpm);
+                    await File.WriteAllTextAsync(AnalysisFile, Json.Serialize(cached), ct);
+                }
+                _analysis = cached;
+            }
+        }
+        finally { _gate.Release(); }
+        return Tracks;
+    }
 
     public string TrackPath(string id) => Path.Combine(dir, $"bgm_{id}.wav");
     public string SfxPath(string kind) => Path.Combine(dir, $"sfx_{kind}.wav");

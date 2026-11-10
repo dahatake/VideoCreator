@@ -109,6 +109,41 @@ public sealed class PipelineRunner(PipelineServices s)
         return t with { Bpm = t.Source == "library" && t.Bpm > 0 ? t.Bpm : tp.Bpm, Phase = tp.Phase };
     }
 
+    /// <summary>The track with its loudness/energy measurement (BgmAnalyzer): library tracks are measured once per recipe; a user track registered
+    /// before the measurement existed is measured now and stored.</summary>
+    public async Task<BgmTrack> MeasuredBgmAsync(BgmTrack t, CancellationToken ct)
+    {
+        if (t.Analysis is { Version: BgmAnalyzer.Version }) return t;
+        if (t.Source == "library" && s.Audio != null) return (await s.Audio.MeasuredTracksAsync(ct)).First(x => x.Id == t.Id);
+        if (!File.Exists(t.Path)) throw new PipelineException("E-BGM-NOTFOUND", $"BGM ファイルがありません: {t.Path}");
+        var m = t with { Analysis = await BgmAnalyzer.AnalyzeAsync(s.Ff, t.Path, ct), Bpm = t.Bpm };
+        if (t.Source == "user" && t.ProjectId != null) s.Store.Put(Kinds.Bgm, t.Id, t.ProjectId, m);
+        return m;
+    }
+
+    /// <summary>What "scene" chooses from: the project's own tracks (rights confirmed) when there are any, otherwise the synthesised library.</summary>
+    public async Task<List<BgmTrack>> BgmPoolAsync(string projectId, CancellationToken ct)
+    {
+        var user = s.Store.List<BgmTrack>(Kinds.Bgm, projectId).Where(t => t.RightsConfirmed && File.Exists(t.Path)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        if (user.Count > 0)
+        {
+            var res = new List<BgmTrack>();
+            foreach (var t in user) res.Add(await MeasuredBgmAsync(t, ct));
+            return res;
+        }
+        return s.Audio == null ? [] : (await s.Audio.MeasuredTracksAsync(ct)).ToList();
+    }
+
+    /// <summary>Every track a plan of this project can use (measured), and the automatic pool — for edits on the review screen.</summary>
+    public async Task<BgmContext> BgmContextAsync(string projectId, CancellationToken ct)
+    {
+        var pool = await BgmPoolAsync(projectId, ct);
+        var all = new Dictionary<string, BgmTrack>();
+        if (s.Audio != null) foreach (var t in await s.Audio.MeasuredTracksAsync(ct)) all[t.Id] = t;
+        foreach (var t in s.Store.List<BgmTrack>(Kinds.Bgm, projectId).Where(t => t.RightsConfirmed && File.Exists(t.Path))) all[t.Id] = await MeasuredBgmAsync(t, ct);
+        return new BgmContext(id => all.GetValueOrDefault(id), pool);
+    }
+
     public async Task<Transcript> TranscriptAsync(SourceAsset a, string audio, CancellationToken ct)
     {
         if (a.Media.AudioChannels == 0 || s.Asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration };
@@ -272,13 +307,24 @@ public sealed class PipelineRunner(PipelineServices s)
         Mark("signals");
 
         BgmTrack? bgm = null;
+        IReadOnlyList<BgmTrack>? bgmPool = null;
         var bgmId = PlanBuilder.ResolveBgmId(preset, job.Options);
         if (s.Audio != null && (job.Options.SceneCards || job.Options.Tsukkomi)) await s.Audio.EnsureAsync(ct);
-        if (bgmId != null)
+        if (job.Options.Bgm == "scene")
+        {
+            Stage(JobStatus.Analyzing, 0.44, "BGM の音量と曲の勢いを測っています");
+            bgmPool = await BgmPoolAsync(project.Id, ct);
+            if (bgmPool.Count == 0) throw new PipelineException("E-BGM-NOTFOUND", "シーンに合わせて選べる BGM がありません");
+            // a beat-synced edit follows one track: the most energetic one with a detectable tempo
+            if (preset.Planner == "beat")
+                bgm = await AnalyzedBgmAsync(bgmPool.Where(t => t.Analysis!.Bpm > 0).OrderByDescending(t => t.Analysis!.Energy).FirstOrDefault() ?? bgmPool[0], ct);
+        }
+        else if (bgmId != null)
         {
             if (s.Audio != null) await s.Audio.EnsureAsync(ct);
             var t0 = FindBgm(bgmId) ?? throw new PipelineException("E-BGM-NOTFOUND", $"BGM「{bgmId}」が見つかりません");
             if (t0.Source == "user" && !t0.RightsConfirmed) throw new PipelineException("E-RIGHTS-REQUIRED", "BGM の権利確認が完了していません");
+            t0 = await MeasuredBgmAsync(t0, ct);
             bgm = preset.Planner == "beat" || t0.Bpm <= 0 ? await AnalyzedBgmAsync(t0, ct) : t0;
         }
 
@@ -327,7 +373,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             var cid = $"{job.Id}_{c0.Id}";
             (EditPlan plan, List<string> notes) built;
-            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id), screen); }
+            try { built = await BuildPlanAsync(c0 with { Id = cid }, tr, sig, preset, main, used, project.Id, job, faces, bgm, null, ct, laughs, seriesParts.GetValueOrDefault(c0.Id), screen, bgmPool); }
             catch (PlanException ex) { warnings.Add($"{c0.Id}: {ex.Message}"); continue; }
             var (plan, notes) = built;
             var segments = CandidateValidator.MergeOverlaps(plan.Timeline.Select(c => new Interval(c.MasterIn, c.MasterOut)).ToList(), 0);
@@ -416,8 +462,9 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     public async Task<(EditPlan plan, List<string> notes)> BuildPlanAsync(Candidate c, Transcript tr, SignalSet sig, Preset p, SourceAsset main, IReadOnlyList<SourceAsset> assets, string projectId, Job job,
-        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null, ScreenContext? screen = null)
-        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKitFor(projectId), screen), ct);
+        IReadOnlyDictionary<string, List<FaceSample>> faces, BgmTrack? bgm, IReadOnlyList<Interval>? overrideSegments, CancellationToken ct, IReadOnlyList<Interval>? bursts = null, SeriesPart? part = null, ScreenContext? screen = null,
+        IReadOnlyList<BgmTrack>? bgmPool = null)
+        => await PlanBuilder.BuildAsync(new PlanRequest(c, tr, sig, p, assets, main, projectId, job, faces, bgm, s.Llm, overrideSegments, bursts, part, BrandKitFor(projectId), screen, bgmPool), ct);
 
     public const string ScreenActivityFile = "screen_activity.v3.json";
 
@@ -542,9 +589,13 @@ public sealed class PipelineRunner(PipelineServices s)
             ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id || t.Pip?.AssetId == a.Id)).ToList() : [main];
         var faces = new Dictionary<string, List<FaceSample>>();
         foreach (var a in used) { var f = FaceService.Load(Path.Combine(CacheDir(a), "faces.json")); if (f.Count > 0) faces[a.Id] = f; }
-        BgmTrack? bgm = old.Audio.Bgm is { } id && FindBgm(id) is { } t ? (p.Planner == "beat" ? await AnalyzedBgmAsync(t, ct) : t) : null;
-        return await BuildPlanAsync(c, LoadTranscript(main), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = old.Audio.Bgm ?? "none" } }, faces, bgm, segments, ct, LoadLaughs(main),
-            screen: p.Planner == "screen" ? LoadScreenContext(used, old) : null);
+        // the same music choice as before: scene-matched plans choose again from the pool (Reapply keeps the user's picks), others keep their track
+        var oa = old.Audio;
+        string bgmOption = oa.BgmMode == "scene" ? "scene" : oa.Bgm ?? oa.BgmCues.FirstOrDefault(c => c.Track != null)?.Track ?? "none";
+        IReadOnlyList<BgmTrack>? pool = bgmOption == "scene" ? await BgmPoolAsync(old.ProjectId, ct) : null;
+        BgmTrack? bgm = bgmOption is not ("scene" or "none") && FindBgm(bgmOption) is { } t ? (p.Planner == "beat" ? await AnalyzedBgmAsync(await MeasuredBgmAsync(t, ct), ct) : await MeasuredBgmAsync(t, ct)) : null;
+        return await BuildPlanAsync(c, LoadTranscript(main), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = bgmOption } }, faces, bgm, segments, ct, LoadLaughs(main),
+            screen: p.Planner == "screen" ? LoadScreenContext(used, old) : null, bgmPool: pool);
     }
 
     public QaContext QaContextFor(EditPlan plan)
@@ -619,6 +670,11 @@ public sealed class PipelineRunner(PipelineServices s)
             progress == null ? null : new SyncProgress<double>(v => progress.Report((0.9 * v, encodeStep))));
         progress?.Report((0.9, "自動チェック（QA）をしています"));
         var qa = await s.Qa.RunAsync(ctx, file, preview, Path.Combine(s.DataDir, "qa", renderId), ct);
+        if (outp.Bgm is { } mix)
+        {
+            var hashNow = EditPlanFingerprint.Of(plan);
+            qa = [.. qa, QaAdvisor.Attach(QaEngine.SpeechOverMusic(mix)) with { Stage = preview ? "preview" : "final", PlanHash = hashNow }];
+        }
         var outputs = new Dictionary<string, string> { ["mp4"] = file };
         RenderReproducibility? reproducibility = null;
         if (!preview)
@@ -650,8 +706,9 @@ public sealed class PipelineRunner(PipelineServices s)
                 .Concat(InsertMap.Active(plan).Where(i => i.Path != null).Select(i => i.Path!)).ToList();
             if (plan.Audio.Bgm is { } bgm)
             {
-                var bgmPath = s.Audio?.Find(bgm)?.Path ?? s.Store.Get<BgmTrack>(Kinds.Bgm, bgm)?.Path;
-                if (bgmPath != null) sourcePaths.Add(bgmPath);
+                var bgmIds = plan.Audio.BgmCues.Count > 0 ? plan.Audio.BgmCues.Where(c => c.Track != null).Select(c => c.Track!).Distinct() : [bgm];
+                foreach (var id in bgmIds)
+                    if ((s.Audio?.Find(id)?.Path ?? s.Store.Get<BgmTrack>(Kinds.Bgm, id)?.Path) is { } bgmPath) sourcePaths.Add(bgmPath);
             }
             if (plan.Audio.SfxEnabled && s.Audio != null)
                 sourcePaths.AddRange(plan.Audio.Sfx.Select(e => s.Audio.SfxPath(e.Kind)).Where(path => path != null).Select(path => path!));
@@ -719,11 +776,21 @@ public sealed class PipelineRunner(PipelineServices s)
         return $"{safe}_{plan.Preset.Id}_{rank}_{DateTime.Now:yyyyMMdd-HHmm}";
     }
 
+    List<string> MaskWordsFor(EditPlan plan) =>
+        Masking.Clean(plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options.MaskWords : null);
+
+    /// <summary>Copy-and-paste YouTube / Viva Engage texts with chapters on the rendered file's timeline.</summary>
+    public Task<PostKit> PostKitAsync(Candidate c, EditPlan plan, CancellationToken ct, string? previous = null)
+    {
+        var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
+        return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
+    }
+
     /// <summary>FR-EXP-03: posting metadata suggestions (LLM when available, otherwise a template).</summary>
     public async Task<string> MetadataAsync(Candidate c, EditPlan plan, CancellationToken ct)
     {
         var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
-        var text = CandidateValidator.TextOf(LoadTranscript(main), plan.Timeline.Select(x => new Interval(x.MasterIn, x.MasterOut)));
+        var text = CandidateValidator.TextOf(Masking.Apply(LoadTranscript(main), MaskWordsFor(plan)).Masked, plan.Timeline.Select(x => new Interval(x.MasterIn, x.MasterOut)));
         string titles = "", desc = "", tags = "";
         if (s.Llm != null && text.Length > 0)
         {

@@ -2,14 +2,17 @@ using VideoCreator.Models;
 
 namespace VideoCreator.Planning;
 
-public sealed record PlanOp(string Op, string? Target = null, string? Text = null, bool? Enabled = null, string? Type = null, string? Edge = null, int? Delta = null, List<string>? SourceWordIds = null);
+public sealed record PlanOp(string Op, string? Target = null, string? Text = null, bool? Enabled = null, string? Type = null, string? Edge = null, int? Delta = null, List<string>? SourceWordIds = null, double? Value = null);
+
+/// <summary>Registered tracks for BGM edits: lookup by id (measured) and the pool automatic choice picks from.</summary>
+public sealed record BgmContext(Func<string, BgmTrack?> Find, IReadOnlyList<BgmTrack> Pool);
 
 /// <summary>FR-REV-02..05: pure edits on an EditPlan; every edit is recorded in provenance (AP-1).</summary>
 public static class PlanEditor
 {
     public const int MaxTelopLength = 40;
 
-    public static EditPlan Apply(EditPlan plan, IEnumerable<PlanOp> ops)
+    public static EditPlan Apply(EditPlan plan, IEnumerable<PlanOp> ops, BgmContext? bgm = null)
     {
         foreach (var op in ops)
         {
@@ -28,11 +31,16 @@ public static class PlanEditor
                     Inserts = plan.Inserts.Select(i => i.Kind == "card" && i.Id.StartsWith("tsukkomi", StringComparison.Ordinal) ? i with { Approved = true } : i).ToList(),
                     Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "approve_all_tsukkomi", "tsukkomi", null, "true")] },
                 },
+                "set_bgm" when plan.Audio.BgmCues.Count > 0 => SetBgm(plan, op.Target, bgm),
                 "set_bgm" => plan with
                 {
                     Audio = plan.Audio with { Bgm = string.IsNullOrEmpty(op.Target) || op.Target == "none" ? null : op.Target, BgmMutes = string.IsNullOrEmpty(op.Target) || op.Target == "none" ? [] : plan.Audio.BgmMutes },
                     Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "set_bgm", "audio", plan.Audio.Bgm, op.Target)] },
                 },
+                "set_bgm_cue" => SetCue(plan, op.Target ?? throw new ArgumentException("target required"), op.Text ?? throw new ArgumentException("text required"), bgm),
+                "set_bgm_trim" => UpdateCue(plan, op.Target ?? throw new ArgumentException("target required"),
+                    c => c with { TrimDb = Math.Round(Math.Clamp(op.Value ?? 0, BgmPlanner.MinTrimDb, BgmPlanner.MaxTrimDb), 1) }, "set_bgm_trim", (op.Value ?? 0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)),
+                "set_bgm_level" => SetLevel(plan, op.Type ?? throw new ArgumentException("type required"), op.Value ?? throw new ArgumentException("value required")),
                 "set_sfx" => plan with
                 {
                     Audio = plan.Audio with { SfxEnabled = op.Enabled ?? true },
@@ -51,6 +59,88 @@ public static class PlanEditor
         }
         return plan;
     }
+
+    // ---------------- scene-matched BGM ----------------
+
+    static EditPlan Recorded(EditPlan plan, AudioSpec audio, string op, string target, string? from, string? to) => plan with
+    {
+        Audio = audio,
+        Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, op, target, from, to)] },
+    };
+
+    static BgmTrack Track(BgmContext? ctx, string id) =>
+        (ctx ?? throw new ArgumentException("BGM の一覧がありません")).Find(id) is { Analysis: not null } t ? t : throw new KeyNotFoundException($"BGM {id} が見つかりません");
+
+    /// <summary>Whole edit: none = music off (scene choices are kept), scene = automatic choice again from the pool, a track id = that track in every scene.</summary>
+    static EditPlan SetBgm(EditPlan plan, string? target, BgmContext? ctx)
+    {
+        var a = plan.Audio;
+        if (string.IsNullOrEmpty(target) || target == "none") return Recorded(plan, a with { Bgm = null }, "set_bgm", "audio", a.Bgm, "none");
+        if (a.BgmMode == "beat") throw new ArgumentException("ビート同期では BGM を変えるとカットも変わります。条件を変えて作り直してください");
+        List<BgmCue> cues;
+        string mode;
+        if (target == "scene")
+        {
+            var pool = (ctx ?? throw new ArgumentException("BGM の一覧がありません")).Pool;
+            if (pool.Count == 0) throw new ArgumentException("自動で選べる BGM がありません");
+            cues = BgmPlanner.Assign(a.BgmCues.Select(c => c with { Auto = true }).ToList(), pool);
+            mode = "scene";
+        }
+        else
+        {
+            var t = Track(ctx, target);
+            cues = a.BgmCues.Select(c => BgmPlanner.Fill(c with { Auto = false, Reason = "全編この曲（あなたが選択）" }, t)).ToList();
+            mode = "single";
+        }
+        var first = cues.FirstOrDefault(c => c.Track != null)?.Track;
+        return Recorded(plan, a with { BgmCues = cues, BgmMode = mode, Bgm = first }, "set_bgm", "audio", a.Bgm, target);
+    }
+
+    /// <summary>One scene: a track id, none (no music in this scene) or auto (back to the automatic choice).</summary>
+    static EditPlan SetCue(EditPlan plan, string cueId, string track, BgmContext? ctx)
+    {
+        var a = plan.Audio;
+        if (a.BgmMode == "beat") throw new ArgumentException("ビート同期では曲を変えるとカットも変わります。条件を変えて作り直してください");
+        var old = a.BgmCues.FirstOrDefault(c => c.Id == cueId) ?? throw new KeyNotFoundException($"BGM の場面 {cueId} がありません");
+        List<BgmCue> cues;
+        if (track == "auto")
+        {
+            var pool = (ctx ?? throw new ArgumentException("BGM の一覧がありません")).Pool;
+            cues = BgmPlanner.Assign(a.BgmCues.Select(c => c.Id == cueId ? c with { Auto = true } : c).ToList(), pool);
+        }
+        else
+        {
+            var updated = track == "none" ? old with { Track = null, Auto = false, Reason = "この場面は BGM なし（あなたが選択）" }
+                : BgmPlanner.Fill(old with { Auto = false, Reason = "あなたが選んだ曲" }, Track(ctx, track));
+            cues = a.BgmCues.Select(c => c.Id == cueId ? updated : c).ToList();
+        }
+        var on = a.Bgm ?? cues.FirstOrDefault(c => c.Track != null)?.Track;
+        return Recorded(plan, a with { BgmCues = cues, Bgm = on, BgmMode = a.BgmMode == "single" && cues.Select(c => c.Track).Distinct().Count() > 1 ? "scene" : a.BgmMode }, "set_bgm_cue", cueId, old.Track, track);
+    }
+
+    static EditPlan UpdateCue(EditPlan plan, string cueId, Func<BgmCue, BgmCue> f, string op, string to)
+    {
+        var old = plan.Audio.BgmCues.FirstOrDefault(c => c.Id == cueId) ?? throw new KeyNotFoundException($"BGM の場面 {cueId} がありません");
+        return Recorded(plan, plan.Audio with { BgmCues = plan.Audio.BgmCues.Select(c => c.Id == cueId ? f(c) : c).ToList() }, op, cueId, null, to);
+    }
+
+    /// <summary>gap = music level in pauses relative to the speech (−30..0 LU); ld = speech − music while speaking (10..30 LU; 10 is the research floor).</summary>
+    static EditPlan SetLevel(EditPlan plan, string type, double value)
+    {
+        var a = plan.Audio;
+        if (a.BgmCues.Count == 0) throw new ArgumentException("この編集計画は以前の形式です。作り直すと BGM の音量を調整できます");
+        var to = value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        return type switch
+        {
+            "gap" => Recorded(plan, a with { BgmGapLu = Math.Round(Math.Clamp(value, BgmPlanner.MinGapLu, BgmPlanner.MaxGapLu), 1) }, "set_bgm_level", "gap", a.BgmGapLu.ToString(System.Globalization.CultureInfo.InvariantCulture), to),
+            "ld" => Recorded(plan, a with { BgmSpeechLd = Math.Round(Math.Clamp(value, BgmPlanner.ResearchFloorLd, BgmPlanner.MaxSpeechLd), 1) }, "set_bgm_level", "ld", a.BgmSpeechLd.ToString(System.Globalization.CultureInfo.InvariantCulture), to),
+            _ => throw new ArgumentException($"unknown level {type}"),
+        };
+    }
+
+    /// <summary>After any edit: duck depths follow the current tracks, levels and inserts (needs the tracks' loudness profiles).</summary>
+    public static EditPlan RecomputeBgm(EditPlan plan, BgmContext? ctx) =>
+        ctx == null || plan.Audio.BgmCues.Count == 0 ? plan : plan with { Audio = BgmPlanner.Recompute(plan.Audio, plan.Inserts, plan.Duration, ctx.Find) };
 
     public const int MaxCardTextLength = 20;
 
@@ -142,7 +232,7 @@ public static class PlanEditor
         {
             Telops = telops,
             Inserts = inserts,
-            Audio = rebuilt.Audio with { Bgm = previous.Audio.Bgm, SfxEnabled = previous.Audio.SfxEnabled, BgmMutes = previous.Audio.Bgm == null ? [] : rebuilt.Audio.BgmMutes },
+            Audio = BgmPlanner.Carry(rebuilt.Audio with { Bgm = previous.Audio.BgmCues.Count > 0 ? rebuilt.Audio.Bgm : previous.Audio.Bgm, SfxEnabled = previous.Audio.SfxEnabled, BgmMutes = previous.Audio.Bgm == null && previous.Audio.BgmCues.Count == 0 ? [] : rebuilt.Audio.BgmMutes }, previous.Audio),
             Provenance = previous.Provenance with { Edits = [.. previous.Provenance.Edits] },
         };
     }

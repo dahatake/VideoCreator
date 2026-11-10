@@ -264,6 +264,21 @@ public sealed class QaEngine(FFmpeg ff)
         return m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, IC, out var d) ? d : double.NaN;
     }
 
+    /// <summary>
+    /// S-15: speech over music, measured on the rendered stems (Renderer.MixReport, FFmpeg ebur128). Pass when the loudness difference while speaking is at
+    /// least the research floor (10 LU, Torcoli et al. JAES 2019) and within 1.5 LU of the plan's target.
+    /// </summary>
+    public static QaResult SpeechOverMusic(Rendering.BgmMixReport m)
+    {
+        const string name = "声と BGM の音量差（話している間）";
+        string threshold = $"≥ {m.TargetLd:0.#} LU（下限 {Planning.BgmPlanner.ResearchFloorLd:0} LU）";
+        if (m.SpeechBlocks == 0) return new("S-15", QaStatus.Pass, "発話なし", threshold, name);
+        bool ok = m.Ld >= Planning.BgmPlanner.ResearchFloorLd && m.Ld >= m.TargetLd - 1.5;
+        string ld = m.Ld >= 99 ? "BGM なし" : $"{m.Ld:0.0} LU";
+        string gap = m.GapLu is double g ? $"・声のない所の BGM は声より {-g:0.0} LU 小さい（設定 {-m.GapTargetLu:0.#}）" : "";
+        return new("S-15", ok ? QaStatus.Pass : QaStatus.Warn, $"{ld}（下位10% {Math.Min(m.LdP10, 99):0.0} LU・{m.SpeechBlocks * 0.1:0} 秒分）{gap}", threshold, name);
+    }
+
     /// <summary>S-05: detect faces in the rendered frames (independent of the planner's own face data) and check that no caption-type telop covers a face.</summary>
     public async Task<QaResult> FaceOverlapAsync(QaContext ctx, string rendered, CancellationToken ct)
     {

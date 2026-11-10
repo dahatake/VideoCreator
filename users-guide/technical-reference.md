@@ -91,6 +91,7 @@ StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document sto
 | ASR | ITranscriber、Runtime、設定・送信先、キャッシュキー。単語ID・時刻・話者・文の構造を維持 | [PlanningTests](../tests/VideoCreator.Tests/PlanningTests.cs)、使用素材で時刻と認識精度を別途実測 |
 | カメラ・画面編集 | AudioSync、CameraTime、SwitchPlanner、ScreenPlanner。同期はAudioSync.TimelineFilterの時間整合PCMを使う | [MultiSourceTests](../tests/VideoCreator.Tests/MultiSourceTests.cs)、[V11Tests](../tests/VideoCreator.Tests/V11Tests.cs) |
 | シリーズ・挿入物 | Series、Packaging、InsertMap。テロップ・SRT・QA・メタデータの時間をすべて合わせる | [SeriesTests](../tests/VideoCreator.Tests/SeriesTests.cs)、[PackagingTests](../tests/VideoCreator.Tests/PackagingTests.cs)、[SceneCardTests](../tests/VideoCreator.Tests/SceneCardTests.cs) |
+| 投稿用の文章・チャプター | PostCopy（Planning）。章の時刻はコードが InsertMap で書き出し後の時刻に変換し、AI には書かせない。AI の文は伏せ字済みの書き起こしだけを渡し、PostCopy.Check（長さ・URL・時刻・伏せ字・発話にない語）を通ったものだけ使う。断られた部分は理由を添えて1回だけ作り直す | [PostCopyTests](../tests/VideoCreator.Tests/PostCopyTests.cs) |
 | UIの入力部品 | app.js、app.css、Fluent v3。checkbox/switchはfieldのlabel/input slot。esc()とイベント後の状態再描画、キーボード操作を維持 | [E2E](../ui/e2e.mjs)、[v1.1 E2E](../ui/e2e-v11.mjs)、実Edge |
 | API・承認・保存 | Api、Models、Store、JobQueue、ProjectsLocation。snake_case、コード付きエラー、編集後の再承認、パス境界 | [ApprovalExportTests](../tests/VideoCreator.Tests/ApprovalExportTests.cs)、[ProjectsLocationTests](../tests/VideoCreator.Tests/ProjectsLocationTests.cs)、[RenderRecordTests](../tests/VideoCreator.Tests/RenderRecordTests.cs) |
 

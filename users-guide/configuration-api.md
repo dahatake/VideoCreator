@@ -49,7 +49,7 @@ dotnet run --project src\VideoCreator.App -c Release
 - GET/HEADにはこのヘッダーを要求しません。ヘッダーは認証やAPIキーではなく、クロスサイト書き込みを防ぐガードです。
 - 通常のエラーは `{ "error": { "code": "...", "message": "...", "detail": ... } }`。HTTP statusとcodeの両方を扱う。Host拒否やヘッダー不足はプレーンテキストの場合もあります。
 - 非同期書き出しの `202` は受付であり、完了ではありません。返されたrender IDをポーリングします。
-- 一般の要求上限は64MiB。**動画uploadルートは独自の上限を解除**し、multipartを一時バッファしてコピーします。BGMはHTTP bodyを500MiBへ変更しますが、multipart解析にも別の上限があります。他ルートに動画と同じ無制限条件を適用しないでください。
+- 一般の要求上限は64MiB。**動画uploadルートは独自の上限を解除**し、multipartを一時バッファしてコピーします。BGMはHTTP bodyを2000MiBへ変更します（1回で最大20曲）が、multipart解析にも別の上限があります。他ルートに動画と同じ無制限条件を適用しないでください。
 
 ## ルート一覧
 
@@ -73,8 +73,9 @@ dotnet run --project src\VideoCreator.App -c Release
 | 見積もり | GET `/projects/{id}/estimate?preset=P4` | scope別の送信量・単価ベースの推定 |
 | Asset | PATCH `/assets/{id}` | role、speaker、sync_offset、clear_speaker |
 | Transcript | GET / PATCH `/assets/{id}/transcript` | 読取／`{"edits":[{"word_id":"...","text":"修正文"}]}` |
-| 音 | GET `/bgm?project_id=...` | ライブラリとプロジェクトの曲 |
-| 音 | POST `/projects/{id}/bgm` | multipart。file、権利確認 `rights_confirmed` |
+| 音 | GET `/bgm?project_id=...` | ライブラリとプロジェクトの曲。各曲の `analysis`（lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term） |
+| 音 | POST `/projects/{id}/bgm` | multipart。file（複数可、最大20）、権利確認 `rights_confirmed`。登録時に曲を測定。201 `{tracks, skipped}`（読めない・5秒未満の曲は skipped に理由） |
+| 音 | DELETE `/projects/{id}/bgm/{bgmId}` | 登録を外す（ファイルも削除）。編集計画で使っていると 409 `E-BGM-IN-USE` |
 | OS | POST `/dialogs/folder` | `{"initial_path":"..."}`。取消は `{"path":null}` |
 | カード | POST `/projects/{id}/scene-cards` | asset_id **か** brand_path、count 2〜6（既定4）。両方指定不可 |
 | カード | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}`。以後の生成で画像を使用 |
@@ -109,7 +110,7 @@ QA承認のハッシュは編集計画のGET応答の `plan_hash` と各QA項目
 | キー | 値・制約 |
 |---|---|
 | scope | economy / balanced / full（既定balanced） |
-| bgm | auto / none / 曲ID |
+| bgm | auto / none / scene（場面ごとに自動選曲。プロジェクトの曲、なければ内蔵曲から）/ 曲ID |
 | sfx / tsukkomi | bool。AIツッコミはP3で使用 |
 | tsukkomi_style | `auto`（既定）/ `telop` / `card`。AIツッコミの見せ方。`telop` は映像を止めずに重ねるテロップ、`card` は発言直後に2〜3秒の停止カード（画像／パネル＋文字＋専用BGM）。`auto` は発言が終わり、次の発言が受け答えでなく、本編の端・ほかのカード／オープニングから離れ（8秒以上）、カードの合計が本編の10%以内に収まる所だけカード、それ以外はテロップ。それ以外の値は 422 |
 | parts / part_minutes | 本数2〜20 **か** 1本の分数1〜60。互いに排他。両方nullならショート |
@@ -128,7 +129,10 @@ PATCH `/editplans/{id}` に `{"ops":[...]}` を送ります。[PlanEditor](../sr
 | set_enabled | target、enabled |
 | set_type_enabled | type（caption・emphasis・headline・sfx・tsukkomi・opening・card・closing）、enabled。tsukkomi はツッコミのテロップとカードの両方、card はツッコミ以外の場面転換カード |
 | approve / approve_all_tsukkomi | 前者はtarget |
-| set_bgm / set_sfx | 前者はtarget（曲ID/none）、後者はenabled |
+| set_bgm / set_sfx | 前者はtarget（曲ID＝全編この曲 / none / scene＝自動選曲し直し）、後者はenabled |
+| set_bgm_cue | target＝場面ID（`bgm1`…）、text＝曲ID / none / auto（自動の選曲に戻す） |
+| set_bgm_trim | target＝場面ID、value＝その場面の曲の音量（dB、−12〜+6） |
+| set_bgm_level | type＝`ld`（話している間の声−BGM、10〜30 LU）/ `gap`（声のない所のBGM、声に対して −30〜0 LU）、value |
 | set_insert_enabled | target（insert ID）、enabled |
 | replace_card_text | target、text（20文字まで） |
 | approve_card / approve_all_cards | 前者はtarget |

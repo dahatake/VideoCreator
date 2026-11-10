@@ -32,6 +32,7 @@ public static class QaAdvisor
         ["S-12"] = ("オープニング・クロージングには出力と同じ解像度（1080×1920）以上の素材を使ってください。", "manual"),
         ["S-13"] = ("話者とカメラの対応（素材の話者番号）を確認して作り直してください。", "manual"),
         ["S-14"] = ("チャプターが 00:00 から 3 つ以上・各 10 秒以上になるよう、本数や長さを変えて作り直してください。", "manual"),
+        ["S-15"] = ("確認画面の「BGM」で「話している間の声との差」を大きくするか、その場面の曲の音量を下げてから、プレビューを更新して測り直してください。", "manual"),
     };
 
     public static bool IsRepairable(string checkId) => Table.TryGetValue(checkId, out var a) && a.Repair != "manual";

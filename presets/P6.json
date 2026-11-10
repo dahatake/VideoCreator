@@ -1,6 +1,6 @@
 {
   "id": "P6",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "解説・講義（要点テロップ）",
   "genre": "ビジネス",
   "available": true,
@@ -57,7 +57,9 @@
       "i": -14
     },
     "bgm": "chill",
-    "bgm_db": -24
+    "bgm_db": -24,
+    "bgm_gap_lu": -14,
+    "bgm_speech_ld": 18
   },
   "loop": {
     "required": false,

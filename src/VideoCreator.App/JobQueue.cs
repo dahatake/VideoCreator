@@ -103,9 +103,12 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
                 {
                     Exports[renderId] = Exports[renderId] with { Progress = 0.95, Step = "投稿用のタイトル・説明文の案を作っています" };
                     var md = await runner.MetadataAsync(cand, plan, ct);
+                    var post = await runner.PostKitAsync(cand, plan, ct);
                     var mdFile = Path.ChangeExtension(render.Path, ".metadata.md");
-                    await File.WriteAllTextAsync(mdFile, md, ct);
-                    render = render with { Outputs = new Dictionary<string, string>(render.Outputs) { ["metadata"] = mdFile } };
+                    var postFile = Path.ChangeExtension(render.Path, ".post.json");
+                    await File.WriteAllTextAsync(mdFile, md + Planning.PostCopy.Markdown(post), ct);
+                    await File.WriteAllTextAsync(postFile, Json.Serialize(post), ct);
+                    render = render with { Outputs = new Dictionary<string, string>(render.Outputs) { ["metadata"] = mdFile, ["post"] = postFile } };
                 }
                 try
                 {

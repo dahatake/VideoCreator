@@ -21,6 +21,7 @@ public static class Masking
     /// <summary>One character folded so that the text keeps its length (NFKC when it maps to a single char, then lower case).</summary>
     static char Fold(char c)
     {
+        if (char.IsSurrogate(c)) return c;   // half of an emoji etc.: cannot be normalized alone
         var n = c.ToString().Normalize(NormalizationForm.FormKC);
         return char.ToLowerInvariant(n.Length == 1 ? n[0] : c);
     }

@@ -17,7 +17,9 @@ public static class InsertMap
     static int Order(Insert i) => i.Kind switch { "opening" => 0, "card" => 1, _ => 2 };
 
     /// <summary>Enabled inserts in playback order.</summary>
-    public static List<Insert> Active(EditPlan plan) => plan.Inserts.Where(i => i.Enabled && i.Duration > 0).OrderBy(i => i.At).ThenBy(Order).ToList();
+    public static List<Insert> Active(EditPlan plan) => Active(plan.Inserts);
+
+    public static List<Insert> Active(IEnumerable<Insert> inserts) => inserts.Where(i => i.Enabled && i.Duration > 0).OrderBy(i => i.At).ThenBy(Order).ToList();
 
     /// <summary>Final time of body time <paramref name="t"/>. A start exactly at an insert's position plays after the insert; an end there plays before it.</summary>
     public static double ToFinal(IReadOnlyList<Insert> active, double t, bool end = false)

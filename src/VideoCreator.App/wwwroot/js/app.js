@@ -4,6 +4,8 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+// same wording as Planning.BgmPlanner.SceneWord / TrackWord
+const energyWord = (e) => e < 0.35 ? '落ち着いた' : e < 0.6 ? 'ふつう' : 'にぎやか';
 const main = $('#main');
 
 const STEPS = ['素材', 'パターン', '生成', '候補', '確認・修正', '書き出し'];
@@ -355,6 +357,7 @@ function confirmDelete(p, opener) {
 async function project(id, showSettings = false) {
   const [d, presets, bgmList, kitView, settings] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings')]);
   const resumeRoute = workflowRoute(id, d.resume_state ?? { step: 'project' });
+  const userBgm = bgmList.filter(b => b.source === 'user');
   if (!showSettings && resumeRoute && resumeRoute !== `#/p/${id}`) { location.hash = resumeRoute; return; }
   await saveWorkflowState(id, { step: showSettings ? 'settings' : 'project' });
   const assets = d.assets, rights = new Set(d.rights.map(r => r.asset_id));
@@ -476,8 +479,10 @@ async function project(id, showSettings = false) {
         ${group('sound', '音', `
           <label class="caption">BGM <select class="native" id="bgm">
             <option value="auto" ${opts.bgm === 'auto' ? 'selected' : ''}>パターンに任せる</option><option value="none" ${opts.bgm === 'none' ? 'selected' : ''}>なし</option>
-            ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>${esc(b.name)}${b.source === 'user' ? '（自分の曲）' : ''}${b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''}</option>`).join('')}
+            <option value="scene" ${opts.bgm === 'scene' ? 'selected' : ''}>場面に合わせて自動で選ぶ（${userBgm.length ? `登録した ${userBgm.length} 曲から` : '内蔵の 3 曲から'}）</option>
+            ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>全編この曲: ${esc(b.name)}${b.source === 'user' ? '（自分の曲）' : ''}${b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''}</option>`).join('')}
           </select></label>
+          <p class="caption">BGM は話している間だけ自動で小さくなります（声との差はパターンごとの目安で、標準は 14 LU 以上）。曲・音量は書き出し前の確認画面で場面ごとに直せます。</p>
           ${field('効果音（ポン・ピンポン・ドーン など）', `<fluent-switch slot="input" id="sfx" ${opts.sfx ? 'checked' : ''}></fluent-switch>`)}
           ${field('ツッコミを AI に提案させる（P3 のみ。承認するまで書き出せません）', `<fluent-switch slot="input" id="tsukkomi" ${opts.tsukkomi ? 'checked' : ''}></fluent-switch>`)}
           <div class="stack" id="tsukkomiStyleBox" style="margin-left:16px" ${opts.tsukkomi ? '' : 'hidden'}>
@@ -489,11 +494,15 @@ async function project(id, showSettings = false) {
             </fluent-radio-group>
           </div>
           <label class="caption">伏せる語（読点・カンマ区切り。字幕・テロップでは ● になり、音声はピー音になります）<input type="text" class="native" id="maskWords" maxlength="400" style="display:block;width:100%;margin-top:4px" value="${esc(opts.mask_words.join('、'))}" placeholder="例: 店の名前、人の名前"></label>
-          <details><summary class="caption">自分の BGM を追加する</summary>
+          <details ${userBgm.length ? 'open' : ''}><summary class="caption">自分の BGM（${userBgm.length ? `${userBgm.length} 曲登録済み` : '複数まとめて追加できます'}）</summary>
+            ${userBgm.length ? `<ul class="notes bgm-list">${userBgm.map(b => `<li><b>${esc(b.name)}</b> <span class="caption">${b.analysis ? `${Number(b.analysis.lufs).toFixed(1)} LUFS・${b.analysis.bpm ? `${Math.round(b.analysis.bpm)} BPM・` : ''}勢い ${energyWord(b.analysis.energy)}（${Number(b.analysis.energy).toFixed(2)}）・使う部分 ${fmt(b.analysis.start)}–${fmt(b.analysis.end)}` : '未測定（次の生成で測ります）'}</span>
+              <fluent-button size="small" appearance="subtle" data-del-bgm="${esc(b.id)}" aria-label="${esc(b.name)} を外す">外す</fluent-button></li>`).join('')}</ul>` : ''}
             <form id="bgmForm" class="stack" style="margin-top:8px">
-              <input type="file" id="bgmFile" accept="audio/*" class="native" aria-label="BGM ファイル">
+              <input type="file" id="bgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" class="native" multiple aria-label="BGM ファイル（複数選べます）">
               ${field('この曲を使う権利（著作権・利用許諾）を自分が持っています', '<fluent-checkbox slot="input" id="bgmRights"></fluent-checkbox>')}
-              <div><fluent-button type="submit" size="small">BGM を追加</fluent-button></div><div id="bgmMsg"></div>
+              <div><fluent-button type="submit" size="small">BGM を追加</fluent-button></div>
+              <p class="caption">追加すると、曲ごとに音量（ラウドネス）・テンポ・音の立ち上がり・明るさを測り、場面の勢いに合う曲を選ぶのに使います。</p>
+              <div id="bgmMsg" aria-live="polite"></div>
             </form></details>`)}
         ${group('pack', 'オープニング・クロージング・場面転換', `
           ${(() => {
@@ -698,7 +707,7 @@ async function project(id, showSettings = false) {
     const set = (k, t) => { const el = $(`#sum-${k}`); if (el) el.textContent = t; };
     set('series', !opts.series ? 'オフ（ショート候補を3本）' : opts.series_by === 'parts' ? `オン・${opts.parts}本に分ける` : `オン・1本 約${opts.part_minutes}分で分ける`);
     set('scope', opts.series ? 'シリーズでは全文を送ります' : `${scopeLabel[opts.scope]?.[0] ?? ''}${$('#scopes .selected .scope-cost')?.textContent ? `・${$('#scopes .selected .scope-cost').textContent}` : ''}`);
-    const bgm = $('#bgm'), bgmName = opts.bgm === 'auto' ? '自動' : opts.bgm === 'none' ? 'なし' : bgm?.selectedOptions[0]?.textContent.trim() ?? '指定';
+    const bgm = $('#bgm'), bgmName = opts.bgm === 'auto' ? '自動' : opts.bgm === 'none' ? 'なし' : opts.bgm === 'scene' ? '場面ごとに自動' : bgm?.selectedOptions[0]?.textContent.trim() ?? '指定';
     set('sound', [`BGM ${bgmName}`, `効果音 ${opts.sfx ? 'オン' : 'オフ'}`, opts.tsukkomi ? `ツッコミ ${{ telop: 'テロップ', card: 'カード' }[opts.tsukkomi_style] ?? '自動'}` : 'ツッコミ オフ', ...(opts.mask_words.length ? [`伏せ字 ${opts.mask_words.length}語`] : [])].join('・'));
     set('pack', [`オープニング ${!kitView.opening ? '未登録' : opts.opening ? 'あり' : 'なし'}`, `クロージング ${!kitView.closing ? '未登録' : opts.closing ? 'あり' : 'なし'}`, `場面転換カード ${opts.scene_cards ? 'あり' : 'なし'}`].join('・'));
     set('analysis', reuseAnalysis ? '流用する' : '最初からやり直す');
@@ -860,15 +869,27 @@ async function project(id, showSettings = false) {
   }
   $('#bgmForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const f = $('#bgmFile').files[0];
-    if (!f) { $('#bgmMsg').innerHTML = info('音声ファイルを選んでください', 'warning'); return; }
-    const fd = new FormData(); fd.append('file', f); fd.append('rights_confirmed', $('#bgmRights').checked ? 'true' : 'false');
+    const files = [...$('#bgmFile').files];
+    if (!files.length) { $('#bgmMsg').innerHTML = info('音声ファイルを選んでください', 'warning'); return; }
+    const fd = new FormData(); files.forEach(f => fd.append('file', f)); fd.append('rights_confirmed', $('#bgmRights').checked ? 'true' : 'false');
+    $('#bgmMsg').innerHTML = info(`${files.length} 曲を追加して、音量と曲の勢いを測っています…`);
     try {
       const r = await fetch(`/api/projects/${id}/bgm`, { method: 'POST', body: fd, headers: { 'X-VideoCreator': '1' } });
       const data = await r.json(); if (!r.ok) throw Object.assign(new Error(data?.error?.message ?? r.statusText), { code: data?.error?.code });
-      opts.bgm = data.id; saveOpts(); router();
+      // registering tracks means choosing per scene from them
+      opts.bgm = 'scene'; await saveOpts();
+      sessionStorage.setItem('vc.bgmFlash', `${data.tracks.length} 曲を追加しました（BGM は「場面に合わせて自動で選ぶ」にしました）${data.skipped.length ? `。追加できなかった曲: ${data.skipped.map(s => `${s.name}（${s.reason}）`).join('、')}` : ''}`);
+      router();
     } catch (e) { $('#bgmMsg').innerHTML = errorBar(e); }
   });
+  $$('[data-del-bgm]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/projects/${id}/bgm/${encodeURIComponent(b.dataset.delBgm)}`, { method: 'DELETE' });
+      if (opts.bgm === b.dataset.delBgm) { opts.bgm = userBgm.length > 1 ? 'scene' : 'auto'; await saveOpts(); }
+      router();
+    } catch (e) { $('#bgmMsg').innerHTML = errorBar(e); }
+  }));
+  { const flash = sessionStorage.getItem('vc.bgmFlash'); if (flash) { sessionStorage.removeItem('vc.bgmFlash'); $('#bgmMsg').innerHTML = info(flash, 'success'); } }
   const patchAsset = async (aid, body) => { try { await api(`/api/assets/${aid}`, { method: 'PATCH', body }); router(); } catch (e) { $('#assetMsg').innerHTML = errorBar(e); } };
   $$('select.role').forEach(s => s.addEventListener('change', () => patchAsset(s.dataset.asset, { role: s.value })));
   $$('input.spk').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, i.value ? { speaker: Number(i.value) } : { clear_speaker: true })));
@@ -1409,6 +1430,66 @@ async function review(epId) {
       <td><fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${esc(name)} ${esc(i.id)} を使う"></fluent-switch>${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">承認</fluent-button>`}</td></tr>`;
   };
 
+  // ---- BGM: scene-by-scene music and the level automation (Planning.BgmPlanner) ----
+  const trackOf = (id) => bgmList.find(b => b.id === id);
+  const trackLabel = (id) => trackOf(id)?.name ?? id;
+  const cueColors = ['#2f5fb3', '#8a5300', '#2b7a50', '#8a3f8a', '#a8322a', '#1f6f7a'];
+  const cueSpans = () => {
+    const cues = plan.audio.bgm_cues ?? [], total = totalDur();
+    const starts = cues.map((c, i) => i === 0 ? 0 : finalT(c.t0));
+    return cues.map((c, i) => ({ c, start: starts[i], end: i + 1 < cues.length ? starts[i + 1] : total }));
+  };
+  const lvlOpts = (values, cur, label) => [...new Set([...values, cur])].sort((a, b) => b - a).map(v => `<option value="${v}" ${Math.abs(v - cur) < 0.05 ? 'selected' : ''}>${label(v)}</option>`).join('');
+  const bgmPanel = () => {
+    const a = plan.audio, cues = a.bgm_cues ?? [];
+    const sfxSw = field('効果音', `<fluent-switch slot="input" id="sfxSw" ${a.sfx_enabled ? 'checked' : ''}></fluent-switch>`);
+    if (!cues.length) return `<h3>音</h3>
+          <div class="row"><label class="caption">BGM <select class="native" id="bgmSel">
+            <option value="none" ${!a.bgm ? 'selected' : ''}>なし</option>${bgmList.map(b => `<option value="${esc(b.id)}" ${a.bgm === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
+            ${sfxSw}</div>
+          <p class="caption">${a.sfx?.length ?? 0} 個の効果音${a.bgm ? ` · BGM ${a.duck ? 'は話している間だけ自動で小さくなります' : 'あり'}` : ''}。この動画は以前の形式のため、場面ごとの選曲と音量の調整は作り直すと使えます。</p>`;
+    const beat = a.bgm_mode === 'beat', on = !!a.bgm, spans = cueSpans(), total = Math.max(0.1, totalDur());
+    const tracks = [...new Set(cues.map(c => c.track).filter(Boolean))];
+    const color = (id) => cueColors[Math.max(0, tracks.indexOf(id)) % cueColors.length];
+    const single = cues.every(c => c.track === cues[0].track) && a.bgm_mode !== 'scene';
+    const usable = bgmList.filter(b => b.analysis || b.source === 'library');
+    const s15 = qa.find(q => q.check_id === 'S-15');
+    const depths = (a.duck_spans ?? []).map(d => d.db);
+    const ducks = (a.duck_spans ?? []).map(d => { const s = finalT(d.t0), e = finalT(d.t1, true); return `<span class="bgm-duck" style="left:${(s / total * 100).toFixed(2)}%;width:${Math.max(0.2, (e - s) / total * 100).toFixed(2)}%;height:${Math.min(100, 20 + d.db * 4)}%" title="${s.toFixed(1)}–${e.toFixed(1)}秒 ${d.db.toFixed(1)} dB 下げる"></span>`; }).join('');
+    return `<h3 id="h-bgm">音・BGM</h3>
+      <div class="row"><label class="caption">BGM <select class="native" id="bgmSel" ${beat ? 'disabled' : ''}>
+        <option value="none" ${!on ? 'selected' : ''}>なし</option>
+        <option value="scene" ${on && !single ? 'selected' : ''}>場面ごとに選ぶ（自動選曲）</option>
+        ${usable.map(b => `<option value="${esc(b.id)}" ${on && single && cues[0].track === b.id ? 'selected' : ''}>全編この曲: ${esc(b.name)}</option>`).join('')}</select></label>
+        ${sfxSw}</div>
+      ${beat ? '<p class="caption">ビート同期のパターンは、曲の拍に合わせてカットしているため曲を変えられません（音量は調整できます）。</p>' : ''}
+      ${on ? `<div class="bgm-strip" role="img" aria-label="BGM の流れ: ${spans.map(x => `${x.start.toFixed(0)}秒から${x.c.track ? esc(trackLabel(x.c.track)) : 'BGM なし'}`).join('、')}。下の帯は話していて BGM を下げる所">
+          ${spans.map(x => `<span class="bgm-seg" style="left:${(x.start / total * 100).toFixed(2)}%;width:${((x.end - x.start) / total * 100).toFixed(2)}%;background:${x.c.track ? color(x.c.track) : 'transparent'}">${x.c.track ? esc(trackLabel(x.c.track)) : 'なし'}</span>`).join('')}
+          <span class="bgm-ducks">${ducks}</span><span class="bgm-playhead"></span></div>
+        <div class="row">
+          <label class="caption">話している間（声との差） <select class="native" id="bgmLd">${lvlOpts([10, 12, 14, 16, 18, 20, 24], a.bgm_speech_ld, v => `声より ${v} LU 小さく${v === 14 ? '（おすすめ）' : v === 10 ? '（下限）' : ''}`)}</select></label>
+          <label class="caption">声のない所 <select class="native" id="bgmGap">${lvlOpts([0, -4, -6, -8, -10, -12, -16, -20], a.bgm_gap_lu, v => v === 0 ? '声と同じ大きさ' : `声より ${-v} LU 小さく`)}</select></label>
+        </div>
+        <p class="caption">${depths.length} か所の発話に合わせて、単語の 0.25 秒前から BGM を${depths.length ? ` ${Math.min(...depths).toFixed(0)}〜${Math.max(...depths).toFixed(0)} dB` : ''}下げ、0.8 秒未満の言葉の間は下げたままにします（声が小さい所・曲が盛り上がる所はより深く）。差は 10 LU 以上が聞き取りやすさの目安です（Torcoli ほか, JAES 2019）。</p>
+        <p class="caption ${s15 ? (s15.status === 'pass' ? 'pass' : 'warnc') : ''}" id="bgmMeasured">${s15 ? `実測（${s15.stage === 'final' ? '書き出し' : 'プレビュー'}の音を ebur128 で測定）: 話している間 ${esc(s15.measured)}` : '「プレビューを更新」すると、作った音で声と BGM の差を実測します。'}</p>
+        <div class="bgm-cues stack" role="list" aria-label="場面ごとの BGM">
+          ${spans.map(({ c, start, end }) => `<div class="bgm-cue" role="listitem" data-cue="${esc(c.id)}">
+            <div class="row"><span class="bgm-swatch" style="background:${c.track ? color(c.track) : 'transparent'}"></span>
+              <button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${start.toFixed(1)}秒からの場面を再生">${tc(start)}–${tc(end)}</button>
+              <b>${energyWord(c.scene_energy)}場面</b><span class="caption">${c.auto ? '自動で選曲' : 'あなたが選択'}</span></div>
+            <p class="caption">${esc(c.scene)}</p>
+            <div class="row">
+              <label class="caption">曲 <select class="native bgm-cue-track" data-id="${esc(c.id)}" aria-label="${tc(start)}からの曲" ${beat ? 'disabled' : ''}>
+                ${c.auto ? '' : '<option value="auto">自動の選曲に戻す</option>'}
+                ${usable.map(b => `<option value="${esc(b.id)}" ${c.track === b.id ? 'selected' : ''}>${esc(b.name)}${b.analysis ? `（${energyWord(b.analysis.energy)}）` : ''}</option>`).join('')}
+                <option value="none" ${!c.track ? 'selected' : ''}>この場面は BGM なし</option></select></label>
+              <label class="caption">音量 <select class="native bgm-trim" data-id="${esc(c.id)}" aria-label="${tc(start)}からの曲の音量">${lvlOpts([6, 3, 0, -3, -6, -9, -12], c.trim_db, v => v === 0 ? '±0 dB' : `${v > 0 ? '+' : ''}${v} dB`)}</select></label>
+            </div>
+            <p class="caption">理由: ${esc(c.reason)}</p></div>`).join('')}
+        </div>` : ''}
+      <p class="caption">${a.sfx?.length ?? 0} 個の効果音。変更後は「プレビューを更新」で聞けます。</p>`;
+  };
+
   // ---- 自動チェック panel (right column): findings on the rendered-file timeline, recommended fix, Copilot auto-repair ----
   const totalDur = () => plan.timeline.reduce((a, c) => a + (c.src_out - c.src_in) / (c.speed || 1), 0) + active().reduce((a, i) => a + i.duration, 0);
   const tc = (x) => `${Math.floor(x / 60)}:${(x % 60).toFixed(1).padStart(4, '0')}`;
@@ -1592,11 +1673,7 @@ async function review(epId) {
           ${plan.series?.chapters?.length ? `<details><summary class="caption">構成・チャプター（${plan.series.chapters.length}）</summary><ul class="notes">${plan.series.chapters.map(ch => `<li>${fmt(ch.start)} ${esc(ch.title)}</li>`).join('')}</ul></details>` : ''}
           <details><summary class="caption">カット一覧（映像・速度）</summary>
             <ul class="notes">${plan.timeline.map(c => `<li>${esc(c.clip_id)} ${esc(assetName(c.asset_id))}${c.role !== 'body' ? `（${esc(roleName[c.role] ?? c.role)}）` : ''} ${((c.src_out - c.src_in) / (c.speed || 1)).toFixed(1)}秒${c.speed && c.speed !== 1 ? ` ×${c.speed}倍速` : ''}${c.reframe?.mode === 'face' ? ' · 顔を追う' : ''}${c.reframe?.mode === 'screen' ? (c.reframe.crop_w ? ' · 画面（操作箇所へズーム）' : ' · 画面（全体）') : ''}${c.pip ? ` · ワイプ: ${esc(assetName(c.pip.asset_id))}` : ''}</li>`).join('')}</ul></details>
-          <h3>音</h3>
-          <div class="row"><label class="caption">BGM <select class="native" id="bgmSel">
-            <option value="none" ${!plan.audio.bgm ? 'selected' : ''}>なし</option>${bgmList.map(b => `<option value="${esc(b.id)}" ${plan.audio.bgm === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select></label>
-            ${field('効果音', `<fluent-switch slot="input" id="sfxSw" ${plan.audio.sfx_enabled ? 'checked' : ''}></fluent-switch>`)}</div>
-          <p class="caption">${plan.audio.sfx?.length ?? 0} 個の効果音${plan.audio.bgm ? ` · BGM ${plan.audio.duck ? 'は話している間だけ自動で小さくなります' : 'あり'}` : ''}。変更後は「プレビューを更新」で聞けます。</p>
+          ${bgmPanel()}
           <details><summary class="caption">書き起こしを直す（誤認識の修正）</summary>
             <p class="caption">この動画に使われている範囲の単語です。直すと字幕が作り直されます（時刻はそのまま。字幕を手で直していた場合はやり直しになります）。</p>
             <div class="words">${tr.words.filter(w => plan.timeline.some(c => (w.t0 + w.t1) / 2 >= (c.audio_in ?? c.src_in) && (w.t0 + w.t1) / 2 <= (c.audio_in ?? c.src_in) + (c.src_out - c.src_in))).map(w => `<input class="native wd" data-id="${esc(w.id)}" value="${esc(w.text)}" size="${Math.max(2, [...w.text].length + 1)}" maxlength="30" aria-label="単語 ${esc(w.text)}">`).join('')}</div></details>
@@ -1673,6 +1750,11 @@ async function review(epId) {
     $$('[data-approve-card]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve_card', target: b.dataset.approveCard }])));
     $('#approveCards')?.addEventListener('click', () => patch([{ op: 'approve_all_cards' }]));
     $('#bgmSel')?.addEventListener('change', (e) => { patch([{ op: 'set_bgm', target: e.target.value }]); stale = true; });
+    $$('select.bgm-cue-track').forEach(s => s.addEventListener('change', () => patch([{ op: 'set_bgm_cue', target: s.dataset.id, text: s.value }])));
+    $$('select.bgm-trim').forEach(s => s.addEventListener('change', () => patch([{ op: 'set_bgm_trim', target: s.dataset.id, value: Number(s.value) }])));
+    $('#bgmLd')?.addEventListener('change', (e) => patch([{ op: 'set_bgm_level', type: 'ld', value: Number(e.target.value) }]));
+    $('#bgmGap')?.addEventListener('change', (e) => patch([{ op: 'set_bgm_level', type: 'gap', value: Number(e.target.value) }]));
+    { const v = $('#pv video'), head = $('.bgm-playhead'); if (v && head) { const move = () => { head.style.left = `${Math.min(100, v.currentTime / Math.max(0.1, totalDur()) * 100).toFixed(2)}%`; }; v.addEventListener('timeupdate', move); move(); } }
     $('#sfxSw')?.addEventListener('change', (e) => { patch([{ op: 'set_sfx', enabled: e.target.checked }]); stale = true; });
     $$('[data-adj]').forEach(b => b.addEventListener('click', () => { const [edge, delta] = b.dataset.adj.split(':'); patch([{ op: 'adjust', edge, delta: Number(delta) }]); }));
     $('#repreview').addEventListener('click', async () => {
@@ -1762,18 +1844,61 @@ async function exportsView(jobId) {
   }
 }
 
+// ---------------- posting texts (YouTube / Viva Engage / chapters) ----------------
+async function postPanel(renderId, box, regenerate = false) {
+  let k;
+  try { k = await api(`/api/renders/${renderId}/post`, regenerate ? { method: 'POST' } : {}); }
+  catch (e) { if (box.isConnected) box.innerHTML = errorBar(e); return; }
+  if (!box.isConnected) return;
+  const block = (key, title, text, limit, hint) => `
+    <div class="stack post-block" style="gap:4px">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0">${esc(title)}</h3>
+        <div class="row"><span class="caption post-count" data-limit="${limit ?? ''}"></span>
+          <fluent-button class="post-copy" data-key="${key}" size="small" appearance="primary">コピー</fluent-button></div></div>
+      ${hint ? `<p class="caption" style="margin:0">${esc(hint)}</p>` : ''}
+      <textarea class="post-text" data-key="${key}" rows="${Math.min(18, Math.max(4, text.split('\n').length + 1))}" aria-label="${esc(title)}" spellcheck="false" style="width:100%;box-sizing:border-box;font:inherit;resize:vertical">${esc(text)}</textarea>
+    </div>`;
+  box.innerHTML = `
+    <p class="caption">${k.source === 'ai' ? 'AI が書き起こしをもとに作った案です（発話にない数字・名前は自動で除いています）。' : 'ひな形から作った案です。'}投稿前に内容を確認し、必要なら直してからコピーしてください。</p>
+    ${(k.notes ?? []).length ? `<fluent-message-bar intent="warning" layout="multiline"><ul class="notes" style="margin:0">${k.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></fluent-message-bar>` : ''}
+    ${block('youtube', 'YouTube の説明文', k.youtube, 5000, '説明欄にそのまま貼り付けます。最初の1〜2行が「もっと見る」の前に表示されます。')}
+    ${block('engage', 'Viva Engage の投稿', k.engage, 10000, '社内向けの投稿文です。動画を添付して貼り付けます。')}
+    ${k.chapters ? block('chapters', 'チャプター（タイムコード）', k.chapters, null, '書き出した動画の実際の時刻です（オープニング・カードの分も反映）。YouTube の説明欄に入れるとチャプターになります。') : `<p class="caption">チャプター: YouTube の条件（00:00 から・3つ以上・各10秒以上）を満たさないため付けません。</p>`}
+    <div class="row"><fluent-button id="postAgain" appearance="subtle">別の案を作る</fluent-button></div>`;
+  const count = (ta) => {
+    const c = ta.closest('.post-block').querySelector('.post-count'), lim = Number(c.dataset.limit);
+    c.textContent = `${ta.value.length.toLocaleString()} 文字${lim ? ` / ${lim.toLocaleString()}` : ''}`;
+    c.style.color = lim && ta.value.length > lim ? 'var(--colorPaletteRedForeground1, #c50f1f)' : '';
+  };
+  $$('.post-text', box).forEach(ta => { count(ta); ta.addEventListener('input', () => count(ta)); });
+  $$('.post-copy', box).forEach(b => b.addEventListener('click', async () => {
+    const ta = $(`.post-text[data-key="${b.dataset.key}"]`, box);
+    try { await navigator.clipboard.writeText(ta.value); }
+    catch { ta.select(); document.execCommand('copy'); }
+    b.textContent = 'コピーしました';
+    setTimeout(() => { b.textContent = 'コピー'; }, 1500);
+  }));
+  $('#postAgain', box).addEventListener('click', () => {
+    box.innerHTML = '<p class="caption" aria-live="polite">別の案を作っています…</p>';
+    postPanel(renderId, box, true);
+  });
+}
+
 // ---------------- export ----------------
 async function exportView(renderId) {
   setSteps(5);
-  let timer = null, workflowSaved = false;
+  let timer = null, finished = false, workflowSaved = false;
+  const stop = () => { finished = true; clearInterval(timer); };
   const poll = async () => {
     const s = await api(`/api/renders/${renderId}`);
+    if (finished) return;   // an earlier poll already showed the result; re-rendering would wipe the post texts
     if (!workflowSaved && s.project_id) {
       await saveWorkflowState(s.project_id, { step: 'render', edit_plan_id: s.editplan_id, render_id: renderId });
       workflowSaved = true;
     }
     if (s.state === 'done') {
-      clearInterval(timer);
+      stop();
       const r = s.render, files = r.outputs;
       const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
       const jobId = await api(`/api/editplans/${s.editplan_id}`).then(v => v.plan?.provenance?.job_id).catch(() => null);
@@ -1787,26 +1912,28 @@ async function exportView(renderId) {
             <p class="caption">${esc(r.path)}</p></section>
           <section class="card stack">
             <h2>ファイル</h2>
-            <ul>${Object.entries(files).filter(([k]) => !k.startsWith('thumb')).map(([k, f]) => `<li><a href="/api/renders/${renderId}/files/${esc(k)}" target="_blank" rel="noopener">${esc(f.split(/[\\/]/).pop())}</a></li>`).join('')}</ul>
+            <ul>${Object.entries(files).filter(([k]) => !k.startsWith('thumb') && k !== 'post').map(([k, f]) => `<li><a href="/api/renders/${renderId}/files/${esc(k)}" target="_blank" rel="noopener">${esc(f.split(/[\\/]/).pop())}</a></li>`).join('')}</ul>
             <h3>サムネイル候補</h3>
             <div class="thumbs">${Object.keys(files).filter(k => k.startsWith('thumb')).map(k => `<a href="/api/renders/${renderId}/files/${k}" target="_blank" rel="noopener"><img src="/api/renders/${renderId}/files/${k}" alt="サムネイル候補 ${k.slice(5)}"></a>`).join('')}</div>
             <h3>自動チェック（QA）</h3>
             <div>${qaList(r.qa)}</div>
-            <p class="caption">投稿用のタイトル・説明文の案は「.metadata.md」にあります。投稿前に内容を確認してください。</p>
+            <p class="caption">投稿用のタイトル候補などは「.metadata.md」にもあります。投稿前に内容を確認してください。</p>
           </section>
-        </div>`;
+        </div>
+        <section class="card stack" id="post" aria-labelledby="postH"><h2 id="postH">投稿用の文章（コピーして貼り付け）</h2><div id="postBody"><p class="caption" aria-live="polite">文章を作っています…</p></div></section>`;
       wireSafeToggle();
       $('#open').addEventListener('click', () => api(`/api/renders/${renderId}/open-folder`, { method: 'POST' }).catch(() => { }));
+      postPanel(renderId, $('#postBody'));
     } else if (s.state === 'cancelled') {
-      clearInterval(timer);
+      stop();
       main.innerHTML = `<h1>書き出しを取り消しました</h1>${info(s.message ?? '書き出しを取り消しました')}
         <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}" style="margin-top:12px">確認・修正に戻る</fluent-anchor-button>`;
     } else if (s.state === 'stale') {
-      clearInterval(timer);
+      stop();
       main.innerHTML = `<h1>書き出し結果は失効しています</h1>${info('編集計画が変更されたため、承認・本番QA・書き出し結果は現在の内容に使えません。再承認して書き出してください。', 'warning')}
         <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}">確認・修正に戻る</fluent-anchor-button>`;
     } else if (s.state === 'failed') {
-      clearInterval(timer);
+      stop();
       main.innerHTML = `<h1>書き出しできませんでした</h1>${errorBar({ message: s.message, code: s.error_code })}${s.failures ? `<section class="card">${qaList(s.failures)}</section>` : ''}
         <fluent-anchor-button href="#/ep/${esc(s.editplan_id)}" style="margin-top:12px">確認・修正に戻る</fluent-anchor-button>`;
     } else {
@@ -1824,7 +1951,7 @@ async function exportView(renderId) {
     }
   };
   await poll();
-  timer = setInterval(() => poll().catch(() => { }), 1000);
+  if (!finished) timer = setInterval(() => poll().catch(() => { }), 1000);
   cleanup = () => clearInterval(timer);
 }
 

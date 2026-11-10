@@ -112,6 +112,31 @@ public sealed record BgmTrack
     public string Source { get; init; } = "library";   // library | user
     public string? ProjectId { get; init; }
     public bool RightsConfirmed { get; init; }
+    /// <summary>Measured at registration (Audio.BgmAnalyzer); null for tracks registered before the analysis existed (made on first use).</summary>
+    public BgmAnalysis? Analysis { get; init; }
+}
+
+/// <summary>What a BGM track measures as (Audio.BgmAnalyzer): loudness per ITU-R BS.1770 (FFmpeg ebur128) and the audio features its energy is judged from.</summary>
+public sealed record BgmAnalysis
+{
+    public int Version { get; init; }
+    public double Duration { get; init; }
+    /// <summary>Integrated loudness (LUFS) and loudness range (LU) of the playable part.</summary>
+    public double Lufs { get; init; }
+    public double Lra { get; init; }
+    /// <summary>The playable part: leading / trailing silence and fade tails are skipped, and loops repeat only [Start, End).</summary>
+    public double Start { get; init; }
+    public double End { get; init; }
+    /// <summary>Short-term (3 s) loudness every <see cref="ProfileStep"/> seconds of the file, LUFS (value i = window ending at i·step).</summary>
+    public List<double> ShortTerm { get; init; } = [];
+    public double ProfileStep { get; init; } = 0.5;
+    public double Bpm { get; init; }
+    /// <summary>Note attacks per second (peaks of the log-spectral flux, Dixon 2006).</summary>
+    public double OnsetRate { get; init; }
+    /// <summary>Mean spectral centroid (Hz, ≤ 8 kHz analysis band): a brightness measure.</summary>
+    public double Brightness { get; init; }
+    /// <summary>0 (calm) .. 1 (energetic) from tempo, attack rate and brightness on fixed scales (Audio.BgmAnalyzer.Energy).</summary>
+    public double Energy { get; init; }
 }
 
 public sealed record FaceBox(double X, double Y, double W, double H, double Score)
@@ -337,7 +362,53 @@ public sealed record AudioSpec
     public double TargetLufs { get; init; } = -14;
     public double TruePeak { get; init; } = -1.5;
     public double Lra { get; init; } = 11;
+
+    /// <summary>
+    /// Scene-by-scene music (Planning.BgmPlanner). Empty = an older plan: one track (<see cref="Bgm"/>) under a sidechain compressor.
+    /// When set, <see cref="Bgm"/> only says whether music is on (null = off) and which track the plan started with.
+    /// </summary>
+    public List<BgmCue> BgmCues { get; init; } = [];
+    /// <summary>scene (tracks chosen per scene from a pool) | single (one track chosen by the user or the pattern) | beat (beat-synced, one track).</summary>
+    public string? BgmMode { get; init; }
+    /// <summary>Where the music is lowered under speech (body timeline), from the ASR word times.</summary>
+    public List<DuckSpan> DuckSpans { get; init; } = [];
+    /// <summary>Music level where nobody speaks, relative to the speech loudness (LU, ≤ 0).</summary>
+    public double BgmGapLu { get; init; } = -8;
+    /// <summary>Target loudness difference speech − music while speaking (LU). Research floor 10 LU (Torcoli et al., JAES 2019).</summary>
+    public double BgmSpeechLd { get; init; } = 14;
+    /// <summary>Loudness of the edited dialogue (LUFS): estimated when planning; the renderer measures the edited dialogue and uses that.</summary>
+    public double? SpeechLufs { get; init; }
 }
+
+/// <summary>
+/// One scene's music (body timeline). The track plays from <see cref="Offset"/> seconds into its playable part [<see cref="In"/>, <see cref="Out"/>), looping
+/// inside it; its level in pauses is SpeechLufs + BgmGapLu + TrimDb (the track's own loudness <see cref="TrackLufs"/> is compensated).
+/// </summary>
+public sealed record BgmCue
+{
+    public required string Id { get; init; }
+    public double T0 { get; init; }
+    public double T1 { get; init; }
+    /// <summary>BgmTrack id; null = no music in this scene.</summary>
+    public string? Track { get; init; }
+    public double In { get; init; }
+    public double Out { get; init; }
+    public double Offset { get; init; }
+    public double TrackLufs { get; init; } = -16;
+    public double TrimDb { get; init; }
+    /// <summary>True while the track is the automatic choice; a user's choice is kept when the plan is rebuilt.</summary>
+    public bool Auto { get; init; } = true;
+    public double SceneEnergy { get; init; }
+    public double TrackEnergy { get; init; }
+    public string Scene { get; init; } = "";
+    public string Reason { get; init; } = "";
+}
+
+/// <summary>
+/// Speech where the music is lowered (body timeline). <see cref="LocalDb"/> = this stretch's speech level relative to the whole edit (quieter speech is ducked deeper);
+/// <see cref="Db"/> = the attenuation applied (BgmPlanner.Recompute: target gap, local level, and loud passages of the track under it).
+/// </summary>
+public sealed record DuckSpan(double T0, double T1, double LocalDb, double Db);
 public sealed record EditRecord(DateTimeOffset At, string Op, string Target, string? From, string? To);
 
 public sealed record Provenance
@@ -472,7 +543,7 @@ public sealed record JobOptions
 {
     /// <summary>How much of a long transcript is sent to the AI: full | balanced | economy.</summary>
     public string Scope { get; init; } = "balanced";
-    /// <summary>auto (preset default) | none | library/user track id.</summary>
+    /// <summary>auto (preset default) | none | scene (choose per scene from the project's registered tracks, else the library) | library/user track id.</summary>
     public string Bgm { get; init; } = "auto";
     public bool Sfx { get; init; } = true;
     public bool Tsukkomi { get; init; }

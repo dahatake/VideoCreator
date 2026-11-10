@@ -50,6 +50,18 @@ public sealed class MediaProbe(FFmpeg ff)
 
     static bool IsAttachedPic(JsonElement s) => s.TryGetProperty("disposition", out var d) && d.TryGetProperty("attached_pic", out var ap) && ap.GetInt32() == 1;
 
+    /// <summary>Duration and channel count of an audio file (BGM). Unlike <see cref="ProbeAsync"/> a picture track is not required (most MP3s have none).</summary>
+    public async Task<(double Duration, int Channels)> ProbeAudioAsync(string file, CancellationToken ct = default)
+    {
+        var r = await ff.RunProbeAsync(["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-select_streams", "a:0", file], ct);
+        if (r.ExitCode != 0) throw new IngestException("E-ING-UNSUPPORTED", "音声として読み込めない形式です（" + FFmpeg.Tail(r.StdErr, 1) + "）");
+        using var doc = JsonDocument.Parse(r.StdOut);
+        var a = doc.RootElement.TryGetProperty("streams", out var s) ? s.EnumerateArray().FirstOrDefault() : default;
+        if (a.ValueKind == JsonValueKind.Undefined) return (0, 0);
+        double dur = doc.RootElement.TryGetProperty("format", out var f) && f.TryGetProperty("duration", out var d) && double.TryParse(d.GetString(), NumberStyles.Float, IC, out var dd) ? dd : 0;
+        return (dur, a.TryGetProperty("channels", out var ch) ? ch.GetInt32() : 0);
+    }
+
     // Container metadata can lie (e.g. MKV): inspect real packet timestamp deltas over the first 10 s.
     async Task<bool> DetectVfrFromPacketsAsync(string file, CancellationToken ct)
     {

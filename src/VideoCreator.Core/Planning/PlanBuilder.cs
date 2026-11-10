@@ -9,17 +9,18 @@ public sealed record PlanRequest(
     Candidate Candidate, Transcript Transcript, SignalSet Signals, Preset Preset,
     IReadOnlyList<SourceAsset> Assets, SourceAsset Master, string ProjectId, Job Job,
     IReadOnlyDictionary<string, List<FaceSample>> Faces, BgmTrack? Bgm, IHighlightSelector? Llm,
-    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null, BrandKit? Kit = null, ScreenContext? Screen = null);
+    IReadOnlyList<Interval>? OverrideSegments = null, IReadOnlyList<Interval>? Bursts = null, SeriesPart? Part = null, BrandKit? Kit = null, ScreenContext? Screen = null,
+    IReadOnlyList<BgmTrack>? BgmPool = null);
 
 /// <summary>Candidate → EditPlan. Dispatches on preset.Planner, then reframes, adds telops, BGM and SFX (PRD FR-SOL, FR-SWT, FR-SPD, FR-BGM, FR-AUD).</summary>
 public static class PlanBuilder
 {
     public static string DefaultBgmId(Preset p) => p.Audio.Bgm switch { "auto" => p.Planner == "beat" ? "hype" : "upbeat", var x => x };
 
-    /// <summary>Which BGM this job uses (null = none): job option first, otherwise the preset's default.</summary>
+    /// <summary>Which BGM this job uses (null = none): job option first, otherwise the preset's default. "scene" picks per scene from a pool (PipelineRunner), so no single id.</summary>
     public static string? ResolveBgmId(Preset p, JobOptions o)
     {
-        if (o.Bgm == "none") return null;
+        if (o.Bgm is "none" or "scene") return null;
         if (o.Bgm != "auto" && !string.IsNullOrEmpty(o.Bgm)) return o.Bgm;
         var d = DefaultBgmId(p);
         return d == "none" ? (p.Planner == "beat" ? "hype" : null) : d;
@@ -153,13 +154,14 @@ public static class PlanBuilder
         if (maskWords.Count > 0) notes.Add($"伏せ字: {maskWords.Count} 語を ● にし、{bleeps.Count} か所の音声をピー音にしました");
 
         string? bgmId = r.Bgm?.Id;
+        bool hasMusic = bgmId != null || r.Job.Options.Bgm == "scene" && r.BgmPool is { Count: > 0 };
         var (sfx, mutes) = r.Job.Options.Sfx ? SfxPlanner.Plan(clips, telops, p.Audio.Sfx, total) : ([], []);
         var audio = new AudioSpec
         {
             Master = master.Id, TargetLufs = p.Audio.Loudnorm.I, TruePeak = p.Audio.Loudnorm.TP,
             Bgm = bgmId, BgmGainDb = p.Audio.BgmDb, Duck = p.Audio.Duck, DialogueGainDb = p.Audio.DialogueGainDb,
             BgmPhase = p.Planner == "beat" ? r.Bgm?.Phase ?? 0 : 0,
-            SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = bgmId == null ? [] : mutes, Bleeps = bleeps,
+            SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = hasMusic ? mutes : [], Bleeps = bleeps,
         };
         InsertPlanner.AddTsukkomi(packed, inserts, tsukkomi, r.Kit, canvas, notes);
         inserts = inserts.Select(i => i.Kind == "card" ? i with { Bgm = "upbeat", GainDb = p.Audio.BgmDb } : i).ToList();
@@ -184,6 +186,14 @@ public static class PlanBuilder
         {
             notes.Add($"テロップ「{t.Text}」は区間内の発話との対応を確認できないため表示しません");
             telops.Remove(t);
+        }
+        // scene-matched music and speech-keyed ducking: needs measured tracks (registration / BgmAnalyzer); otherwise the older single-track bed
+        var (bgmMode, bgmPool) = r.Job.Options.Bgm == "scene" && p.Planner != "beat" && r.BgmPool is { Count: > 0 } pool ? ("scene", pool)
+            : r.Bgm != null ? (p.Planner == "beat" ? "beat" : "single", (IReadOnlyList<BgmTrack>)[r.Bgm]) : ("", []);
+        if (bgmPool.Count > 0 && bgmPool.All(t => t.Analysis != null))
+        {
+            audio = BgmPlanner.Build(audio, packed, inserts, series, tr, sig, bursts, bgmMode, bgmPool, audio.BgmPhase, p.Audio.BgmGapLu, p.Audio.BgmSpeechLd, notes);
+            audio = BgmPlanner.Recompute(audio, inserts, packed.Sum(c => c.Length), id => bgmPool.FirstOrDefault(t => t.Id == id));
         }
         var plan = new EditPlan
         {
