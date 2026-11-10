@@ -4,6 +4,7 @@ using VideoCreator.Media;
 using VideoCreator.Models;
 using VideoCreator.Planning;
 using VideoCreator.Presets;
+using VideoCreator.Qa;
 using VideoCreator.Rendering;
 
 namespace VideoCreator.Tests;
@@ -48,6 +49,10 @@ public class TelopLayoutTests
         var supplement = TelopBuilder.Build(clips, tr, p, "", "", [], []).Where(t => t.Type == TelopType.Emphasis).ToList();
         Assert.True(supplement.Count >= 5, $"Expected >=5 verbatim phrases per 30s, got {supplement.Count}");
         Assert.All(supplement, t => Assert.NotEmpty(t.SourceWordIds));
+        var renderPlan = Plan(Enumerable.Range(0, 61).Select(i => new FaceSample(i * 0.5, [])).ToList(), actual) with { Preset = p.Ref, Timeline = clips };
+        var layout = TelopLayout.Resolve(renderPlan, p);
+        Assert.All(emphasis, t => Assert.NotNull(layout[t.Id].Bounds));
+        Assert.Equal(6, AssWriter.Write(renderPlan, p).Split('\n').Count(line => line.StartsWith("Dialogue:") && line.Contains(",Emph,")));
     }
 
     [Theory]
@@ -100,6 +105,10 @@ public class TelopLayoutTests
         Assert.NotNull(TelopLayout.Resolve(Plan(Samples()), P)["e"].Bounds);
         var unknown = Plan(Samples()) with { TelopFaces = [] };
         Assert.Null(TelopLayout.Resolve(unknown, P)["e"].Bounds);
+        var warning = QaEngine.LayoutOmissions(new QaContext(unknown, P, Fixtures.Talk, ["a"], []));
+        Assert.NotNull(warning);
+        Assert.Equal(QaStatus.Warn, warning.Status);
+        Assert.Contains("解析情報", Assert.Single(Assert.IsType<List<QaItem>>(warning.Items)).Detail);
     }
 
     [Fact]
@@ -185,6 +194,11 @@ public class TelopLayoutTests
             var output = Path.Combine(dir, "output.mp4");
             string filter = $"subtitles={FFmpeg.FilterPath(ass)}:fontsdir={FFmpeg.FilterPath(ff.FontsDir)}";
             await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-i", video, "-vf", filter, "-c:v", "libx264", "-preset", "ultrafast", output], ct);
+            var qa = new QaEngine(ff) { Faces = detector };
+            var ctx = new QaContext(plan, p, Fixtures.Talk, ["a"], []);
+            Assert.Equal(QaStatus.Pass, (await qa.FaceOverlapAsync(ctx, output, ct)).Status);
+            var safe = await qa.SafeZoneAsync(ctx, Path.Combine(dir, "qa"), ct);
+            Assert.True(safe.Status == QaStatus.Pass, safe.Measured);
             foreach (double time in new[] { 0.1, 0.2, 1.5, 2.8 })
             {
                 var inputFaces = await detector.DetectAtAsync(video, time, ct);

@@ -252,6 +252,7 @@ public sealed class QaEngine(FFmpeg ff)
         res.Add(safe with { Stage = "plan" });
         if (!preview) res.Add(safe with { Stage = "final" });
         if (!preview && Faces is { Available: true }) res.Add(await FaceOverlapAsync(ctx, rendered, ct));
+        else if (LayoutOmissions(ctx) is { } omissions) res.Add(omissions);
         if (!preview) res.Add(await BlackFreezeAsync(rendered, ctx.Preset.Id == "P9", ct, InsertMap.InsertSpans(InsertMap.Active(ctx.Plan)).Select(x => (x.Start, x.End)).ToList()));
         var hash = EditPlanFingerprint.Of(ctx.Plan);
         return res.Select(q => QaAdvisor.Attach(q) with { Stage = q.Stage ?? (preview ? "preview" : "final"), PlanHash = hash })
@@ -279,14 +280,28 @@ public sealed class QaEngine(FFmpeg ff)
         return new("S-15", ok ? QaStatus.Pass : QaStatus.Warn, $"{ld}（下位10% {Math.Min(m.LdP10, 99):0.0} LU・{m.SpeechBlocks * 0.1:0} 秒分）{gap}", threshold, name);
     }
 
+    /// <summary>Report face-protection omissions even in previews and when the detector is unavailable.</summary>
+    public static QaResult? LayoutOmissions(QaContext ctx)
+    {
+        var layout = TelopLayout.Resolve(ctx.Plan, ctx.Preset);
+        var ins = InsertMap.Active(ctx.Plan);
+        var items = ctx.Plan.Telops.Where(t => t.Enabled && layout[t.Id].Reason != null)
+            .Select(t => new QaItem(t.Id, "telop", layout[t.Id].Reason!,
+                Math.Round(InsertMap.ToFinal(ins, t.Start), 3), Math.Round(InsertMap.ToFinal(ins, t.End, true), 3))).ToList();
+        return items.Count == 0 ? null : new("S-05", QaStatus.Warn, $"顔保護のため演出テロップ {items.Count} 件を非表示",
+            "顔にテロップが重ならない", "顔とテロップの重なり") { Items = items };
+    }
+
     /// <summary>S-05: independently detect faces near the start, middle and end of sampled rendered telops, including top bars and SFX.</summary>
     public async Task<QaResult> FaceOverlapAsync(QaContext ctx, string rendered, CancellationToken ct)
     {
         int H = ctx.Plan.Canvas.Height, W = ctx.Plan.Canvas.Width;
         var layout = TelopLayout.Resolve(ctx.Plan, ctx.Preset);
         var cand = ctx.Plan.Telops.Where(t => t.Enabled && layout[t.Id].Bounds != null).OrderBy(t => t.Start).ToList();
-        if (cand.Count == 0) return new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
-        int step = Math.Max(1, cand.Count / 12), checkedN = 0; var hits = new List<string>(); var items = new List<QaItem>();
+        var omissions = LayoutOmissions(ctx);
+        if (cand.Count == 0) return omissions ?? new("S-05", QaStatus.Pass, "no telops", "顔にテロップが重ならない", "顔とテロップの重なり");
+        int step = Math.Max(1, (int)Math.Ceiling(cand.Count / 12.0)), checkedN = 0;
+        var hits = new List<string>(); var items = omissions?.Items?.ToList() ?? [];
         var ins = InsertMap.Active(ctx.Plan);
         for (int i = 0; i < cand.Count; i += step)
         {
@@ -305,7 +320,9 @@ public sealed class QaEngine(FFmpeg ff)
                 }
             }
         }
-        return new("S-05", hits.Count == 0 ? QaStatus.Pass : QaStatus.Warn, hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3)),         "顔にテロップが重ならない", "顔とテロップの重なり") { Items = items };
+        var measured = hits.Count == 0 ? $"{checkedN} 箇所で重なりなし" : string.Join(", ", hits.Take(3));
+        if (omissions != null) measured += "・" + omissions.Measured;
+        return new("S-05", items.Count == 0 ? QaStatus.Pass : QaStatus.Warn, measured, "顔にテロップが重ならない", "顔とテロップの重なり") { Items = items };
     }
 
             /// <summary>Long series parts have hundreds of captions; the measurement keeps the widest ones (most likely to overflow) plus an even spread.</summary>
@@ -323,6 +340,7 @@ public sealed class QaEngine(FFmpeg ff)
     /// <summary>H-05 measured: render the telop layer alone (half resolution, 10 fps) and compute glyph bounding boxes from raw pixels. Scene-card text is measured at its place on the final timeline.</summary>
     public async Task<QaResult> SafeZoneAsync(QaContext ctx, string workDir, CancellationToken ct)
     {
+        var layout = TelopLayout.Resolve(ctx.Plan, ctx.Preset);
         var telops = SafeZoneSample(ctx.Plan.Telops.Where(t => t.Enabled && t.End - t.Start > 0.15).ToList());
         var ins = InsertMap.Active(ctx.Plan);
         var cards = InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0).ToList();
@@ -343,7 +361,7 @@ public sealed class QaEngine(FFmpeg ff)
                     foreach (var (name, top, plan, times, total, owners) in groups)
         {
             var ass = Path.Combine(workDir, name + ".ass");
-            await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset, TelopLayout.Resolve(ctx.Plan, ctx.Preset)), new UTF8Encoding(false), ct);
+            await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset, layout), new UTF8Encoding(false), ct);
             const int W = 540, H = 960; const double fps = 10;
             var frames = times.Select(t => (int)Math.Round(t * fps)).Distinct().OrderBy(x => x).ToList();
             var select = string.Join("+", frames.Select(f => $"eq(n,{f})"));
