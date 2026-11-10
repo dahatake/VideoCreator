@@ -1,6 +1,6 @@
 """Spike 17: does a semantic (embedding) view find where the SUBJECT changes in a real talk?
 usage: python 17-topic-embed.py <transcript.json> [out.json]
-Embeds every sentence with Azure OpenAI text-embedding-3-large (already deployed on the app's resource), then scores each sentence boundary
+Embeds every sentence with Microsoft Foundry text-embedding-3-large (already deployed on the app's resource), then scores each sentence boundary
 by the TextTiling valley depth of the cosine between the mean vectors of the W seconds before / after (W = 30, 60, 90) and prints the strongest
 boundaries with the text on both sides, so a person (or a second model) can judge them.
 """

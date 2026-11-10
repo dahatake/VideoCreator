@@ -59,7 +59,7 @@ public sealed class Runtime
     {
         if (LocalOnly && provider != "none") throw new InvalidOperationException("LLM不使用モードでは選定用の AI（LLM）を使えません。字幕のための音声は ASR に送信します");
         if (provider is not ("azure-openai" or "copilot" or "none")) throw new ArgumentException("provider must be azure-openai | copilot | none");
-        if (provider == "azure-openai" && string.IsNullOrWhiteSpace(_o.Llm.Endpoint)) throw new InvalidOperationException("Azure OpenAI のエンドポイント（VideoCreator:Llm:Endpoint）が設定されていません。scripts/setup.ps1 を実行してください");
+        if (provider == "azure-openai" && string.IsNullOrWhiteSpace(_o.Llm.Endpoint)) throw new InvalidOperationException("Microsoft Foundry のエンドポイント（VideoCreator:Llm:Endpoint）が設定されていません。scripts/setup.ps1 を実行してください");
         if (provider == "copilot" && CopilotCli == null) throw new InvalidOperationException("GitHub Copilot CLI が見つかりません。winget install GitHub.Copilot でインストールしてください");
         LlmProvider = provider;
     }
@@ -96,7 +96,7 @@ public sealed class Runtime
         _ => null,
     };
 
-    /// <summary>Meaning-level topic detection; same Azure OpenAI resource as the chat model, so nothing new leaves the machine's configured destination.</summary>
+    /// <summary>Meaning-level topic detection; same Microsoft Foundry resource as the chat model, so nothing new leaves the machine's configured destination.</summary>
     public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && !string.IsNullOrWhiteSpace(_o.Llm.Endpoint) && !string.IsNullOrWhiteSpace(_o.Llm.EmbeddingDeployment)
         ? new AzureOpenAIEmbedder(new Uri(_o.Llm.Endpoint), _o.Llm.EmbeddingDeployment, _cred.Value) : null;
 

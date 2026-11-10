@@ -1,6 +1,6 @@
 // Spike 18: is the series cut a change of SUBJECT? — duration-first (previous) vs scene-first (embeddings) on a real cached talk, judged by independent evidence.
 //  scene <cacheDir> [parts=2,3,4]
-//    Cuts the real transcript with (a) SeriesPlanner.SceneFirst=false and no embeddings (the previous planner), (b) scene-first + Azure OpenAI embeddings (+ AI chapters).
+//    Cuts the real transcript with (a) SeriesPlanner.SceneFirst=false and no embeddings (the previous planner), (b) scene-first + Microsoft Foundry embeddings (+ AI chapters).
 //    For every cut it reports, from sources the planner does not use for the decision:
 //      - the cosine between the 90 s of speech before and after, as a percentile among ALL sentence boundaries (raw text-embedding-3-large vectors),
 //      - a blind judgement by a different chat model (gpt-4.1; the outline uses the app's chat deployment): the subject of each side and a 0–10 "same subject" score.

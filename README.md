@@ -10,7 +10,7 @@
 |---|---|---|
 | Windows 10/11（x64 / ARM64）、インターネット、保存領域 | `run.cmd` で必要ツールを導入して起動 | 自分のPCのブラウザーで使うローカルWebアプリ |
 | 利用許諾を確認した MP4 / MOV / MKV / WebM（10秒〜3時間）。字幕が必要なら発話のある動画 | プロジェクトを作り、素材を追加して権利を確認 | 元動画の解析情報・時刻付き書き起こし |
-| **自分の** Azure Speech 対応リソース・エンドポイント・利用権限。AI選定を使う場合は Azure OpenAI のデプロイ、またはサインイン済み Copilot CLI | パターンを選び、費用と送信先を確認して生成 | 最大3件のショート候補と低解像度プレビュー（条件によって3件未満） |
+| **自分の** Azure Speech 対応リソース・エンドポイント・利用権限。AI選定を使う場合は Microsoft Foundry のデプロイ、またはサインイン済み Copilot CLI | パターンを選び、費用と送信先を確認して生成 | 最大3件のショート候補と低解像度プレビュー（条件によって3件未満） |
 | 内容を確認する時間 | 字幕・音・切り出しを確認し、必要なら修正して書き出す | 縦型 MP4（1080×1920、H.264/AAC）、SRT、ASS、編集計画JSON、サムネイル3枚、投稿用メタデータ案 |
 
 ![準備から成果物までの流れ](users-guide/images/overview.svg)
@@ -43,7 +43,7 @@
 |---|---|
 | 素材 | ドラッグ＆ドロップ／フルパス指定。ffprobe で検証（VFR・回転・音声なしを検出）。権利確認を必須化 |
 | 書き起こし | Azure AI Speech **Fast Transcription**（単語タイムスタンプ・話者分離・フレーズリスト、キーレス認証） |
-| 選定 | Azure OpenAI（**Structured Outputs**）または **GitHub Copilot（OS にインストール済みの CLI を SDK から呼び出し）**。長尺は信号で絞り込んで分割・再ランキング。失敗時は音声の盛り上がりで選ぶ |
+| 選定 | Microsoft Foundry（**Structured Outputs**）または **GitHub Copilot（OS にインストール済みの CLI を SDK から呼び出し）**。長尺は信号で絞り込んで分割・再ランキング。失敗時は音声の盛り上がりで選ぶ |
 | 編集 | 文の境界にスナップ、尺合わせ、コールドオープン（先出し）、無音のジャンプカット＋パンチイン、9:16 ぼかし背景 |
 | テロップ | 日本語の改行規則（助詞・小書き文字で始めない、バランスの良い2分割）、強調・フック・見出し、はみ出し防止の自動縮小 |
 | 品質 | 自動 QA（PRD §13）: 尺・解像度・**−14 LUFS / −1 dBTP**・**テロップの安全領域を実測**・発話途中切り・**テロップの事実確認**・権利。ハード違反は書き出しを禁止 |
@@ -71,7 +71,7 @@
 ## 必要なもの
 
 - Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）
-- Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Fast Transcription を利用できるリソースと自分のエンドポイント、利用者への `Cognitive Services User` ロール。Azure OpenAI も使う場合だけ、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](users-guide/quickstart.md#2-自分のクラウド設定を用意する)を参照してください
+- Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Fast Transcription を利用できるリソースと自分のエンドポイント、利用者への `Cognitive Services User` ロール。Microsoft Foundry も使う場合だけ、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](users-guide/quickstart.md#2-自分のクラウド設定を用意する)を参照してください
 - GitHub Copilot を使う場合: GitHub Copilot CLI（`run.cmd --setup --with-copilot` で導入）にサインイン済み
 
 ## セットアップと起動

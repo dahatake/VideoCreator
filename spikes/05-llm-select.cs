@@ -1,4 +1,4 @@
-// Spike 05: FR-SEL-01/02/04 — Azure OpenAI (keyless) structured outputs for highlight candidates.
+// Spike 05: FR-SEL-01/02/04 — Microsoft Foundry (keyless) structured outputs for highlight candidates.
 // Strict mode rejects maxLength/minimum/maxItems (Learn: "Unsupported type-specific keywords"), so the wire schema omits
 // them and the PRD §20.2 limits are enforced in code afterwards (AP-3).
 #:property PublishAot=false
@@ -60,7 +60,7 @@ var opts = new ChatCompletionOptions { ResponseFormat = ChatResponseFormat.Creat
 var sw = Stopwatch.StartNew();
 ChatCompletion completion = await client.CompleteChatAsync([new SystemChatMessage(system), new UserChatMessage(user)], opts);
 var json = completion.Content[0].Text;
-Check(true, $"Azure OpenAI {model} responded in {sw.ElapsedMilliseconds} ms (in={completion.Usage.InputTokenCount} out={completion.Usage.OutputTokenCount} tokens)");
+Check(true, $"Microsoft Foundry {model} responded in {sw.ElapsedMilliseconds} ms (in={completion.Usage.InputTokenCount} out={completion.Usage.OutputTokenCount} tokens)");
 File.WriteAllText(Path.Combine(outDir, "candidates.json"), json);
 
 // --- Code-side enforcement of PRD §20.2 limits + grounding

@@ -19,7 +19,7 @@
 | 用途 | 用意する情報・権限 |
 |---|---|
 | 必須：書き起こし | 対応リソース、カスタムサブドメイン付きエンドポイント `https://<自分のリソース>.cognitiveservices.azure.com/`、対応リージョン、利用者の `Cognitive Services User` ロール |
-| 任意：Azure OpenAIで選定 | 対応するモデルのデプロイ名、`https://<自分のリソース>.cognitiveservices.azure.com/openai/v1`、`Cognitive Services OpenAI User` ロール |
+| 任意：Microsoft Foundryで選定 | 対応するモデルのデプロイ名、`https://<自分のリソース>.cognitiveservices.azure.com/openai/v1`、`Cognitive Services OpenAI User` ロール |
 | 任意：Copilotで選定 | Copilot利用資格と、インストール・サインイン済みGitHub Copilot CLI |
 
 Azureサービスは従量課金です。モデル名ではなく、**自分が作成したデプロイの名前**を設定します。リソース・デプロイはセットアップスクリプトが作成するものではありません。
@@ -39,7 +39,7 @@ Azureサービスは従量課金です。モデル名ではなく、**自分が�
 }
 ```
 
-最初は `Llm.Provider=none` でも構いません。字幕はSpeechで作り、候補は音量の盛り上がりから選びます。話の内容に基づく選定を望む場合はAzure OpenAIかCopilotを設定してください。
+最初は `Llm.Provider=none` でも構いません。字幕はSpeechで作り、候補は音量の盛り上がりから選びます。話の内容に基づく選定を望む場合はMicrosoft FoundryかCopilotを設定してください。
 
 **注意**：配布時の設定ファイルには例のエンドポイントが入っています。そのリソースを使えるとは限りません。キーやトークンは設定ファイルに書かないでください。組織の送信・データ利用方針を確認してください。
 

@@ -4,7 +4,7 @@
 //    stretch of casual two-person talk (non-technical subjects mostly, one technical, two deliberately adjacent ones), half of them with no announcing phrase,
 //    then concatenated with ASR-like timing. The methods under test never see the truth:
 //      lexical   – TextTiling on word overlap (what runs without AI / offline)
-//      embedding – lexical + Azure OpenAI text-embedding-3-large depth (SeriesPlanner.FallbackOutline with semantic depth)
+//      embedding – lexical + Microsoft Foundry text-embedding-3-large depth (SeriesPlanner.FallbackOutline with semantic depth)
 //      llm-index – the whole transcript with line numbers → chapters (the app's SeriesPlanner.OutlineAsync, gpt-chat-latest)
 //      llm-time  – the whole transcript with mm:ss time codes only → chapters with mm:ss start times (the proposed "summarise with time codes" way)
 //      llm+snap  – llm-time, each time snapped to the nearest sentence start, then to the deepest embedding valley within ±2 sentences

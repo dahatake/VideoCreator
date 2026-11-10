@@ -94,7 +94,7 @@ function qaBadges(qa) {
 async function refreshProvider() {
   try {
     const h = await api('/api/health');
-    const names = { 'azure-openai': `Azure OpenAI（${h.llm_model ?? ''}）`, copilot: 'GitHub Copilot（インストール済み CLI）', none: 'AI なし（音声の盛り上がりで選定）' };
+    const names = { 'azure-openai': `Microsoft Foundry（${h.llm_model ?? ''}）`, copilot: 'GitHub Copilot（インストール済み CLI）', none: 'AI なし（音声の盛り上がりで選定）' };
     const sel = h.llm_provider !== 'none' && !h.llm_model ? 'AI なし（設定した AI が使えません）' : names[h.llm_provider] ?? h.llm_provider;
     $('#provider').textContent = `${h.local_only ? 'LLM不使用モード · ' : ''}書き起こし: ${h.asr === 'none' ? 'なし' : 'Azure AI Speech'} · 選定: ${sel}`;
     return h;
@@ -127,7 +127,7 @@ $('#settings-btn').addEventListener('click', async () => {
   const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
   const local = s.local_only ? 'LLM不使用モードで起動しています' : '';
   const choices = [
-    ['azure-openai', `Azure OpenAI（${s.azure_deployment}）`, [
+    ['azure-openai', `Microsoft Foundry（${s.azure_deployment}）`, [
       'おすすめ。JSON スキーマで出力を固定するため、候補の形式が崩れにくい方式です。',
       '送るもの：書き起こしの文章と音量の要約（動画・音声ファイルは送りません）。Entra ID（az login）でサインインします。',
       '料金：Azure の従量課金。生成前に見積もりを表示します。',

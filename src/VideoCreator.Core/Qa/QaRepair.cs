@@ -110,7 +110,7 @@ public static class QaRepair
         if (aiTargets.Count > 0)
         {
             if (llm == null)
-                foreach (var (c, i) in aiTargets) skipped.Add(new(c, i.Target, "LLM が設定されていないため自動修復できません（設定で Azure OpenAI / GitHub Copilot を選んでください）", i.Start));
+                foreach (var (c, i) in aiTargets) skipped.Add(new(c, i.Target, "LLM が設定されていないため自動修復できません（設定で Microsoft Foundry / GitHub Copilot を選んでください）", i.Start));
             else
             {
                 llmName = $"{llm.Name} ({llm.Model})";

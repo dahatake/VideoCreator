@@ -419,7 +419,7 @@ ffmpeg -y -i camA.mp4 -i camB.mp4 -filter_complex $fc2 -map "[v]" -map 0:a -t 14
 | 処理 | 選択肢 |
 |---|---|
 | 書き起こし・話者分離 | Azure AI Speech（バッチ文字起こし、話者分離、単語タイムスタンプ）／OpenAI Whisper（ローカル可） |
-| ハイライト選定・テロップ短文化 | Azure OpenAI / Microsoft Foundry 上のLLM（JSONスキーマ出力） |
+| ハイライト選定・テロップ短文化 | Microsoft Foundry 上のLLM（JSONスキーマ出力） |
 | 映像理解（任意） | マルチモーダルLLMにキーフレーム数枚を渡し「何が起きているか」を補助情報化 |
 | 処理基盤 | ローカル（FFmpeg同梱）で開始し、重い処理だけクラウドへ |
 

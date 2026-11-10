@@ -9,7 +9,7 @@ namespace VideoCreator.Selection;
 
 #pragma warning disable OPENAI001
 
-/// <summary>Azure OpenAI / Foundry with strict structured outputs and Entra ID (verified in spikes/05-llm-select.cs).</summary>
+/// <summary>Microsoft Foundry with strict structured outputs and Entra ID (verified in spikes/05-llm-select.cs).</summary>
 public sealed class AzureOpenAISelector : IHighlightSelector
 {
     readonly ChatClient _client;

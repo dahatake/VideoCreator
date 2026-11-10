@@ -16,7 +16,7 @@ public interface ITextEmbedder
     Task<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken ct);
 }
 
-/// <summary>Azure OpenAI embeddings (text-embedding-3-large) with Entra ID, on the same resource and endpoint as the chat model.</summary>
+/// <summary>Microsoft Foundry embeddings (text-embedding-3-large) with Entra ID, on the same resource and endpoint as the chat model.</summary>
 public sealed class AzureOpenAIEmbedder : ITextEmbedder
 {
     readonly EmbeddingClient _client;

@@ -36,7 +36,7 @@
     <text x="950" y="370" font-size="17">Entra ID authentication</text>
     <rect x="932" y="465" width="280" height="195" rx="10" fill="#fff1db" stroke="#ad7123"/>
     <text x="950" y="499" font-size="20" font-weight="700">Optional external LLM</text>
-    <text x="950" y="531" font-size="17">Azure OpenAI / Copilot</text>
+    <text x="950" y="531" font-size="17">Microsoft Foundry / Copilot</text>
     <text x="950" y="562" font-size="17">Transcript + signal summary</text>
     <text x="950" y="593" font-size="17">Candidate / text proposals</text>
     <text x="950" y="624" font-size="17">No video frames sent</text>

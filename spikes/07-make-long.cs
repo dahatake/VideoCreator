@@ -1,5 +1,5 @@
 // Spike 07: build a ~60-minute Japanese two-speaker test video (TC-JA-60 substitute) for NFR-PERF-01 / FR-SEL-03.
-// Script: Azure OpenAI writes varied variety-show episodes; audio: Azure TTS (keyless); video: 720p test pattern.
+// Script: Microsoft Foundry writes varied variety-show episodes; audio: Azure TTS (keyless); video: 720p test pattern.
 #:property PublishAot=false
 #:package Azure.Identity@1.21.0
 #:package OpenAI@2.14.0

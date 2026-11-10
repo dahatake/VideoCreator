@@ -235,7 +235,7 @@ else {
             $token = Invoke-Az @('account', 'get-access-token', '--resource', 'https://cognitiveservices.azure.com', '--query', 'accessToken', '-o', 'tsv')
             $probes = @()
             if ($useAsr) { $probes += [pscustomobject]@{ Kind = 'speech'; Item = 'Azure Speech (subtitles)'; Endpoint = $asrEndpoint; Role = 'Cognitive Services User' } }
-            if ($useLlm) { $probes += [pscustomobject]@{ Kind = 'openai'; Item = "Azure OpenAI ($deployment)"; Endpoint = $llmEndpoint; Role = 'Cognitive Services OpenAI User' } }
+            if ($useLlm) { $probes += [pscustomobject]@{ Kind = 'openai'; Item = "Microsoft Foundry ($deployment)"; Endpoint = $llmEndpoint; Role = 'Cognitive Services OpenAI User' } }
             $denied = @()
             foreach ($pr in $probes) {
                 if (-not $token) { Add-Result $pr.Item WARN 'could not get a token for cognitiveservices.azure.com'; continue }
