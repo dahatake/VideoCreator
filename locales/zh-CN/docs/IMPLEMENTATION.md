@@ -1,5 +1,8 @@
 # VideoCreator 实现与验证报告
 
+[↑ 文档导航](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | [English](../../en/docs/IMPLEMENTATION.md) | **简体中文** | [한국어](../../ko/docs/IMPLEMENTATION.md)
+
+
 - 对象：[PRD.md](PRD.md)，VC-PRD-001 v1.2.3；以前结果和本次再验证分别说明。
 - 日期：2026-11-07；再验证2026-11-08；AT-13～15为2026-11-09。
 - 实现：C#/.NET 10（ASP.NET Core Minimal API、本地Web应用）＋Fluent 2 Web Components v3。
@@ -751,3 +754,6 @@ P1/P8无声−6LU，P5主乐0差10，P6−14差18，其他−8/14。旧无场景
 - EditPlan.language存创建时语言，日英M PLUS1p，中Noto Sans CJK SC，韩KR。get-tools.ps1取OFL字体许可；缺所需CJK明确失败，不靠OS替代。
 - [LocalizationTests.cs](../../../tests/VideoCreator.Tests/LocalizationTests.cs) 验证 API 持久化和非法值、Speech 请求语言、按语言区分的缓存、单词／空格／屏蔽词保持、AI 提示、ASS/SRT、libass 实际绘制与字形缺失、长英语／中文／韩语字幕的安全区域像素实测，以及 MP4 预览。非日语宽度估计也考虑较宽的拉丁字母，绘制和避脸布局使用相同的字体适配逻辑。文档结构、覆盖完整性和链接通过 `node scripts/verify-localized-docs.mjs` 检查。
 - 限制：自动测用合成声画固定响应，不保证英中韩真实Speech精度、AI自然、母语校译。无自动字幕翻译或混语自动检测。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | [English](../../en/docs/IMPLEMENTATION.md) | **简体中文** | [한국어](../../ko/docs/IMPLEMENTATION.md)

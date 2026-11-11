@@ -1,5 +1,8 @@
 # VideoCreator — 제품 요구 사항 정의(PRD)
 
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/PRD.md) | [English](../../en/docs/PRD.md) | [简体中文](../../zh-CN/docs/PRD.md) | **한국어**
+
+
 | 항목 | 내용 |
 |---|---|
 | 문서 ID | VC-PRD-001 |
@@ -1187,3 +1190,6 @@ H11은 보수적 어구 대조이며 완전 의미사실검증이 아닙니다. 
 ### 20.5 참고 자료
 
 - [VideoCreator 조사 보고서](./VideoCreator-AnalyticsReport.md)(참고문헌 S1~S25 포함)
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/PRD.md) | [English](../../en/docs/PRD.md) | [简体中文](../../zh-CN/docs/PRD.md) | **한국어**

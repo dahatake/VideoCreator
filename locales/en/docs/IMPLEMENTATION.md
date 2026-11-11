@@ -1,5 +1,8 @@
 # VideoCreator implementation and verification report
 
+[↑ Documentation map](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | **English** | [简体中文](../../zh-CN/docs/IMPLEMENTATION.md) | [한국어](../../ko/docs/IMPLEMENTATION.md)
+
+
 - Target: [PRD.md](PRD.md), VC-PRD-001 v1.2.3; historical results and current rechecks are distinguished.
 - Date: 2026-11-07; recheck 2026-11-08, AT-13–15 2026-11-09.
 - Implementation: C#/.NET 10, ASP.NET Core Minimal API local web app, Fluent 2 Web Components v3.
@@ -749,3 +752,6 @@ Per-pattern values:P1/P8use−6LUwithout speech;music-led P5uses0LUand10LUgap;ex
 - Save creation language in `EditPlan.language`. Japanese/English use M PLUS 1p; Chinese Noto Sans CJK SC; Korean Noto Sans CJK KR. `scripts/get-tools.ps1` downloads OFL fonts/licenses. Explicitly fail export if required CJK fonts are missing, rather than relying on OS fallback.
 - [LocalizationTests.cs](../../../tests/VideoCreator.Tests/LocalizationTests.cs) verifies API persistence/invalid values, Speech request locale, language caches, word/space/masking preservation, AI prompts, ASS/SRT, actual libass rendering/missing glyphs, measured safe-zone pixels for long English/Chinese/Korean captions, and MP4 previews. Non-Japanese width estimation includes wide Latin glyphs; rendering and face-avoidance layout share the same font-fitting logic. Check document structure/completeness/links with `node scripts/verify-localized-docs.mjs`.
 - Limitations: automated tests use synthetic video/audio and fixed responses. They do not guarantee Speech accuracy on real English/Chinese/Korean speech, natural AI wording, or native-speaker translation review. Automatic subtitle translation and automatic detection of mixed speech languages are out of scope.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | **English** | [简体中文](../../zh-CN/docs/IMPLEMENTATION.md) | [한국어](../../ko/docs/IMPLEMENTATION.md)

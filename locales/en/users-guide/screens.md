@@ -1,5 +1,8 @@
 # Screens and components
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/screens.md) | **English** | [简体中文](../../zh-CN/users-guide/screens.md) | [한국어](../../ko/users-guide/screens.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [First video](quickstart.md) / [QA/errors](troubleshooting.md) / [Configuration/API](configuration-api.md)
 
 Examples captured the 2026-11-08 implementation in Microsoft Edge, viewport 1440×1000; long pages use full-page captures. Controls vary with PC width, pattern, asset count. Scroll **inside each column**.
@@ -299,3 +302,6 @@ While exporting: composition, loudness, QA, related-file creation. Afterwards:
 AI choice is Runtime-only, restored from startup on restart. UI storage persists in DB, takes precedence. Do not manually move folders back after relocation; see [recovery cautions](troubleshooting.md#storage-and-backups).
 
 ![Lower settings: storage/diagnostics, personal paths masked](../../../users-guide/images/screen-settings-storage.svg)
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/screens.md) | **English** | [简体中文](../../zh-CN/users-guide/screens.md) | [한국어](../../ko/users-guide/screens.md)

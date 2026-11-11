@@ -1,5 +1,8 @@
 # VideoCreator — Product Requirements Definition (PRD)
 
+[↑ Documentation map](../README.md) | [日本語](../../../docs/PRD.md) | **English** | [简体中文](../../zh-CN/docs/PRD.md) | [한국어](../../ko/docs/PRD.md)
+
+
 | Item | Value |
 |---|---|
 | Document ID | VC-PRD-001 |
@@ -1186,3 +1189,6 @@ Because Shorts lack A/B testing,C-7,publish different patterns from the same sou
 ### 20.5 References
 
 - [Research report](VideoCreator-AnalyticsReport.md), references S1–S25.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../docs/PRD.md) | **English** | [简体中文](../../zh-CN/docs/PRD.md) | [한국어](../../ko/docs/PRD.md)

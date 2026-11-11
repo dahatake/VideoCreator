@@ -1,5 +1,8 @@
 # Quickstart: make your first video
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/quickstart.md) | **English** | [简体中文](../../zh-CN/users-guide/quickstart.md) | [한국어](../../ko/users-guide/quickstart.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Screens](screens.md) / [Troubleshooting](troubleshooting.md) / [Configuration/API](configuration-api.md)
 
 **Goal:** make P4 candidates from one speech video, review content, and save a 1080×1920 MP4 and subtitles. Processing time depends on footage, PC, and services; no fixed completion time is guaranteed.
@@ -118,3 +121,6 @@ In the export list, play/seek each completed final file. Inspect its absolute pa
 Showing SRT alongside burned-in subtitles may double captions; choose the platform's display behavior. The app does not post/publish or automatically populate series URLs.
 
 Stop with Ctrl+C in the launch terminal. Reopen a project next time to resume its last project-settings, generation, candidates, review, or export stage; missing references fall back to a recoverable earlier stage. See [backup](troubleshooting.md#storage-and-backups).
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/quickstart.md) | **English** | [简体中文](../../zh-CN/users-guide/quickstart.md) | [한국어](../../ko/users-guide/quickstart.md)

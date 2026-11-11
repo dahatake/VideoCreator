@@ -5,6 +5,9 @@ description: 从一个视频文件，只使用 VideoCreator 的 P1～P10 编辑�
 
 # Microsoft 365 Copilot Cowork 版 VideoCreator
 
+[↑ 文档导航](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | [English](../../en/work/VideoCreator-Prompt.md) | **简体中文** | [한국어](../../ko/work/VideoCreator-Prompt.md)
+
+
 这个文件是让 Copilot Cowork 复现本地应用 VideoCreator 编辑流程的提示词。流程为：转写 → 选择精彩片段 → 剪除静音 → 转为竖屏 → 添加字幕和标题 → 调整音量 → 自动检查。前半部分是**供你（人）阅读的使用方法**，后半部分是 **Cowork 阅读的指令**。
 
 ---
@@ -1487,3 +1490,6 @@ if __name__ == "__main__":
 
 - **在 Copilot Cowork 真实环境中执行**：官方文档没有说明其执行环境是否具备 Python、FFmpeg、日文字体；公开的社区技能中，有使用 Python 与 FFmpeg／imageio-ffmpeg 的例子。因此步骤 1 必须执行 `env`，环境不足时切换到 §3 替代手段。
 - Stream 生成的 .vtt 分隔方式（是否带标点等）因素材而异。没有句号的分隔原样视为一句。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | [English](../../en/work/VideoCreator-Prompt.md) | **简体中文** | [한국어](../../ko/work/VideoCreator-Prompt.md)

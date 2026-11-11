@@ -1,5 +1,8 @@
 # Troubleshooting: errors, QA, storage
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | **English** | [简体中文](../../zh-CN/users-guide/troubleshooting.md) | [한국어](../../ko/users-guide/troubleshooting.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Quickstart](quickstart.md) / [Screens](screens.md) / [Configuration/API](configuration-api.md) / [Verification](verification.md)
 
 ## Isolate the problem first
@@ -85,3 +88,6 @@ Change storage through Settings. Do not move leaves old projects in place. Move 
 If interrupted, record failed/remaining items and close locked files. Next startup recovers using `projects-move.json`. Do not manually delete the journal or change only DB absolute paths.
 
 Startup requeues unfinished generation and reuses available stage caches. **Unstarted final-export queues are in memory**, so interrupted batch exports are not guaranteed to resume. Check completed files and re-export remaining candidates.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | **English** | [简体中文](../../zh-CN/users-guide/troubleshooting.md) | [한국어](../../ko/users-guide/troubleshooting.md)

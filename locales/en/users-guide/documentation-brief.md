@@ -1,5 +1,8 @@
 # Documentation brief: making the request “deeper,” and its execution
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | **English** | [简体中文](../../zh-CN/users-guide/documentation-brief.md) | [한국어](../../ko/users-guide/documentation-brief.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Verification](verification.md)
 
 This records how the guide request was made “deeper,” not merely “bigger”: (1) additional expert work, (2) raw starting materials, (3) methods/tools, (4) independent verification; the request was rewritten and executed. The final table maps rewritten requirements to deliverables/evidence.
@@ -91,3 +94,6 @@ Not summarized READMEs/historical prose:
 | 8. Existing changes preserved | — | Application changes not reverted |
 
 Unperformed independent-novice evaluation, real Azure speech tests, and full test reruns are not treated as correctness evidence.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | **English** | [简体中文](../../zh-CN/users-guide/documentation-brief.md) | [한국어](../../ko/users-guide/documentation-brief.md)

@@ -1,5 +1,8 @@
 # 快速入门：制作第一个视频
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/quickstart.md) | [English](../../en/users-guide/quickstart.md) | **简体中文** | [한국어](../../ko/users-guide/quickstart.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [界面说明](screens.md) / [遇到问题](troubleshooting.md) / [配置与 API](configuration-api.md)
 
 **目标**：从一个含讲话的视频生成 P4 候选，检查内容，保存 1080×1920 的 MP4、字幕等。处理时间取决于素材、PC 和服务状态，不保证在固定时间内完成。
@@ -118,3 +121,6 @@ Azure 服务按量计费。配置的是**自己创建的部署的名称**，不�
 同时显示 SRT 和烧录字幕时，某些平台会出现双重字幕。请选择平台的显示方式。应用不会投稿、公开或自动配置系列 URL。
 
 退出时在启动终端按 Ctrl+C。下次从项目列表打开时，将恢复到上次显示的项目设置、生成、候选、检查与修改或导出阶段。引用目标不存在时，显示可恢复的前一阶段。备份请参阅[故障排除](troubleshooting.md#保存与备份)。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/quickstart.md) | [English](../../en/users-guide/quickstart.md) | **简体中文** | [한국어](../../ko/users-guide/quickstart.md)

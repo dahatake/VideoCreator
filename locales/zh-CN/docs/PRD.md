@@ -1,5 +1,8 @@
 # VideoCreator — 产品需求定义（PRD）
 
+[↑ 文档导航](../README.md) | [日本語](../../../docs/PRD.md) | [English](../../en/docs/PRD.md) | **简体中文** | [한국어](../../ko/docs/PRD.md)
+
+
 | 项目 | 内容 |
 |---|---|
 | 文档 ID | VC-PRD-001 |
@@ -1197,3 +1200,6 @@ H11为保守词语比对，不是完整语义事实核查；验证数字单位�
 ### 20.5 参考资料
 
 - [VideoCreator 调研报告](VideoCreator-AnalyticsReport.md)，含S1～S25。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../docs/PRD.md) | [English](../../en/docs/PRD.md) | **简体中文** | [한국어](../../ko/docs/PRD.md)

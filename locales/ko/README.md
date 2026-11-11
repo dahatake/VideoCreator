@@ -1,6 +1,15 @@
 # VideoCreator
 
-[English](../en/README.md) | [简体中文](../zh-CN/README.md) | 한국어 | [日本語](../../README.md)
+## 문서
+
+언어를 선택하면 해당 언어의 전체 문서 안내가 열립니다. 사용자 가이드, 프로젝트 요구 사항과 구현 기록, 조사 보고서, Cowork 프롬프트로 구성되어 있습니다.
+
+| 언어 | 문서 시작 |
+|---|---|
+| 日本語 | [일본어 README](../../README.md) |
+| English | [영어 문서](../en/README.md) |
+| 简体中文 | [중국어 간체 문서](../zh-CN/README.md) |
+| 한국어 | [한국어 README](README.md) (현재 페이지) |
 
 ### 표시 언어와 동영상 언어
 
@@ -27,16 +36,24 @@
 
 > **중요**: 로컬 웹 앱이지만 보통 자막용 음성을 Azure Speech로 전송합니다. 「LLM 미사용」「LLM 미사용 모드」는 완전한 오프라인이 아닙니다. 화면 권리 확인·자동 QA도 실제 이용 허가·내용 충실성·게시 대상 약관을 보장하지 않습니다. 예시 엔드포인트는 배포자의 것이므로 본인 값으로 바꾸세요. 설정은 Azure 리소스 생성·엔드포인트 변경까지 수행하지 않습니다.
 
-### 가이드
+### 문서 안내
 
-- [사용자 가이드 목차](users-guide/README.md): 목적별 읽기·용어
-- [빠른 시작](users-guide/quickstart.md): 준비·첫 영상
-- [화면·구성 요소 설명](users-guide/screens.md): 실제 화면 SVG 스크린샷·조작 의미
-- [문제 해결·QA 읽기](users-guide/troubleshooting.md)
-- [소프트웨어 엔지니어용 기술 참조](users-guide/technical-reference.md): 구성도, 데이터·시간축, 확장 위치
-- [설정·API 참조](users-guide/configuration-api.md)
-- [자료 검증·스크린샷 재생성](users-guide/verification.md)
-- [제작 방침·요구 사항·검증 결과 대응](users-guide/documentation-brief.md)
+목적별 읽기 순서는 사용자 가이드 목차에서, 전체 계층은 아래에서 확인할 수 있습니다.
+
+- **사용자 가이드** — [가이드 목차](users-guide/README.md)
+  - [빠른 시작](users-guide/quickstart.md)
+  - [화면·구성 요소 설명](users-guide/screens.md)
+  - [문제 해결·QA](users-guide/troubleshooting.md)
+  - [설정·API 참조](users-guide/configuration-api.md)
+  - [소프트웨어 엔지니어용 기술 참조](users-guide/technical-reference.md)
+  - [검증·스크린샷 재생성](users-guide/verification.md)
+  - [제작 방침](users-guide/documentation-brief.md)
+- **프로젝트 문서**
+  - [제품 요구 사항(PRD)](docs/PRD.md)
+  - [구현·검증 기록](docs/IMPLEMENTATION.md)
+  - [분석·조사 보고서](docs/VideoCreator-AnalyticsReport.md)
+- **Cowork**
+  - [VideoCreator 프롬프트](work/VideoCreator-Prompt.md)
 
 ![후보 비교 화면(합성 영상·테스트 전사를 사용한 실제 화면)](../../users-guide/images/screen-candidates.svg)
 

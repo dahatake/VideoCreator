@@ -1,5 +1,8 @@
 # 소프트웨어 엔지니어용 기술 참조
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/technical-reference.md) | [English](../../en/users-guide/technical-reference.md) | [简体中文](../../zh-CN/users-guide/technical-reference.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [빠른 시작](quickstart.md) / [화면 설명](screens.md) / [문제 해결](troubleshooting.md) / [설정·API](configuration-api.md) / [검증과 유지 관리](verification.md)
 
 대상은 현재 C#/.NET 10 구현입니다. 범용 동영상 편집 라이브러리나 다중 사용자 서비스가 아니라 Windows의 단일 사용자용 로컬 웹 앱입니다. 설계 요구 사항은 [PRD](../docs/PRD.md), 과거 실측은 [구현 보고서](../docs/IMPLEMENTATION.md)에 있습니다. 과거 검증 결과를 최신 조건의 통과 증거로 재사용하지 마세요.
@@ -114,3 +117,6 @@ dotnet test --project tests\VideoCreator.Tests
 [global.json](../../../global.json)은 Microsoft.Testing.Platform runner를 지정합니다. 테스트 수는 변하므로 고정값을 수용 기준으로 삼지 않습니다. UI 번들을 바꾼다면 [ui/package.json](../../../ui/package.json)의 `npm run build`, E2E는 실행 중 앱에 `node e2e.mjs <동영상> <URL>`을 사용합니다. E2E는 외부 서비스 사용·과금과 기존 스크린샷 갱신을 수반하므로 격리된 저장 위치를 지정하세요.
 
 이번 자료 작성에서 실행한 검증은 [검증과 유지 관리](verification.md)에 따로 기록했습니다.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/technical-reference.md) | [English](../../en/users-guide/technical-reference.md) | [简体中文](../../zh-CN/users-guide/technical-reference.md) | **한국어**

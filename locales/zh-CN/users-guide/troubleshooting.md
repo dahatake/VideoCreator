@@ -1,5 +1,8 @@
 # 遇到问题：错误、QA 与保存
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | [English](../../en/users-guide/troubleshooting.md) | **简体中文** | [한국어](../../ko/users-guide/troubleshooting.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [快速入门](quickstart.md) / [界面说明](screens.md) / [配置与 API](configuration-api.md) / [验证与维护](verification.md)
 
 ## 首先定位问题
@@ -85,3 +88,6 @@
 迁移中断时记录失败／遗留项目显示，关闭占用文件。下次启动将根据 `projects-move.json` 恢复。不要手动删除日志或仅修改 DB 中的绝对路径。
 
 重启会重新提交未完成生成任务，并复用可用阶段缓存。**尚未开始的最终导出队列位于内存中**，因此停止前的批量导出不一定恢复。检查完成文件，重新导出需要的候选。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | [English](../../en/users-guide/troubleshooting.md) | **简体中文** | [한국어](../../ko/users-guide/troubleshooting.md)

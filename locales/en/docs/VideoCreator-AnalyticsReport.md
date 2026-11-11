@@ -1,5 +1,8 @@
 # VideoCreator Research Report: editing styles of popular social videos and a pattern-selection automatic editor
 
+[↑ Documentation map](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | **English** | [简体中文](../../zh-CN/docs/VideoCreator-AnalyticsReport.md) | [한국어](../../ko/docs/VideoCreator-AnalyticsReport.md)
+
+
 - Date: 2026-11-07
 - Scope: social video, particularly YouTube (long-form / Shorts) and TikTok
 - Priority: **entertainment—enjoyable viewing**
@@ -517,3 +520,6 @@ Compute mean/median/adjacent correlation (Cutting [S15]); update §3.2.
 |---|---|---|
 | 6768504823336815877 | @zachking | oEmbed response |
 | 6862153058223197445 | @bellapoarch | oEmbed response |
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | **English** | [简体中文](../../zh-CN/docs/VideoCreator-AnalyticsReport.md) | [한국어](../../ko/docs/VideoCreator-AnalyticsReport.md)

@@ -1,5 +1,8 @@
 # VideoCreator 구현·검증 보고서
 
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | [English](../../en/docs/IMPLEMENTATION.md) | [简体中文](../../zh-CN/docs/IMPLEMENTATION.md) | **한국어**
+
+
 - 대상: [PRD.md](PRD.md)(VC-PRD-001 v1.2.3. 종전 결과와 이번 재검증을 구분)
 - 날짜: 2026-11-07(재검증: 2026-11-08, AT-13~AT-15: 2026-11-09)
 - 구현: C# / .NET 10(ASP.NET Core Minimal API, 로컬 웹 앱) + Fluent 2 Web Components v3
@@ -749,3 +752,6 @@ AI 프롬프트도 「직전 행이 완결·질문이며 다음 행이 앞말을
 - `EditPlan.language`에 생성 당시 언어를 저장합니다. 일본어·영어는 M PLUS 1p, 중국어는 Noto Sans CJK SC, 한국어는 Noto Sans CJK KR을 사용합니다. `scripts/get-tools.ps1`이 OFL 폰트·라이선스를 받습니다. 필요한 CJK 폰트가 없으면 명시적으로 내보내기를 실패시키며 OS 대체 폰트에 의존하지 않습니다.
 - [LocalizationTests.cs](../../../tests/VideoCreator.Tests/LocalizationTests.cs)로 API 영속성/잘못된 값·Speech 요청 언어·언어별 캐시·단어/공백/가림말 보존·AI 프롬프트·ASS/SRT·libass 실제 렌더링/글리프 누락·긴 영어·중국어·한국어 자막의 안전 영역 픽셀 실측·MP4 미리 보기를 검증합니다. 일본어 이외 언어의 폭 추정에서는 폭이 넓은 라틴 문자도 고려하며, 렌더링과 얼굴 회피 배치가 같은 폰트 크기 조정 방식을 사용합니다. 문서 구조·범위·링크는 `node scripts/verify-localized-docs.mjs`로 검사합니다.
 - 제약: 자동 테스트는 합성 영상·음성·고정 응답을 사용합니다. 영어·중국어·한국어 실제 발화의 Speech 인식 정확도·AI 문안 자연스러움·원어민 번역 교열을 보장하지 않습니다. 자막 자동 번역·여러 음성 언어가 섞인 영상의 자동 언어 판정은 범위 밖입니다.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/IMPLEMENTATION.md) | [English](../../en/docs/IMPLEMENTATION.md) | [简体中文](../../zh-CN/docs/IMPLEMENTATION.md) | **한국어**

@@ -5,6 +5,9 @@ description: 동영상 파일 한 개에서 VideoCreator 편집 패턴(P1~P10)�
 
 # VideoCreator for Microsoft 365 Copilot Cowork
 
+[↑ 문서 안내](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | [English](../../en/work/VideoCreator-Prompt.md) | [简体中文](../../zh-CN/work/VideoCreator-Prompt.md) | **한국어**
+
+
 이 파일은 로컬 앱 VideoCreator의 편집(전사 → 하이라이트 선정 → 무음 컷 → 세로 변환 → 자막·제목 → 음량 조정 → 자동 검사)을 Copilot Cowork에서 재현하는 프롬프트입니다. 앞부분은 **사용자(사람)가 읽는 사용법**, 뒷부분은 **Cowork가 읽는 지시**입니다.
 
 ---
@@ -1486,3 +1489,6 @@ if __name__ == "__main__":
 
 - **실제 Copilot Cowork 실행**. Python/FFmpeg/일본어 폰트 존재는 공식 문서 미기재(공개 커뮤니티 스킬 일부는 Python·FFmpeg/imageio-ffmpeg 사용). 반드시 env부터 실행·부족하면 §3 대체.
 - Stream .vtt 구분·문장부호 유무는 원본별 다름. 마침표 없는 구분은 그대로 한 문장.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | [English](../../en/work/VideoCreator-Prompt.md) | [简体中文](../../zh-CN/work/VideoCreator-Prompt.md) | **한국어**

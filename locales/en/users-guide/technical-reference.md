@@ -1,5 +1,8 @@
 # Technical reference for software engineers
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/technical-reference.md) | **English** | [简体中文](../../zh-CN/users-guide/technical-reference.md) | [한국어](../../ko/users-guide/technical-reference.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Quickstart](quickstart.md) / [Screens](screens.md) / [Troubleshooting](troubleshooting.md) / [Configuration/API](configuration-api.md) / [Verification](verification.md)
 
 Applies to the current C#/.NET 10 implementation: a single-user local Windows web app, not a general video-editing library or multiuser service. Design requirements: [PRD](../docs/PRD.md); historical measurements: [implementation report](../docs/IMPLEMENTATION.md). Historical results are not proof of passing under current conditions.
@@ -114,3 +117,6 @@ dotnet test --project tests\VideoCreator.Tests
 [global.json](../../../global.json) selects Microsoft.Testing.Platform. Test counts change; do not use a fixed count as acceptance. UI bundle: [ui/package.json](../../../ui/package.json) `npm run build`. Against a running app: `node e2e.mjs <video> <URL>`. E2E may use paid external services/update existing screenshots; isolate storage.
 
 Documentation-production checks are recorded separately in [verification](verification.md).
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/technical-reference.md) | **English** | [简体中文](../../zh-CN/users-guide/technical-reference.md) | [한국어](../../ko/users-guide/technical-reference.md)

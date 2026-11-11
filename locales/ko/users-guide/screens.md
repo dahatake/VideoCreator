@@ -1,5 +1,8 @@
 # 화면·구성 요소 설명
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/screens.md) | [English](../../en/users-guide/screens.md) | [简体中文](../../zh-CN/users-guide/screens.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [첫 동영상](quickstart.md) / [QA와 오류](troubleshooting.md) / [설정·API](configuration-api.md)
 
 화면 예시는 2026-11-08 구현을 Microsoft Edge, viewport 1440×1000으로 캡처했으며 긴 페이지는 전체 캡처했습니다. PC 너비·선택 패턴·원본 수에 따라 항목이 달라집니다. 세로로 긴 입력 영역은 **각 열 내부**를 스크롤하세요.
@@ -299,3 +302,6 @@ P7은 같은 장면 카메라 영상 2개 이상, P10은 화면 녹화+발표자
 AI 선택은 Runtime 상태여서 재시작 시 시작 설정으로 돌아갑니다. 화면 저장 위치 설정은 DB에 저장되어 시작 설정보다 우선합니다. 이동 후 수동으로 폴더만 복구하면 참조가 어긋나므로 [저장·복구 주의](troubleshooting.md#저장과-백업)를 읽으세요.
 
 ![설정 아래: 저장 위치·진단 정보(개인 경로 가림)](../../../users-guide/images/screen-settings-storage.svg)
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/screens.md) | [English](../../en/users-guide/screens.md) | [简体中文](../../zh-CN/users-guide/screens.md) | **한국어**

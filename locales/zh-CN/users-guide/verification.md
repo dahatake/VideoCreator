@@ -1,5 +1,8 @@
 # 资料验证与维护
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/verification.md) | [English](../../en/users-guide/verification.md) | **简体中文** | [한국어](../../ko/users-guide/verification.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [技术参考](technical-reference.md) / [制作方针](documentation-brief.md)
 
 ## 一手资料与验证范围
@@ -116,3 +119,6 @@ git diff --check -- README.md users-guide
 4. 首次使用权限、费用、发送目标改变时更新[快速入门](quickstart.md)和 [README](../README.md)。
 5. 机械验证 SVG，并目视确认主要图可读。链接验证不能证明外部 URL 可用或说明真实。
 6. 请开发者之外的首次用户仅凭指南导出一个视频，记录困惑的输入框和失败条件。本次未执行此第三方评价。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/verification.md) | [English](../../en/users-guide/verification.md) | **简体中文** | [한국어](../../ko/users-guide/verification.md)

@@ -1,5 +1,8 @@
 # 面向软件工程师的技术参考
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/technical-reference.md) | [English](../../en/users-guide/technical-reference.md) | **简体中文** | [한국어](../../ko/users-guide/technical-reference.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [快速入门](quickstart.md) / [界面说明](screens.md) / [遇到问题](troubleshooting.md) / [配置与 API](configuration-api.md) / [验证与维护](verification.md)
 
 对象为当前 C#/.NET 10 实现。它不是通用视频编辑库或多用户服务，而是 Windows 上面向单个用户的本地 Web 应用。设计需求见 [PRD](../docs/PRD.md)，历史实测见[实现报告](../docs/IMPLEMENTATION.md)。不要将历史验证结果用于证明最新条件已通过。
@@ -114,3 +117,6 @@ dotnet test --project tests\VideoCreator.Tests
 [global.json](../../../global.json) 指定 Microsoft.Testing.Platform runner。测试数量会变化，不将固定数值作为验收标准。修改 UI 包时使用 [ui/package.json](../../../ui/package.json) 的 `npm run build`；E2E 对运行中的应用使用 `node e2e.mjs <视频> <URL>`。E2E 涉及外部服务、费用和已有截图更新，请指定隔离保存位置。
 
 本次资料制作中实际执行的验证单独记录于[验证与维护](verification.md)。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/technical-reference.md) | [English](../../en/users-guide/technical-reference.md) | **简体中文** | [한국어](../../ko/users-guide/technical-reference.md)

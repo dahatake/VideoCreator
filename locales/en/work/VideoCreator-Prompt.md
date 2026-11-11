@@ -5,6 +5,9 @@ description: Make vertical shorts (up to three highlights) or a multipart series
 
 # VideoCreator for Microsoft 365 Copilot Cowork
 
+[↑ Documentation map](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | **English** | [简体中文](../../zh-CN/work/VideoCreator-Prompt.md) | [한국어](../../ko/work/VideoCreator-Prompt.md)
+
+
 This prompt reproduces the local VideoCreator app's editing workflow in Copilot Cowork: transcription → highlight selection → silence removal → portrait conversion → subtitles/headings → loudness adjustment → automatic checks. The first half is **instructions for you, the human**; the second is **instructions for Cowork**.
 
 ---
@@ -1489,3 +1492,6 @@ Bugs found and fixed:jump cuts dropped caption fragments and violated verbatimne
 
 - **Actual Copilot Cowork runtime:** official documentation does not specify Python/FFmpeg/Japanese-font availability. Public community skills sometimes use Python/FFmpeg/imageio-ffmpeg. Always run Step1's environment check and use§3fallback when necessary.
 - Stream VTTsegmentation/punctuation varies by source. A cue without punctuation remains one sentence.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../work/VideoCreator-Prompt.md) | **English** | [简体中文](../../zh-CN/work/VideoCreator-Prompt.md) | [한국어](../../ko/work/VideoCreator-Prompt.md)

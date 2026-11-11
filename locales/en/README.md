@@ -2,7 +2,16 @@
 
 A local web app that automatically finds highlights and produces **vertical shorts (1080×1920)** with subtitles and emphasis captions: choose a long video, then **choose an editing pattern**.
 
-Documentation: [日本語](../../README.md) / **English** / [简体中文](../zh-CN/README.md) / [한국어](../ko/README.md).
+## Documentation
+
+Choose a language to open its complete document map. The map groups the user guide, project requirements and implementation records, research, and the Cowork prompt.
+
+| Language | Documentation entry |
+|---|---|
+| 日本語 | [Japanese README](../../README.md) |
+| English | [English README](README.md) (this page) |
+| 简体中文 | [Simplified Chinese documentation](../zh-CN/README.md) |
+| 한국어 | [Korean documentation](../ko/README.md) |
 
 ## First-time users: preparation → operation → deliverables
 
@@ -25,16 +34,24 @@ Start with **one video + P4 “Clip (long video → 30 seconds)” + Standard na
 
 The **UI display language and project video language are independent**. Choose the video language on the project screen. Supported video languages are Japanese (`ja-JP`), English (`en-US`), Simplified Chinese (`zh-CN`), and Korean (`ko-KR`). The Project field is `language`; the API's snake_case representation is also `language`. Changing the interface language does not change a project's video language. The browser stores UI language separately. Existing edit plans preserve their original language; generate new candidates after changing project language. Chinese/Korean rendering requires the matching fonts downloaded by `scripts/get-tools.ps1`, and explicitly fails if they are missing.
 
-### Guides
+### Documentation map
 
-- [User guide index](users-guide/README.md): reading paths and terminology
-- [Quickstart](users-guide/quickstart.md): preparation and your first video
-- [Screens and components](users-guide/screens.md): SVG screenshots of the real app and what controls mean
-- [Troubleshooting and QA](users-guide/troubleshooting.md)
-- [Technical reference for software engineers](users-guide/technical-reference.md): architecture, data/timelines, extension points
-- [Configuration and API reference](users-guide/configuration-api.md)
-- [Documentation verification and screenshot regeneration](users-guide/verification.md)
-- [Documentation brief and requirement/verification mapping](users-guide/documentation-brief.md)
+Use the guide index for a goal-based reading path, or browse the complete hierarchy here:
+
+- **User guide** — [Guide index](users-guide/README.md)
+  - [Quickstart](users-guide/quickstart.md)
+  - [Screens and components](users-guide/screens.md)
+  - [Troubleshooting and QA](users-guide/troubleshooting.md)
+  - [Configuration and API reference](users-guide/configuration-api.md)
+  - [Technical reference](users-guide/technical-reference.md)
+  - [Verification and screenshot regeneration](users-guide/verification.md)
+  - [Documentation brief](users-guide/documentation-brief.md)
+- **Project documentation**
+  - [Product requirements (PRD)](docs/PRD.md)
+  - [Implementation and verification history](docs/IMPLEMENTATION.md)
+  - [Analytics and research report](docs/VideoCreator-AnalyticsReport.md)
+- **Cowork**
+  - [VideoCreator prompt](work/VideoCreator-Prompt.md)
 
 ![Historical Japanese candidate screen (real app using synthetic footage and a test transcript, not evidence of a localized UI)](../../users-guide/images/screen-candidates.svg)
 

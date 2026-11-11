@@ -1,5 +1,8 @@
 # 자료 검증과 유지 관리
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/verification.md) | [English](../../en/users-guide/verification.md) | [简体中文](../../zh-CN/users-guide/verification.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [기술 참조](technical-reference.md) / [제작 방침](documentation-brief.md)
 
 ## 1차 자료와 검증 범위
@@ -116,3 +119,6 @@ git diff --check -- README.md users-guide
 4. 처음 필요한 권한·요금·전송 대상이 바뀌면 [빠른 시작](quickstart.md)과 [README](../README.md)를 갱신한다.
 5. SVG를 기계 검증하고 주요 그림을 눈으로 읽을 수 있는지 확인한다. 링크 검증은 외부 URL 가용성이나 설명의 진위까지 증명하지 않는다.
 6. 개발자가 아닌 첫 사용자에게 가이드만으로 한 편을 내보내도록 하고 헷갈린 입력란·실패 조건을 기록한다. 이번에는 이 제3자 평가를 실행하지 않았다.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/verification.md) | [English](../../en/users-guide/verification.md) | [简体中文](../../zh-CN/users-guide/verification.md) | **한국어**

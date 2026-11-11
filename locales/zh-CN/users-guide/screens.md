@@ -1,5 +1,8 @@
 # 界面与组件说明
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/screens.md) | [English](../../en/users-guide/screens.md) | **简体中文** | [한국어](../../ko/users-guide/screens.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [第一个视频](quickstart.md) / [QA 与错误](troubleshooting.md) / [配置与 API](configuration-api.md)
 
 界面示例使用 2026-11-08 的实现在 Microsoft Edge、1440×1000 视口中获取，长页面截取全页。项目会随 PC 宽度、模式和素材数量变化。较长的栏目请在**各列内部**滚动。
@@ -301,3 +304,6 @@ P7 需同一场景至少两路摄像机，P10 需屏幕录制＋讲解者摄像�
 AI 选择为 Runtime 状态，重启恢复启动配置。保存位置界面配置保存到 DB 并优先。迁移后手动移回文件夹会导致引用错位，请阅读[保存与恢复注意](troubleshooting.md#保存与备份)。
 
 ![设置下部：保存位置与诊断（个人路径已遮盖）](../../../users-guide/images/screen-settings-storage.svg)
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/screens.md) | [English](../../en/users-guide/screens.md) | **简体中文** | [한국어](../../ko/users-guide/screens.md)

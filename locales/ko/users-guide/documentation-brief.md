@@ -1,5 +1,8 @@
 # 제작 방침: 문서 의뢰를 「더 깊게」 다듬고 실행한 결과
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | [English](../../en/users-guide/documentation-brief.md) | [简体中文](../../zh-CN/users-guide/documentation-brief.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [검증과 유지 관리](verification.md)
 
 이 페이지는 가이드 제작 의뢰를 「더 크게」가 아니라 「더 깊게」 만들기 위해 정리한 기록입니다. 첫 의뢰에 대해 (1) 전문가가 추가로 할 일, (2) 출발점인 원시 자료, (3) 방법·도구, (4) 제3자 검증 수단을 제시하고 의뢰를 다시 쓴 뒤 실행했습니다. 끝에는 수정한 요구 사항별 결과물·증거를 연결했습니다.
@@ -91,3 +94,6 @@
 | 8. 기존 변경 유지 | — | 앱 소스 변경을 되돌리지 않음 |
 
 미실행 항목(제3자 첫 사용자 평가, 실제 Azure 실제 발화 시험, 전체 테스트 재실행)은 결과가 정확하다는 증거로 취급하지 않습니다.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | [English](../../en/users-guide/documentation-brief.md) | [简体中文](../../zh-CN/users-guide/documentation-brief.md) | **한국어**

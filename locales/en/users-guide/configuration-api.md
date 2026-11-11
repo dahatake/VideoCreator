@@ -1,5 +1,8 @@
 # Configuration and API reference
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/configuration-api.md) | **English** | [简体中文](../../zh-CN/users-guide/configuration-api.md) | [한국어](../../ko/users-guide/configuration-api.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Quickstart](quickstart.md) / [Screens](screens.md) / [Troubleshooting](troubleshooting.md) / [Architecture/extensions](technical-reference.md) / [Verification](verification.md)
 
 ## Startup configuration
@@ -165,3 +168,6 @@ Invoke-RestMethod "$base/jobs/$($j.job_id)"
 ```
 
 After `status=ready`, fetch candidates and review in the UI. Approval/batch examples: [exports.http](../../../src/VideoCreator.App/exports.http). Progress: [progress.http](../../../src/VideoCreator.App/progress.http); storage: [projects-dir.http](../../../src/VideoCreator.App/projects-dir.http); cards: [scene-cards.http](../../../src/VideoCreator.App/scene-cards.http).
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/configuration-api.md) | **English** | [简体中文](../../zh-CN/users-guide/configuration-api.md) | [한국어](../../ko/users-guide/configuration-api.md)

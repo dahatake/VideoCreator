@@ -1,6 +1,15 @@
 # VideoCreator
 
-[English](../en/README.md) | 简体中文 | [한국어](../ko/README.md) | [日本語](../../README.md)
+## 文档
+
+选择语言即可打开该语言的完整文档目录。目录按用户指南、项目需求与实现记录、调研报告和 Cowork 提示词分组。
+
+| 语言 | 文档入口 |
+|---|---|
+| 日本語 | [日文 README](../../README.md) |
+| English | [英文文档](../en/README.md) |
+| 简体中文 | [简体中文 README](README.md)（当前页面） |
+| 한국어 | [韩文文档](../ko/README.md) |
 
 ### 界面语言与视频语言
 
@@ -29,16 +38,24 @@
 
 > **重要**：虽是本地 Web 应用，通常仍会向 Azure Speech 发送生成字幕所需的音频。“不使用 LLM”或“无 LLM 模式”不等于完全离线。界面权利确认和自动 QA 均不保证实际授权、内容忠实或符合平台规则。配置示例中的端点属于发布者，请改为自己的值。安装程序不会创建 Azure 资源或重写端点。
 
-### 指南
+### 文档导航
 
-- [用户指南目录](users-guide/README.md)：按目的阅读与术语
-- [快速入门](users-guide/quickstart.md)：准备和第一个视频
-- [界面与组件说明](users-guide/screens.md)：实际界面 SVG 截图和操作含义
-- [遇到问题与 QA 读法](users-guide/troubleshooting.md)
-- [面向软件工程师的技术参考](users-guide/technical-reference.md)：架构图、数据和时间轴、扩展位置
-- [配置与 API 参考](users-guide/configuration-api.md)
-- [资料验证与截图重建](users-guide/verification.md)
-- [制作方针与需求、验证结果对应](users-guide/documentation-brief.md)
+可按目标从用户指南目录开始，也可按下列完整层级浏览：
+
+- **用户指南** — [指南目录](users-guide/README.md)
+  - [快速入门](users-guide/quickstart.md)
+  - [界面与组件说明](users-guide/screens.md)
+  - [故障排除与 QA](users-guide/troubleshooting.md)
+  - [配置与 API 参考](users-guide/configuration-api.md)
+  - [软件工程师技术参考](users-guide/technical-reference.md)
+  - [验证与截图重建](users-guide/verification.md)
+  - [制作方针](users-guide/documentation-brief.md)
+- **项目文档**
+  - [产品需求（PRD）](docs/PRD.md)
+  - [实现与验证记录](docs/IMPLEMENTATION.md)
+  - [分析与调研报告](docs/VideoCreator-AnalyticsReport.md)
+- **Cowork**
+  - [VideoCreator 提示词](work/VideoCreator-Prompt.md)
 
 ![候选比较界面（使用合成视频和测试转写的实际界面）](../../users-guide/images/screen-candidates.svg)
 

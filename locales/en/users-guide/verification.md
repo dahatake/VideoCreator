@@ -1,5 +1,8 @@
 # Documentation verification and maintenance
 
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/verification.md) | **English** | [简体中文](../../zh-CN/users-guide/verification.md) | [한국어](../../ko/users-guide/verification.md)
+
+
 [App README](../README.md) / [Guide index](README.md) / [Technical reference](technical-reference.md) / [Documentation brief](documentation-brief.md)
 
 ## Primary sources and verification scope
@@ -116,3 +119,6 @@ git diff --check -- README.md users-guide
 4. Changed first-use permissions/costs/destinations: update [quickstart](quickstart.md), [README](../README.md).
 5. Mechanically validate SVGs and visually inspect primary diagrams. Link validation proves neither external availability nor explanation truth.
 6. Ask an independent nondeveloper first-time user to export using only the guide; record confusing fields/failures. This third-party evaluation has not been performed.
+---
+
+[↑ Documentation map](../README.md) | [日本語](../../../users-guide/verification.md) | **English** | [简体中文](../../zh-CN/users-guide/verification.md) | [한국어](../../ko/users-guide/verification.md)

@@ -1,6 +1,15 @@
 # VideoCreator
 
-[English](locales/en/README.md) | [简体中文](locales/zh-CN/README.md) | [한국어](locales/ko/README.md) | 日本語
+## ドキュメント / Documentation
+
+言語を選ぶと、その言語の完全な文書目次が開きます。各目次から利用者ガイド、要件・実装資料、調査レポート、Cowork 用プロンプトへ移動できます。
+
+| 言語 | 文書入口 |
+|---|---|
+| 日本語 | [日本語 README](README.md)（このページ） |
+| English | [English documentation](locales/en/README.md) |
+| 简体中文 | [简体中文文档](locales/zh-CN/README.md) |
+| 한국어 | [한국어 문서](locales/ko/README.md) |
 
 ### 表示言語と動画の言語
 

@@ -1,5 +1,8 @@
 # 빠른 시작: 첫 동영상 만들기
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/quickstart.md) | [English](../../en/users-guide/quickstart.md) | [简体中文](../../zh-CN/users-guide/quickstart.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [화면 설명](screens.md) / [문제 해결](troubleshooting.md) / [설정·API](configuration-api.md)
 
 **목표**: 발화가 있는 동영상 한 편으로 P4 후보를 만들고, 내용을 확인한 뒤 1080×1920 MP4와 자막 등을 저장합니다. 처리 시간은 원본·PC·서비스 상태에 따라 달라지므로 일정 시간 안에 완료됨을 보장하지 않습니다.
@@ -118,3 +121,6 @@ Azure 서비스는 사용량 기반으로 과금됩니다. 모델명이 아니�
 SRT와 영상에 삽입된 자막을 동시에 표시하면 게시 대상에 따라 자막이 이중으로 보일 수 있습니다. 게시 대상의 표시 방식을 선택하세요. 앱은 게시·공개·시리즈 URL 자동 설정까지 수행하지 않습니다.
 
 종료하려면 시작 터미널에서 Ctrl+C를 누릅니다. 다음에는 프로젝트 목록에서 열면 마지막으로 표시했던 프로젝트 설정, 생성, 후보, 확인·수정, 내보내기 단계에서 재개합니다. 참조 대상이 없어졌다면 복원 가능한 이전 단계를 표시합니다. 백업은 [문제 해결](troubleshooting.md#저장과-백업)을 참조하세요.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/quickstart.md) | [English](../../en/users-guide/quickstart.md) | [简体中文](../../zh-CN/users-guide/quickstart.md) | **한국어**

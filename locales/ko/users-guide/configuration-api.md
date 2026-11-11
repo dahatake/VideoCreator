@@ -1,5 +1,8 @@
 # 설정·API 참조
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/configuration-api.md) | [English](../../en/users-guide/configuration-api.md) | [简体中文](../../zh-CN/users-guide/configuration-api.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [빠른 시작](quickstart.md) / [화면](screens.md) / [문제 해결](troubleshooting.md) / [구성·확장](technical-reference.md) / [검증과 유지 관리](verification.md)
 
 ## 시작 설정
@@ -165,3 +168,6 @@ Invoke-RestMethod "$base/jobs/$($j.job_id)"
 ```
 
 `status=ready` 뒤 candidates를 받아 UI에서 내용을 확인합니다. API 승인·일괄 출력 예시는 기존 [exports.http](../../../src/VideoCreator.App/exports.http), 진행률은 [progress.http](../../../src/VideoCreator.App/progress.http), 저장 위치는 [projects-dir.http](../../../src/VideoCreator.App/projects-dir.http), 카드는 [scene-cards.http](../../../src/VideoCreator.App/scene-cards.http)에 있습니다.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/configuration-api.md) | [English](../../en/users-guide/configuration-api.md) | [简体中文](../../zh-CN/users-guide/configuration-api.md) | **한국어**

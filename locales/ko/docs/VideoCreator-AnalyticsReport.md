@@ -1,5 +1,8 @@
 # VideoCreator 조사 보고서: 인기 SNS 영상 편집 스타일 분석과 「패턴 선택형 자동 편집」 기능 설계
 
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | [English](../../en/docs/VideoCreator-AnalyticsReport.md) | [简体中文](../../zh-CN/docs/VideoCreator-AnalyticsReport.md) | **한국어**
+
+
 - 작성일: 2026-11-07
 - 대상: YouTube(긴 영상/Shorts)·TikTok 중심 소셜 영상
 - 중점: **오락성(보는 즐거움)**
@@ -518,3 +521,6 @@ scenedetect -i input.mp4 detect-adaptive list-scenes   # 샷 경계 CSV
 > 제외 예: 처음 검색된 `4VXVfj0mEX4`("Katana vs bullet @MrBeast")는 oEmbed 게시자가 **MrBeast 아닌 제3자 재게시자**여서 제외했습니다. 제목이 아닌 **게시자로 공식 여부 확인**이 필요합니다(자동 클립도 동일).
 | TikTok 6768504823336815877 | @zachking | oEmbed 응답 있음 |
 | TikTok 6862153058223197445 | @bellapoarch | oEmbed 응답 있음 |
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | [English](../../en/docs/VideoCreator-AnalyticsReport.md) | [简体中文](../../zh-CN/docs/VideoCreator-AnalyticsReport.md) | **한국어**

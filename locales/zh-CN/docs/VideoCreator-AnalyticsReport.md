@@ -1,5 +1,8 @@
 # VideoCreator 调研报告：热门社交视频编辑风格分析与“模式选择式自动编辑”功能设计
 
+[↑ 文档导航](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | [English](../../en/docs/VideoCreator-AnalyticsReport.md) | **简体中文** | [한국어](../../ko/docs/VideoCreator-AnalyticsReport.md)
+
+
 - 创建日期：2026-11-07
 - 对象：以 YouTube（长视频／Shorts）和 TikTok 为主的社交视频
 - 重点：**娱乐性（观看时感到有趣）**
@@ -523,3 +526,6 @@ scenedetect -i input.mp4 detect-adaptive list-scenes   # CSV 镜头边界列表
 |---|---|---|
 | TikTok 6768504823336815877 | @zachking | oEmbed 有响应 |
 | TikTok 6862153058223197445 | @bellapoarch | oEmbed 有响应 |
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../docs/VideoCreator-AnalyticsReport.md) | [English](../../en/docs/VideoCreator-AnalyticsReport.md) | **简体中文** | [한국어](../../ko/docs/VideoCreator-AnalyticsReport.md)

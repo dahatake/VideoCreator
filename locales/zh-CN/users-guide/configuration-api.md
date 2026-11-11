@@ -1,5 +1,8 @@
 # 配置与 API 参考
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/configuration-api.md) | [English](../../en/users-guide/configuration-api.md) | **简体中文** | [한국어](../../ko/users-guide/configuration-api.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [快速入门](quickstart.md) / [界面](screens.md) / [遇到问题](troubleshooting.md) / [架构与扩展](technical-reference.md) / [验证与维护](verification.md)
 
 ## 启动配置
@@ -165,3 +168,6 @@ Invoke-RestMethod "$base/jobs/$($j.job_id)"
 ```
 
 `status=ready` 后获取 candidates，在 UI 中检查内容。API 批准与批量导出的具体示例见现有 [exports.http](../../../src/VideoCreator.App/exports.http)。进度见 [progress.http](../../../src/VideoCreator.App/progress.http)，保存位置见 [projects-dir.http](../../../src/VideoCreator.App/projects-dir.http)，卡片见 [scene-cards.http](../../../src/VideoCreator.App/scene-cards.http)。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/configuration-api.md) | [English](../../en/users-guide/configuration-api.md) | **简体中文** | [한국어](../../ko/users-guide/configuration-api.md)

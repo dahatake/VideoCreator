@@ -1,5 +1,8 @@
 # 문제 해결: 오류, QA, 저장
 
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | [English](../../en/users-guide/troubleshooting.md) | [简体中文](../../zh-CN/users-guide/troubleshooting.md) | **한국어**
+
+
 [앱 README](../README.md) / [가이드 목차](README.md) / [빠른 시작](quickstart.md) / [화면 설명](screens.md) / [설정과 API](configuration-api.md) / [검증과 유지 관리](verification.md)
 
 ## 먼저 원인 구분하기
@@ -85,3 +88,6 @@
 이동이 도중에 멈추면 실패·잔여 항목 표시를 기록하고 사용 중인 파일을 닫으세요. 다음 실행 때 `projects-move.json`을 기반으로 복구합니다. 저널을 수동 삭제하거나 DB 절대 경로만 변경하지 마세요.
 
 생성은 재시작 시 미완료 작업을 다시 넣고 사용 가능한 단계 캐시를 재사용합니다. **아직 시작하지 않은 최종 내보내기 큐는 메모리에 있으므로** 중지 전의 일괄 내보내기가 반드시 재개되는 것은 아닙니다. 완료 파일을 확인하고 필요한 후보를 다시 내보내세요.
+---
+
+[↑ 문서 안내](../README.md) | [日本語](../../../users-guide/troubleshooting.md) | [English](../../en/users-guide/troubleshooting.md) | [简体中文](../../zh-CN/users-guide/troubleshooting.md) | **한국어**

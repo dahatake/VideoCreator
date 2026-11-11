@@ -1,5 +1,8 @@
 # 制作方针：深化文档请求及其执行结果
 
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | [English](../../en/users-guide/documentation-brief.md) | **简体中文** | [한국어](../../ko/users-guide/documentation-brief.md)
+
+
 [应用 README](../README.md) / [指南目录](README.md) / [验证与维护](verification.md)
 
 本页记录如何将整套指南的请求变得“更深入”，而不是“更庞大”。针对最初请求，列明 (1) 专家会额外做什么、(2) 作为起点的原始素材、(3) 方法与工具、(4) 第三方验证方式，重写请求后执行。最后将每项重写需求与产物、证据对应。
@@ -91,3 +94,6 @@
 | 8. 保留现有更改 | — | 未撤销应用源码更改 |
 
 未执行项（第三方首次用户评价、真实 Azure 讲话测试、重跑全部测试）未被当作结果正确的证据。
+---
+
+[↑ 文档导航](../README.md) | [日本語](../../../users-guide/documentation-brief.md) | [English](../../en/users-guide/documentation-brief.md) | **简体中文** | [한국어](../../ko/users-guide/documentation-brief.md)
