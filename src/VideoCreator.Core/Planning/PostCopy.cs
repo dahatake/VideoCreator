@@ -13,6 +13,7 @@ public sealed record PostChapter(double Start, string Title, string Kind, bool F
 /// <summary>Copy-and-paste posting texts for one exported video.</summary>
 public sealed record PostKit
 {
+    public string Language { get; init; } = "ja-JP";
     public string Youtube { get; init; } = "";
     public string Engage { get; init; } = "";
     /// <summary>"00:00 タイトル" lines that satisfy YouTube's chapter rules; empty when they cannot.</summary>
@@ -41,7 +42,7 @@ public static partial class PostCopy
     {
         var active = InsertMap.Active(plan);
         var list = new List<PostChapter>();
-        foreach (var op in active.Where(i => i.Kind == "opening")) list.Add(new(InsertMap.StartOf(active, op), "オープニング", "opening", true));
+        foreach (var op in active.Where(i => i.Kind == "opening")) list.Add(new(InsertMap.StartOf(active, op), VideoLanguages.Text(plan.Language, "オープニング", "Opening", "片头", "오프닝"), "opening", true));
         if (plan.Series != null)
             list.AddRange(Qa.QaEngine.FinalChapters(plan).Select(c => new PostChapter(c.Start, c.Title, "chapter", c.Title.Length > 0)));
         else
@@ -61,7 +62,7 @@ public static partial class PostCopy
                 else list.Add(new(InsertMap.ToFinal(active, at), "", "scene", false));
             }
         }
-        foreach (var ed in active.Where(i => i.Kind == "closing")) list.Add(new(InsertMap.StartOf(active, ed), "エンディング", "closing", true));
+        foreach (var ed in active.Where(i => i.Kind == "closing")) list.Add(new(InsertMap.StartOf(active, ed), VideoLanguages.Text(plan.Language, "エンディング", "Closing", "片尾", "엔딩"), "closing", true));
         return list.OrderBy(c => c.Start).Select(c => c with { Start = Math.Round(c.Start, 3), Title = Masking.MaskText(OneLine(c.Title), mask) }).ToList();
     }
 
@@ -98,7 +99,7 @@ public static partial class PostCopy
         return outline.Select((ch, k) =>
         {
             double end = k + 1 < outline.Count ? outline[k + 1].Start : double.MaxValue;
-            return string.Concat(words.Where(w => w.T >= ch.Start - 0.05 && w.T < end - 0.05).Select(w => w.Text));
+            return VideoLanguages.JoinWords(words.Where(w => w.T >= ch.Start - 0.05 && w.T < end - 0.05).Select(w => w.Text), masked.Language);
         }).ToList();
     }
 
@@ -240,7 +241,7 @@ public static partial class PostCopy
                 var user = UserPrompt(headline, plan.TotalDuration, outline, spoken, source);
                 if (!string.IsNullOrWhiteSpace(previous))
                     user += "\n\n次は前回の案です。同じ事実の範囲で、別の切り口（取り上げる見どころ・書き出し・言い回し）の案を作ってください。\n" + Trunc(previous, 1500);
-                var json = await llm.CompleteJsonAsync(SystemPrompt, user, "post_copy", Schema, ct);
+                var json = await llm.CompleteJsonAsync(SystemPrompt + VideoLanguages.Prompt(tr.Language), user, "post_copy", Schema, ct);
                 draft = Parse(json, outline, spoken, source, mask, dictionary, notes);
                 if (notes.Count > 0 && (draft.Hook.Length == 0 || draft.EngageHook.Length == 0 || draft.Summary.Length == 0 || draft.Highlights.Count < 2))
                 {
@@ -248,7 +249,7 @@ public static partial class PostCopy
                     var retryNotes = new List<string>();
                     try
                     {
-                        var fix = await llm.CompleteJsonAsync(SystemPrompt, user + "\n\n前回の案の次の部分は使えませんでした。理由の語を使わずに、すべての項目を書き直してください。\n" + string.Join("\n", notes.Select(n => "- " + n)), "post_copy", Schema, ct);
+                        var fix = await llm.CompleteJsonAsync(SystemPrompt + VideoLanguages.Prompt(tr.Language), user + "\n\n前回の案の次の部分は使えませんでした。理由の語を使わずに、すべての項目を書き直してください。\n" + string.Join("\n", notes.Select(n => "- " + n)), "post_copy", Schema, ct);
                         draft = Merge(draft, Parse(fix, outline, spoken, source, mask, dictionary, retryNotes));
                         notes.Clear();
                         notes.AddRange(retryNotes);
@@ -259,7 +260,7 @@ public static partial class PostCopy
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 log?.Invoke("post copy generation failed: " + ex.Message);
-                notes.Add("AI で文章を作れなかったため、ひな形で作りました");
+                notes.Add(VideoLanguages.Text(plan.Language, "AI で文章を作れなかったため、ひな形で作りました", "AI copy generation failed; a template was used.", "AI 文案生成失败，已使用模板。", "AI 문구 생성에 실패하여 템플릿을 사용했습니다."));
             }
         }
         return Compose(plan, headline, outline, spoken, draft, notes);
@@ -277,6 +278,7 @@ public static partial class PostCopy
 
     public static PostKit Compose(EditPlan plan, string headline, List<PostChapter> outline, IReadOnlyList<string> spoken, Draft? draft, List<string> notes)
     {
+        string T(string ja, string en, string zh, string ko) => VideoLanguages.Text(plan.Language, ja, en, zh, ko);
         double total = plan.TotalDuration;
         // sections without a fixed title: the AI title, else the current one, else the first words said there
         outline = outline.Select((ch, i) => ch.Fixed ? ch
@@ -285,11 +287,19 @@ public static partial class PostCopy
         var index = yt ?? IndexLines(outline, total);
         bool vertical = plan.Canvas.Height > plan.Canvas.Width;
         bool isShort = vertical && total <= ShortsMaxSec;
-        if (yt == null) notes.Add("章が3つ未満か10秒未満になるため、YouTube のチャプター条件（00:00 から・3つ以上・各10秒以上）を満たしません。YouTube にはチャプターを付けずに投稿します");
-        else if (isShort) notes.Add("3分以内の縦型動画は YouTube でショートとして扱われ、説明欄のチャプターが再生バーに表示されないことがあります");
+        if (yt == null) notes.Add(T("章が3つ未満か10秒未満になるため、YouTube のチャプター条件（00:00 から・3つ以上・各10秒以上）を満たしません。YouTube にはチャプターを付けずに投稿します",
+            "YouTube chapters omitted: at least 3 chapters, starting at 00:00 and lasting at least 10 seconds each, are required.",
+            "已省略 YouTube 章节：需从 00:00 开始，至少 3 章，每章至少 10 秒。",
+            "YouTube 챕터 생략: 00:00부터 시작하여 각 10초 이상의 챕터가 3개 이상 필요합니다."));
+        else if (isShort) notes.Add(T("3分以内の縦型動画は YouTube でショートとして扱われ、説明欄のチャプターが再生バーに表示されないことがあります",
+            "YouTube may treat vertical videos up to 3 minutes as Shorts and not display chapters in the player.",
+            "YouTube 可能将 3 分钟以内的竖屏视频视为 Shorts，播放器可能不显示章节。",
+            "YouTube는 3분 이하 세로 영상을 Shorts로 처리하여 재생 바에 챕터를 표시하지 않을 수 있습니다."));
 
         var hook = draft?.Hook is { Length: > 0 } h ? h : headline.Length > 0 ? $"{headline}！" : "";
-        var engageHook = draft?.EngageHook is { Length: > 0 } eh ? eh : headline.Length > 0 ? $"「{headline}」の動画を公開しました！" : "動画を公開しました！";
+        var engageHook = draft?.EngageHook is { Length: > 0 } eh ? eh : headline.Length > 0
+            ? T($"「{headline}」の動画を公開しました！", $"New video: {headline}!", $"新视频已发布：{headline}！", $"새 영상 공개: {headline}!")
+            : T("動画を公開しました！", "New video released!", "新视频已发布！", "새 영상이 공개되었습니다!");
         var summary = draft?.Summary ?? "";
         var highlights = draft?.Highlights.OrderBy(x => x.Chapter).Select(x => x.Text).ToList() ?? [];
         if (highlights.Count == 0)
@@ -300,9 +310,10 @@ public static partial class PostCopy
         var ytText = new StringBuilder();
         Line(ytText, hook);
         if (summary.Length > 0) { ytText.AppendLine(); Line(ytText, summary); }
-        if (highlights.Count > 0) { ytText.AppendLine().AppendLine("▼見どころ"); foreach (var x in highlights) ytText.AppendLine("✅ " + x); }
-        if (yt != null) { ytText.AppendLine().AppendLine("▼チャプター"); foreach (var l in yt) ytText.AppendLine(l); }
-        ytText.AppendLine().AppendLine("最後まで見てもらえたらうれしいです！").AppendLine("高評価・チャンネル登録・コメントで応援してもらえると励みになります🙌");
+        if (highlights.Count > 0) { ytText.AppendLine().AppendLine(T("▼見どころ", "▼Highlights", "▼精彩看点", "▼주요 장면")); foreach (var x in highlights) ytText.AppendLine("✅ " + x); }
+        if (yt != null) { ytText.AppendLine().AppendLine(T("▼チャプター", "▼Chapters", "▼章节", "▼챕터")); foreach (var l in yt) ytText.AppendLine(l); }
+        ytText.AppendLine().AppendLine(T("最後まで見てもらえたらうれしいです！", "Thanks for watching to the end!", "感谢观看到最后！", "끝까지 시청해 주셔서 감사합니다!"))
+            .AppendLine(T("高評価・チャンネル登録・コメントで応援してもらえると励みになります🙌", "Please like, subscribe and leave a comment 🙌", "欢迎点赞、订阅和留言支持🙌", "좋아요, 구독, 댓글로 응원해 주세요🙌"));
         var ytTags = tags.Take(MaxHashtags).Select(t => "#" + t).ToList();
         if (isShort) ytTags.Add("#Shorts");
         if (ytTags.Count > 0) ytText.AppendLine().AppendLine(string.Join(" ", ytTags));
@@ -311,13 +322,14 @@ public static partial class PostCopy
         if (headline.Length > 0) Line(en, $"🎬 {headline}");
         Line(en, engageHook);
         if (summary.Length > 0) { en.AppendLine(); Line(en, summary); }
-        if (highlights.Count > 0) { en.AppendLine().AppendLine("📌 見どころ"); foreach (var x in highlights) en.AppendLine("・" + x); }
-        if (index.Count > 0) { en.AppendLine().AppendLine($"⏱ 目次（{SeriesPlanner.Stamp(total, total)}）"); foreach (var l in index) en.AppendLine(l); }
-        en.AppendLine().AppendLine("見たら感想をコメントやリアクションで教えてください！");
+        if (highlights.Count > 0) { en.AppendLine().AppendLine(T("📌 見どころ", "📌 Highlights", "📌 精彩看点", "📌 주요 장면")); foreach (var x in highlights) en.AppendLine("・" + x); }
+        if (index.Count > 0) { en.AppendLine().AppendLine($"⏱ {T("目次", "Contents", "目录", "목차")}（{SeriesPlanner.Stamp(total, total)}）"); foreach (var l in index) en.AppendLine(l); }
+        en.AppendLine().AppendLine(T("見たら感想をコメントやリアクションで教えてください！", "Share your thoughts in a comment or reaction!", "欢迎通过留言或回应分享感想！", "댓글이나 반응으로 감상을 알려 주세요!"));
         if (tags.Count > 0) en.AppendLine().AppendLine(string.Join(" ", tags.Take(EngageTopics).Select(t => "#" + t)));
 
         var kit = new PostKit
         {
+            Language = plan.Language,
             Youtube = ytText.ToString().ReplaceLineEndings("\n").TrimEnd(), Engage = en.ToString().ReplaceLineEndings("\n").TrimEnd(), Chapters = yt != null ? string.Join("\n", yt) : "",
             Outline = outline, Source = draft != null ? "ai" : "template", Notes = notes, Duration = Math.Round(total, 3),
         };
@@ -327,7 +339,7 @@ public static partial class PostCopy
     }
 
     /// <summary>The same texts as a Markdown section (appended to .metadata.md).</summary>
-    public static string Markdown(PostKit kit) => $"""
+    public static string Markdown(PostKit kit) => kit.Language == "ja-JP" ? $"""
 
 ## YouTube 説明文（そのまま貼り付け）
 ```text
@@ -341,6 +353,21 @@ public static partial class PostCopy
 
 ## チャプター（YouTube の条件: 00:00 から・3つ以上・各10秒以上）
 {(kit.Chapters.Length > 0 ? $"```text\n{kit.Chapters}\n```" : "（条件を満たさないため付けません）")}
+{(kit.Notes.Count > 0 ? "\n" + string.Join("\n", kit.Notes.Select(n => "- " + n)) : "")}
+""" : $"""
+
+## {VideoLanguages.Text(kit.Language, "", "YouTube description (copy and paste)", "YouTube 简介（可直接粘贴）", "YouTube 설명 (복사하여 붙여넣기)")}
+```text
+{kit.Youtube}
+```
+
+## {VideoLanguages.Text(kit.Language, "", "Viva Engage post (copy and paste)", "Viva Engage 帖子（可直接粘贴）", "Viva Engage 게시물 (복사하여 붙여넣기)")}
+```text
+{kit.Engage}
+```
+
+## {VideoLanguages.Text(kit.Language, "", "Chapters (00:00 first, at least 3, at least 10 seconds each)", "章节（从 00:00 开始，至少 3 章，每章至少 10 秒）", "챕터 (00:00부터, 3개 이상, 각 10초 이상)")}
+{(kit.Chapters.Length > 0 ? $"```text\n{kit.Chapters}\n```" : VideoLanguages.Text(kit.Language, "", "(Omitted: chapter requirements not met)", "（不符合章节条件，因此省略）", "(챕터 조건을 충족하지 않아 생략)"))}
 {(kit.Notes.Count > 0 ? "\n" + string.Join("\n", kit.Notes.Select(n => "- " + n)) : "")}
 """;
 

@@ -12,7 +12,7 @@ public static class CandidateValidator
     public const double LlmWeight = 0.6, SignalWeight = 0.4;
 
     public static string TextOf(Transcript tr, IEnumerable<Interval> segs) =>
-        string.Concat(segs.SelectMany(s => tr.Sentences.Where(x => x.T1 > s.T0 + 0.05 && x.T0 < s.T1 - 0.05)).Distinct().Select(x => x.Text));
+        VideoLanguages.JoinWords(segs.SelectMany(s => tr.Sentences.Where(x => x.T1 > s.T0 + 0.05 && x.T0 < s.T1 - 0.05)).Distinct().Select(x => x.Text), tr.Language);
 
     public static Candidate Normalize(RawCandidate raw, Transcript tr, SignalSet sig, double duration, string id, string source = "llm")
     {
@@ -33,7 +33,7 @@ public static class CandidateValidator
         var src = TextOf(tr, segs);
         string Limit(string s, int max, string label)
         {
-            s = JapaneseText.NormalizeTelop(s.Trim());
+            s = CaptionText.Normalize(s.Trim(), tr.Language);
             if (JapaneseText.DisplayWidth(s) <= max) return s;
             var sb = new StringBuilder();
             foreach (var ch in s) { if (JapaneseText.DisplayWidth(sb.ToString() + ch) > max) break; sb.Append(ch); }

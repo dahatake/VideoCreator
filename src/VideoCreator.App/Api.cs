@@ -11,8 +11,8 @@ namespace VideoCreator.App;
 
 public static class Api
 {
-    public sealed record CreateProject(string Name);
-    public sealed record RenameProject(string? Name);
+    public sealed record CreateProject(string Name, string Language = "ja-JP");
+    public sealed record RenameProject(string? Name, string? Language = null);
     public sealed record PutProjectProperNouns(List<ProjectProperNoun?>? ProperNouns);
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
@@ -195,18 +195,19 @@ public static class Api
         // ---- projects ----
         api.MapPost("/projects", (Runtime rt, ProjectsLocation loc, CreateProject req) =>
         {
+            if (!VideoLanguages.IsSupported(req.Language)) return Error(422, "E-VALIDATION", "language must be ja-JP | en-US | zh-CN | ko-KR");
             var name = string.IsNullOrWhiteSpace(req.Name) ? "新しいプロジェクト" : req.Name;
             if (ValidateProjectName(name, out name) is string err) return Error(422, "E-VALIDATION", err);
             var id = "p_" + Guid.NewGuid().ToString("N")[..10];
             var dir = Path.Combine(loc.Root, $"{SafeName(name)}_{id[2..8]}");
             Directory.CreateDirectory(dir);
-            var p = new Project { Id = id, Name = name, Directory = dir };
+            var p = new Project { Id = id, Name = name, Directory = dir, Language = req.Language };
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options, statusCode: 201);
         });
         api.MapGet("/projects", (Runtime rt) => Results.Json(rt.Store.List<Project>(Kinds.Project).Select(p => new
         {
-            p.Id, p.Name, p.CreatedAt, p.Directory,
+            p.Id, p.Name, p.CreatedAt, p.Directory, p.Language,
             assets = rt.Store.List<SourceAsset>(Kinds.Asset, p.Id).Count,
             last_job = rt.Store.List<Job>(Kinds.Job, p.Id).FirstOrDefault(),
         }), Json.Options));
@@ -226,14 +227,18 @@ public static class Api
                 rights_statement = RightsStatement.Text,
             }, Json.Options);
         });
-        // Display name only: the folder and every stored absolute path stay as they are.
-        api.MapPatch("/projects/{id}", (Runtime rt, string id, RenameProject req) =>
+        // The folder and every stored absolute path stay as they are.
+        api.MapPatch("/projects/{id}", (Runtime rt, JobQueue q, string id, RenameProject req) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
-            if (ValidateProjectName(req.Name, out var name) is string err) return Error(422, "E-VALIDATION", err);
-            if (name == p.Name) return Results.Json(p, Json.Options);
-            p = p with { Name = name };
+            var language = req.Language ?? p.Language;
+            if (req.Name == null && req.Language == null) return Error(422, "E-VALIDATION", "name or language is required");
+            if (!VideoLanguages.IsSupported(language)) return Error(422, "E-VALIDATION", "language must be ja-JP | en-US | zh-CN | ko-KR");
+            if (language != p.Language && q.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "生成または書き出しの終了後に動画の言語を変更してください");
+            if (ValidateProjectName(req.Name ?? p.Name, out var name) is string err) return Error(422, "E-VALIDATION", err);
+            if (name == p.Name && language == p.Language) return Results.Json(p, Json.Options);
+            p = p with { Name = name, Language = language };
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
         });
@@ -784,7 +789,7 @@ public static class Api
                     var cand = rt.Store.Get<Candidate>(Kinds.Candidate, plan.Provenance.CandidateId ?? "") ?? throw new KeyNotFoundException("candidate");
                     var job = rt.Store.Get<Job>(Kinds.Job, plan.Provenance.JobId ?? "") ?? throw new KeyNotFoundException("job");
                     var main = rt.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
-                    var tr = runner.LoadTranscript(main);
+                    var tr = runner.LoadTranscript(main, plan.Language);
                     var segs = PlanEditor.AdjustSegments(MergedSegments(updated), tr, adj.Edge ?? "end", adj.Op == "replan" ? 0 : adj.Delta ?? 1);
                     var (rebuilt, _) = await runner.ReplanAsync(cand, updated, job, segs, ct);
                     updated = PlanEditor.Reapply(rebuilt with { EditplanId = plan.EditplanId }, updated, adj.Op == "replan");

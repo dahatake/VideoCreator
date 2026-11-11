@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">Plan QA, final QA, and human publication decisions</title>
+  <desc id="desc">Inspect plan text, duration, speech cuts, rights, and approvals; measure final-file resolution, loudness, and safe areas. Fix failures; not-run is not a pass. Even after QA passes, humans review content, rights, and terms before manually posting.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">“QA passed” and “safe to publish” are different judgments</text>
+    <rect x="28" y="75" width="345" height="215" rx="10" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="111" font-size="22" font-weight="700">1. Plan QA</text>
+    <text x="48" y="151" font-size="17">Duration / speech cuts / new claims</text>
+    <text x="48" y="184" font-size="17">AI approval / rights / masking</text>
+    <text x="48" y="217" font-size="17">Text length / speed / line breaks</text>
+    <text x="48" y="260" font-size="16">Recheck the current plan after edits</text>
+    <rect x="422" y="75" width="345" height="215" rx="10" fill="#edf7f1" stroke="#28734d"/>
+    <text x="442" y="111" font-size="22" font-weight="700">2. Final QA</text>
+    <text x="442" y="151" font-size="17">ffprobe: resolution / duration</text>
+    <text x="442" y="184" font-size="17">Measure loudness / True Peak</text>
+    <text x="442" y="217" font-size="17">Inspect rendered safe areas, etc.</text>
+    <text x="442" y="260" font-size="16">Finalize only if hard checks pass</text>
+    <rect x="817" y="75" width="355" height="215" rx="10" fill="#fff1db" stroke="#ad7123"/>
+    <text x="837" y="111" font-size="21" font-weight="700">3. Human review / posting</text>
+    <text x="837" y="151" font-size="17">Meaning / context / private data</text>
+    <text x="837" y="184" font-size="17">Actual consent / music / likeness</text>
+    <text x="837" y="217" font-size="17">Platform terms / subtitle display</text>
+    <text x="837" y="260" font-size="16">Watch final video and judge yourself</text>
+    <text x="28" y="340" font-size="18">pass = passed this check / warn = review required / fail = failed / not_run = not performed</text>
+    <text x="28" y="388" font-size="18" font-weight="700">Never treat not_run on a low-resolution preview as a final-file pass.</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M373 177H414"/><path d="M767 177H809"/></g>
+</svg>

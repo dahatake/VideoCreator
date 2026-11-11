@@ -12,32 +12,40 @@
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>
-  <a class="skip" href="#main">メインへ移動</a>
+  <a class="skip" href="#main" data-i18n="shell.skip">メインへ移動</a>
   <header class="appbar" role="banner">
-    <a class="brand" href="#/" aria-label="VideoCreator ホーム">
+    <a class="brand" href="#/" aria-label="VideoCreator ホーム" data-i18n-aria="shell.home">
       <img src="/img/icon.svg" width="28" height="28" alt="">
       <span>VideoCreator</span>
     </a>
-    <span class="appbar-sub">長尺動画からショートを自動編集</span>
+    <span class="appbar-sub" data-i18n="shell.subtitle">長尺動画からショートを自動編集</span>
     <span class="spacer"></span>
     <span id="provider" class="provider" aria-live="polite"></span>
-    <fluent-button id="settings-btn" appearance="subtle" aria-label="設定">設定</fluent-button>
+    <label class="ui-language"><span data-i18n="shell.language">表示言語</span>
+      <select class="native" id="ui-language" aria-label="表示言語" data-i18n-aria="shell.language">
+        <option value="ja" lang="ja">日本語</option>
+        <option value="en" lang="en">English</option>
+        <option value="zh-CN" lang="zh-CN">简体中文</option>
+        <option value="ko" lang="ko">한국어</option>
+      </select>
+    </label>
+    <fluent-button id="settings-btn" appearance="subtle" aria-label="設定" data-i18n="shell.settings" data-i18n-aria="shell.settings">設定</fluent-button>
   </header>
-  <nav class="steps" id="steps" aria-label="作業の手順"></nav>
+  <nav class="steps" id="steps" aria-label="作業の手順" data-i18n-aria="shell.steps"></nav>
   <main id="main" tabindex="-1"></main>
   <fluent-dialog id="settings-dialog" type="modal">
     <fluent-dialog-body>
-      <h2 slot="title">設定</h2>
+      <h2 slot="title" data-i18n="shell.settings">設定</h2>
       <div id="settings-body"></div>
-      <fluent-button slot="action" appearance="primary" id="settings-close">閉じる</fluent-button>
+      <fluent-button slot="action" appearance="primary" id="settings-close" data-i18n="shell.close">閉じる</fluent-button>
     </fluent-dialog-body>
   </fluent-dialog>
-  <fluent-dialog id="delete-dialog" type="alert" aria-label="プロジェクトの削除">
+  <fluent-dialog id="delete-dialog" type="alert" aria-label="プロジェクトの削除" data-i18n-aria="shell.delete">
     <fluent-dialog-body>
-      <h2 slot="title">プロジェクトを削除しますか？</h2>
+      <h2 slot="title" data-i18n="shell.deleteQuestion">プロジェクトを削除しますか？</h2>
       <div id="delete-body"></div>
-      <fluent-button slot="action" appearance="primary" class="danger" id="delete-confirm">削除する</fluent-button>
-      <fluent-button slot="action" id="delete-cancel" autofocus>キャンセル</fluent-button>
+      <fluent-button slot="action" appearance="primary" class="danger" id="delete-confirm" data-i18n="m401">削除する</fluent-button>
+      <fluent-button slot="action" id="delete-cancel" autofocus data-i18n="m278">キャンセル</fluent-button>
     </fluent-dialog-body>
   </fluent-dialog>
 </body>

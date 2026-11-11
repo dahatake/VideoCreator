@@ -70,8 +70,11 @@ public sealed class QaEngine(FFmpeg ff)
             ? tr.FullText + string.Concat(se.Labels)
             : string.Concat(tr.Sentences.Where(s => plan.Timeline.Any(c => s.T1 > c.MasterIn && s.T0 < c.MasterOut)).Select(s => s.Text));
         var ungroundedHits = plan.Telops.Where(t => t.Enabled && t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter or TelopType.Tsukkomi)
-            .Select(t => (id: t.Id, claims: JapaneseText.UngroundedClaims(t.Text, src, ctx.Dictionary), item: (Func<string, QaItem>)(d => TelopItem(t, d))))
-            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).Select(i => (id: i.Id, claims: JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary), item: (Func<string, QaItem>)(d => InsertItem(i, d)))))
+            .Select(t => (id: t.Id, claims: TelopGrounding.IsSeriesStructure(t, plan.Series) ? new List<string>()
+                : JapaneseText.UngroundedClaims(t.Text, src, t.Type == TelopType.Tsukkomi ? ctx.Dictionary.Concat(TsukkomiService.ReactionWords) : ctx.Dictionary), item: (Func<string, QaItem>)(d => TelopItem(t, d))))
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0).Select(i => (id: i.Id, claims:
+                i.TextSource == "fixed" && Enumerable.Range(0, 4).Any(k => i.Text == InsertPlanner.FixedPhrase(plan.Language, k)) ? new List<string>()
+                : JapaneseText.UngroundedClaims(i.Text, src, ctx.Dictionary.Concat(TsukkomiService.ReactionWords)), item: (Func<string, QaItem>)(d => InsertItem(i, d)))))
             .Where(x => x.claims.Count > 0).ToList();
         var ungrounded = ungroundedHits.SelectMany(x => x.claims.Select(c => $"{x.id}:{c}")).ToList();
         res.Add(new("H-07", ungrounded.Count == 0 ? QaStatus.Pass : QaStatus.Fail, ungrounded.Count == 0 ? "0" : string.Join(", ", ungrounded), "0 ungrounded claims", "テロップの未出現語（内容の忠実性は別途確認）")

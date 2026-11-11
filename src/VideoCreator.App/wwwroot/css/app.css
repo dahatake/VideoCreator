@@ -39,6 +39,12 @@ select.native:focus-visible, input.native:focus-visible { outline: 2px solid var
 .appbar-sub { color: var(--colorNeutralForeground3); font-size: 12px; }
 .spacer { flex: 1; }
 .provider { font-size: 12px; color: var(--colorNeutralForeground2); }
+.ui-language { display: flex; align-items: center; gap: var(--s8); font-size: 12px; white-space: nowrap; }
+.video-language { display: grid; gap: var(--s4); max-width: 640px; margin-bottom: var(--s12); }
+.video-language label { display: flex; align-items: center; gap: var(--s8); }
+html:lang(zh-CN) { --font: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif; }
+html:lang(ko) { --font: "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
+@media (max-width: 1100px) { .appbar { flex-wrap: wrap; } .provider { order: 2; width: 100%; } .appbar-sub { display: none; } }
 
 .steps { display: flex; gap: var(--s4); padding: var(--s8) var(--s24); background: var(--colorNeutralBackground1); border-bottom: 1px solid var(--colorNeutralStroke2); overflow-x: auto; }
 .steps:empty { display: none; }

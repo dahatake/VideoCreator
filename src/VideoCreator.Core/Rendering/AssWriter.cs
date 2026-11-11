@@ -9,6 +9,12 @@ namespace VideoCreator.Rendering;
 public static class AssWriter
 {
     public const string FontName = "M PLUS 1p ExtraBold";   // OFL, bundled in tools/fonts (Q-6)
+    public static string FontFor(string language) => language switch
+    {
+        "zh-CN" => "Noto Sans CJK SC",
+        "ko-KR" => "Noto Sans CJK KR",
+        _ => FontName,
+    };
     public const int HeadlineMarginV = 300, EmphLift = 115, MarginL = 60, CounterMarginV = 520, TsukkomiMarginV = 930, SfxY = 820;
     /// <summary>Glyph advance / font size for M PLUS 1p ExtraBold. Measured 0.70 (spikes/03: 15 chars @72px = 771px); 0.75 keeps a margin.</summary>
     public const double GlyphRatio = 0.75;
@@ -27,14 +33,19 @@ public static class AssWriter
     }
 
     /// <summary>Displayed lines of a caption: one line, or up to caption.max_lines broken where kinsoku allows.</summary>
-    public static List<string> CaptionLines(string text, Preset p, int canvasWidth = 1080) =>
-        Planning.JapaneseText.WrapLines(text, CaptionLineChars(p, canvasWidth), p.Telop.Caption.MaxLines);
+    public static List<string> CaptionLines(string text, Preset p, int canvasWidth = 1080, string language = "ja-JP") =>
+        Planning.CaptionText.WrapLines(text, CaptionLineChars(p, canvasWidth), p.Telop.Caption.MaxLines, language);
 
     /// <summary>Font size that keeps the telop inside the horizontal safe zone (C-4): shrink instead of overflowing. <paramref name="scaleX"/> is the style's ScaleX (%).</summary>
-    public static int FitFontSize(string text, int fontPx, int outline, int canvasWidth, int marginR, int scaleX = 100)
+    public static int FitFontSize(string text, int fontPx, int outline, int canvasWidth, int marginR, int scaleX = 100, string language = "ja-JP")
     {
         double available = canvasWidth - MarginL - marginR - 2 * outline;
-        double est = Planning.JapaneseText.DisplayWidth(text) * fontPx * GlyphRatio * scaleX / 100.0;
+        double width = Planning.JapaneseText.DisplayWidth(text);
+        if (language != "ja-JP")
+            foreach (char ch in text)
+                if (ch is >= '!' and <= '~')
+                    width += "MWmw@%#&".Contains(ch) ? 0.65 : 0.15;
+        double est = width * fontPx * GlyphRatio * scaleX / 100.0;
         return est <= available ? fontPx : Math.Max(24, (int)Math.Floor(fontPx * available / est));
     }
 
@@ -116,7 +127,10 @@ public static class AssWriter
     public static string Write(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement>? layout = null)
     {
         layout ??= TelopLayout.Resolve(plan, p);
-        return p.Telop.IsVariety ? WriteVariety(plan, p, layout) : WriteStandard(plan, p, layout);
+        var ass = p.Telop.IsVariety ? WriteVariety(plan, p, layout) : WriteStandard(plan, p, layout);
+        var font = FontFor(plan.Language);
+        return string.Join("\n", ass.Split('\n').Select(line => line.StartsWith("Style:", StringComparison.Ordinal)
+            ? line.Replace("," + FontName + ",", "," + font + ",", StringComparison.Ordinal) : line));
     }
 
     static string WriteVariety(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
@@ -150,8 +164,8 @@ public static class AssWriter
             var style = t.Style;
             if (caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
             var (size, outline, scaleX) = Metrics(style, p);
-            var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width) : [t.Text];
-            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, scaleX));
+            var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
+            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, scaleX, plan.Language));
             if (placement.Positioned) fit = placement.FontSize;
             var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
@@ -201,7 +215,7 @@ public static class AssWriter
     {
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(Planning.InsertMap.Active(plan)).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = CardFontSize(card, plan.Canvas, c);
+            var fit = CardFontSize(card, plan.Canvas, c, plan.Language);
             int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
@@ -248,8 +262,8 @@ public static class AssWriter
             var style = t.Style;
             if (t.Type == TelopType.Caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
             var (size, outline, _) = Metrics(style, p);
-            var lines = t.Type == TelopType.Caption ? CaptionLines(t.Text, p, plan.Canvas.Width) : [t.Text];
-            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR));
+            var lines = t.Type == TelopType.Caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
+            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, language: plan.Language));
             if (placement.Positioned) fit = placement.FontSize;
             var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             // body time → file time; a telop running across a card or bumper is split around it
@@ -258,7 +272,7 @@ public static class AssWriter
         }
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = CardFontSize(card, plan.Canvas, c);
+            var fit = CardFontSize(card, plan.Canvas, c, plan.Language);
             int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
@@ -269,12 +283,12 @@ public static class AssWriter
 
     public const int CardFontPx = 120, CardOutline = 12;
 
-    static int CardFontSize(Insert card, Canvas canvas, CaptionStyle c)
+    static int CardFontSize(Insert card, Canvas canvas, CaptionStyle c, string language)
     {
-        if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, c.MarginR);
+        if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, c.MarginR, language: language);
         // the card image fills the screen, so the text may use the whole safe width
         double width = canvas.Width - 2 * Math.Max(MarginL, c.MarginR);
-        return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + MarginL + c.MarginR, c.MarginR);
+        return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + MarginL + c.MarginR, c.MarginR, language: language);
     }
 
     public static string Time(double s)
@@ -298,7 +312,7 @@ public static class AssWriter
             {
                 sb.AppendLine((++i).ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine($"{SrtTime(s)} --> {SrtTime(e)}");
-                foreach (var line in p == null ? [t.Text] : CaptionLines(t.Text, p, plan.Canvas.Width)) sb.AppendLine(line);
+                foreach (var line in p == null ? [t.Text] : CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language)) sb.AppendLine(line);
                 sb.AppendLine();
             }
         return sb.ToString();

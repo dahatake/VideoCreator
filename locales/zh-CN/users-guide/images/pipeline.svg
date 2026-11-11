@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="580" viewBox="0 0 1200 580" role="img" aria-labelledby="title desc">
+  <title id="title">从生成到最终输出的流水线</title>
+  <desc id="desc">素材分析、转写、信号、候选、计划、低分辨率预览、人工检查修改、最终渲染、分阶段 QA、产物。显示缓存及 LLM 失败时信号回退。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="580" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI','Microsoft YaHei',sans-serif" fill="#19344b" text-anchor="middle">
+    <text x="30" y="40" text-anchor="start" font-size="24" font-weight="700">生成提供建议，导出依据确定计划制作</text>
+    <g fill="#e6f0fb" stroke="#3974a2">
+      <rect x="25" y="80" width="190" height="115" rx="10"/><rect x="255" y="80" width="190" height="115" rx="10"/>
+      <rect x="485" y="80" width="190" height="115" rx="10"/><rect x="715" y="80" width="190" height="115" rx="10"/>
+      <rect x="945" y="80" width="230" height="115" rx="10"/>
+    </g>
+    <text x="120" y="117" font-size="21" font-weight="700">导入</text><text x="120" y="150" font-size="17">权利、格式、SHA</text><text x="120" y="178" font-size="17">代理与音频</text>
+    <text x="350" y="117" font-size="21" font-weight="700">转写</text><text x="350" y="150" font-size="17">词、句子、说话人</text><text x="350" y="178" font-size="17">保留时间</text>
+    <text x="580" y="117" font-size="21" font-weight="700">信号分析</text><text x="580" y="150" font-size="17">音量与静音</text><text x="580" y="178" font-size="17">镜头与事件</text>
+    <text x="810" y="117" font-size="21" font-weight="700">候选筛选</text><text x="810" y="150" font-size="17">LLM 建议→验证</text><text x="810" y="178" font-size="17">信号回退</text>
+    <text x="1060" y="117" font-size="21" font-weight="700">编辑计划</text><text x="1060" y="150" font-size="17">剪辑、文字、音频</text><text x="1060" y="178" font-size="17">JSON + plan QA</text>
+    <text x="350" y="241" font-size="18">复用 DataDir 中的阶段缓存</text>
+    <g fill="#edf7f1" stroke="#28734d">
+      <rect x="945" y="300" width="230" height="115" rx="10"/><rect x="715" y="300" width="190" height="115" rx="10"/>
+      <rect x="485" y="300" width="190" height="115" rx="10"/><rect x="255" y="300" width="190" height="115" rx="10"/>
+      <rect x="25" y="300" width="190" height="115" rx="10"/>
+    </g>
+    <text x="1060" y="337" font-size="21" font-weight="700">预览</text><text x="1060" y="370" font-size="17">低分辨率供比较</text><text x="1060" y="398" font-size="17">最终 QA 未执行</text>
+    <text x="810" y="337" font-size="21" font-weight="700">检查与修改</text><text x="810" y="370" font-size="17">人工判断内容</text><text x="810" y="398" font-size="17">更改→重新渲染</text>
+    <text x="580" y="337" font-size="21" font-weight="700">最终渲染</text><text x="580" y="370" font-size="17">1080×1920</text><text x="580" y="398" font-size="17">音量调整</text>
+    <text x="350" y="337" font-size="21" font-weight="700">最终 QA</text><text x="350" y="370" font-size="17">测量实际文件</text><text x="350" y="398" font-size="17">硬性失败则停止</text>
+    <text x="120" y="337" font-size="21" font-weight="700">产物</text><text x="120" y="370" font-size="17">MP4、字幕、JSON</text><text x="120" y="398" font-size="17">图像与元数据</text>
+    <text x="30" y="488" text-anchor="start" font-size="19">批量导出：验证全部候选批准与指纹后受理 → 按排名逐条处理</text>
+    <text x="30" y="530" text-anchor="start" font-size="19">直接导出：验证计划 QA 与 AI 文本批准（不同于候选列表的批准入口）</text>
+  </g>
+  <g fill="none" stroke="#245a81" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M215 137H247"/><path d="M445 137H477"/><path d="M675 137H707"/><path d="M905 137H937"/>
+    <path d="M1060 195V292"/><path d="M945 357H913"/><path d="M715 357H683"/><path d="M485 357H453"/><path d="M255 357H223"/>
+    <path d="M810 300V265H1060V292" stroke-dasharray="5 4"/>
+  </g>
+</svg>

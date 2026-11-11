@@ -9,8 +9,14 @@ public static partial class TelopGrounding
 {
     public static bool Applies(Telop t) => t.Type is TelopType.Emphasis or TelopType.Hook or TelopType.Headline or TelopType.Counter;
 
+    public static bool IsSeriesStructure(Telop t, SeriesInfo? series) =>
+        series != null && t.Type == TelopType.Headline && series.Labels.Any(label =>
+            new[] { $"{label}のおさらい", $"{label}につづく", $"Recap: {label}", $"Next: {label}",
+                $"{label}回顾", $"待续：{label}", $"{label} 다시 보기", $"다음: {label}" }.Contains(t.Text));
+
     static string ClaimText(Telop t, SeriesInfo? series)
     {
+        if (IsSeriesStructure(t, series)) return "";
         var text = t.Text;
         if (series != null)
             foreach (var label in series.Labels.OrderByDescending(x => x.Length))
@@ -47,7 +53,7 @@ public static partial class TelopGrounding
             problems.Add("テロップと根拠発話の話者が異なります");
         if (!Applies(t)) return problems;
         var text = ClaimText(t, series);
-        var source = string.Concat(words.Select(w => w.Text));
+        var source = VideoLanguages.JoinWords(words.Select(w => w.Text), tr.Language);
         foreach (var name in Names(text).Concat((dictionary ?? []).Where(d => d.Length > 0 && text.Contains(d, StringComparison.Ordinal))).Distinct())
             if (!source.Normalize(NormalizationForm.FormKC).Contains(name.Normalize(NormalizationForm.FormKC), StringComparison.OrdinalIgnoreCase))
                 problems.Add($"「{name}」は根拠発話にありません");
@@ -99,7 +105,7 @@ public static partial class TelopGrounding
     }
 
     public static bool NegationDropped(Telop t, IReadOnlyList<Clip> clips, Transcript tr) =>
-        Applies(t) && Negation().IsMatch(string.Concat(Evidence(t, clips, tr).Select(w => w.Text)))
+        Applies(t) && Negation().IsMatch(VideoLanguages.JoinWords(Evidence(t, clips, tr).Select(w => w.Text), tr.Language))
         && !Negation().IsMatch(t.Text);
 
     static List<string> Names(string text) => JapaneseText.ProperTokens(text)
@@ -132,6 +138,6 @@ public static partial class TelopGrounding
     /// <summary>Says no (〜ない、〜ません、〜ず): S-09 / H-11 keep it, and auto-repair never drops it.</summary>
     public static bool HasNegation(string text) => Negation().IsMatch(text);
 
-    [GeneratedRegex(@"ない|なかった|なかっ|ません|じゃない|ではない|(?:せ|れ|ら|か|き|し|でき)ず")]
+    [GeneratedRegex(@"ない|なかった|なかっ|ません|じゃない|ではない|(?:せ|れ|ら|か|き|し|でき)ず|\b(?:not|never|no|cannot|can't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't)\b|不是|没有|不能|不要|아니|않|못", RegexOptions.IgnoreCase)]
     private static partial Regex Negation();
 }

@@ -32,6 +32,7 @@ public sealed class PipelineServices
     public required IReadOnlyDictionary<string, Preset> Presets { get; init; }
     public required string DataDir { get; init; }
     public ITranscriber? Asr { get; init; }
+    public Func<string, ITranscriber?>? AsrForLanguage { get; init; }
     public IHighlightSelector? Llm { get; init; }
     public ITextEmbedder? Embedder { get; init; }
     public Pricing Pricing { get; init; } = new();
@@ -146,12 +147,15 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public async Task<Transcript> TranscriptAsync(SourceAsset a, string audio, CancellationToken ct)
     {
-        if (a.Media.AudioChannels == 0 || s.Asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration };
+        var language = LanguageFor(a);
+        var asr = s.AsrForLanguage != null ? s.AsrForLanguage(language) : s.Asr;
+        if (a.Media.AudioChannels == 0 || asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration, Language = language };
         var phrases = DictionaryFor(a.ProjectId);
         var file = TranscriptFile(a, phrases);
         if (Cached(file)) return Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
         _asrCalls++;
-        var tr = await s.Asr.TranscribeAsync(audio, a.Media.Duration, phrases, 4, ct);
+        var tr = await asr.TranscribeAsync(audio, a.Media.Duration, phrases, 4, ct);
+        tr = tr with { Language = language };
         await WriteCacheAsync(file, Json.Serialize(tr), ct);
         _redo?.Add(file);
         return tr;
@@ -164,10 +168,14 @@ public sealed class PipelineRunner(PipelineServices s)
             .Select(text => text.Trim()).Where(text => text.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    string TranscriptFile(SourceAsset a, IReadOnlyList<string> phrases)
+    string LanguageFor(SourceAsset a) => s.Store.Get<Project>(Kinds.Project, a.ProjectId)?.Language ?? "ja-JP";
+
+    string TranscriptFile(SourceAsset a, IReadOnlyList<string> phrases, string? language = null)
     {
         var provider = s.Asr?.Name ?? "none";
-        var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(provider + "|" + string.Join("|", phrases))))[..12];
+        language ??= LanguageFor(a);
+        var localeKey = language == "ja-JP" ? "" : language + "|";
+        var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(provider + "|" + localeKey + string.Join("|", phrases))))[..12];
         return Path.Combine(CacheDir(a), $"transcript_{key}.json");
     }
 
@@ -560,7 +568,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>FR-SIG-04: local non-speech laughter detection, cached per asset/transcript.</summary>
     public async Task<List<Interval>> LaughsAsync(SourceAsset a, Transcript tr, SignalSet sig, string audio, CancellationToken ct)
     {
-        var file = LocalLaughsFile(a);
+        var file = LocalLaughsFile(a, tr.Language);
         if (Cached(file)) return Json.Deserialize<List<Interval>>(await File.ReadAllTextAsync(file, ct));
         var res = a.Media.AudioChannels > 0 && File.Exists(audio) ? await LaughDetector.DetectAsync(s.Ff, audio, NonSpeech.Bursts(sig, tr), ct) : [];
         await WriteCacheAsync(file, Json.Serialize(res), ct);
@@ -568,15 +576,13 @@ public sealed class PipelineRunner(PipelineServices s)
         return res;
     }
 
-    string LocalLaughsFile(SourceAsset a) =>
-        Path.Combine(CacheDir(a), "laughs_" + Path.GetFileNameWithoutExtension(Directory.GetFiles(CacheDir(a), "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() ?? "none") + ".json");
+    string LocalLaughsFile(SourceAsset a, string? language = null) =>
+        Path.Combine(CacheDir(a), "laughs_" + Path.GetFileNameWithoutExtension(TranscriptFile(a, DictionaryFor(a.ProjectId), language)) + ".json");
 
-    public List<Interval> LoadLaughs(SourceAsset a)
+    public List<Interval> LoadLaughs(SourceAsset a, string? language = null)
     {
-        var dir = CacheDir(a);
-        if (!Directory.Exists(dir)) return [];
-        var f = Directory.GetFiles(dir, "laughs_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
-        return f != null ? Json.Deserialize<List<Interval>>(File.ReadAllText(f)) : [];
+        var f = LocalLaughsFile(a, language);
+        return File.Exists(f) ? Json.Deserialize<List<Interval>>(File.ReadAllText(f)) : [];
     }
 
     /// <summary>Re-plan an existing plan's candidate after the user edited the segments (PATCH /editplans).</summary>
@@ -594,7 +600,7 @@ public sealed class PipelineRunner(PipelineServices s)
         string bgmOption = oa.BgmMode == "scene" ? "scene" : oa.Bgm ?? oa.BgmCues.FirstOrDefault(c => c.Track != null)?.Track ?? "none";
         IReadOnlyList<BgmTrack>? pool = bgmOption == "scene" ? await BgmPoolAsync(old.ProjectId, ct) : null;
         BgmTrack? bgm = bgmOption is not ("scene" or "none") && FindBgm(bgmOption) is { } t ? (p.Planner == "beat" ? await AnalyzedBgmAsync(await MeasuredBgmAsync(t, ct), ct) : await MeasuredBgmAsync(t, ct)) : null;
-        return await BuildPlanAsync(c, LoadTranscript(main), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = bgmOption } }, faces, bgm, segments, ct, LoadLaughs(main),
+        return await BuildPlanAsync(c, LoadTranscript(main, old.Language), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = bgmOption } }, faces, bgm, segments, ct, LoadLaughs(main, old.Language),
             screen: p.Planner == "screen" ? LoadScreenContext(used, old) : null, bgmPool: pool);
     }
 
@@ -602,33 +608,37 @@ public sealed class PipelineRunner(PipelineServices s)
     {
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId);
         var main = assets.First(a => a.Id == plan.Audio.Master);
-        var tr = LoadTranscript(main);
+        var tr = LoadTranscript(main, plan.Language);
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, plan.ProjectId).Select(r => r.AssetId).ToHashSet();
         var mask = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options.MaskWords : null;
         var approval = plan.Provenance.CandidateId is { } cid ? s.Store.Get<Candidate>(Kinds.Candidate, cid)?.Approval : null;
         return new QaContext(plan, s.Presets[plan.Preset.Id], tr, rights, DictionaryFor(plan.ProjectId), assets, mask, approval);
     }
 
-    public Transcript LoadTranscript(SourceAsset a)
+    public Transcript LoadTranscript(SourceAsset a, string? language = null)
     {
+        language ??= LanguageFor(a);
         var dir = CacheDir(a);
-        var expected = TranscriptFile(a, DictionaryFor(a.ProjectId));
+        var expected = TranscriptFile(a, DictionaryFor(a.ProjectId), language);
         if (File.Exists(expected)) return Json.Deserialize<Transcript>(File.ReadAllText(expected));
-        var f = Directory.Exists(dir) ? Directory.GetFiles(dir, "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
-        return f != null ? Json.Deserialize<Transcript>(File.ReadAllText(f)) : new Transcript { Provider = "none", Duration = a.Media.Duration };
+        var previous = Directory.Exists(dir) ? Directory.GetFiles(dir, "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc)
+            .Select(f => Json.Deserialize<Transcript>(File.ReadAllText(f))).FirstOrDefault(t => t.Language == language) : null;
+        return previous ?? new Transcript { Provider = "none", Duration = a.Media.Duration, Language = language };
     }
 
     /// <summary>FR-ASR-06: correct misrecognised words. Timing is kept; sentence texts are rebuilt; the cached transcript is overwritten so later runs use the fix.</summary>
     public Transcript EditTranscript(SourceAsset a, IEnumerable<(string WordId, string Text)> edits)
     {
         var dir = CacheDir(a);
-        var f = Directory.Exists(dir) ? Directory.GetFiles(dir, "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
+        var expected = TranscriptFile(a, DictionaryFor(a.ProjectId));
+        var f = File.Exists(expected) ? expected : Directory.Exists(dir) ? Directory.GetFiles(dir, "transcript_*.json").OrderByDescending(File.GetLastWriteTimeUtc)
+            .FirstOrDefault(file => Json.Deserialize<Transcript>(File.ReadAllText(file)).Language == LanguageFor(a)) : null;
         if (f == null) throw new KeyNotFoundException("書き起こしがありません");
         var tr = Json.Deserialize<Transcript>(File.ReadAllText(f));
         var map = edits.ToDictionary(e => e.WordId, e => e.Text.Replace("\r", "").Replace("\n", " ").Trim());
         foreach (var (id, text) in map) { if (text.Length == 0 || text.Length > 30) throw new ArgumentException("単語は1〜30文字にしてください"); if (tr.Words.All(w => w.Id != id)) throw new KeyNotFoundException($"単語 {id} がありません"); }
         var words = tr.Words.Select(w => map.TryGetValue(w.Id, out var t) ? w with { Text = t } : w).ToList();
-        var sents = tr.Sentences.Select(s => s with { Text = string.Concat(words.Skip(s.FirstWord).Take(s.LastWord - s.FirstWord + 1).Select(w => w.Text)) }).ToList();
+        var sents = tr.Sentences.Select(s => s with { Text = VideoLanguages.JoinWords(words.Skip(s.FirstWord).Take(s.LastWord - s.FirstWord + 1).Select(w => w.Text), tr.Language) }).ToList();
         var res = tr with { Words = words, Sentences = sents };
         File.WriteAllText(f, Json.Serialize(res));
         return res;
@@ -783,21 +793,21 @@ public sealed class PipelineRunner(PipelineServices s)
     public Task<PostKit> PostKitAsync(Candidate c, EditPlan plan, CancellationToken ct, string? previous = null)
     {
         var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
-        return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
+        return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main, plan.Language), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
     }
 
     /// <summary>FR-EXP-03: posting metadata suggestions (LLM when available, otherwise a template).</summary>
     public async Task<string> MetadataAsync(Candidate c, EditPlan plan, CancellationToken ct)
     {
         var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
-        var text = CandidateValidator.TextOf(Masking.Apply(LoadTranscript(main), MaskWordsFor(plan)).Masked, plan.Timeline.Select(x => new Interval(x.MasterIn, x.MasterOut)));
+        var text = CandidateValidator.TextOf(Masking.Apply(LoadTranscript(main, plan.Language), MaskWordsFor(plan)).Masked, plan.Timeline.Select(x => new Interval(x.MasterIn, x.MasterOut)));
         string titles = "", desc = "", tags = "";
         if (s.Llm != null && text.Length > 0)
         {
             try
             {
                 const string schema = """{"type":"object","additionalProperties":false,"required":["titles","description","hashtags"],"properties":{"titles":{"type":"array","items":{"type":"string"}},"description":{"type":"string"},"hashtags":{"type":"array","items":{"type":"string"}}}}""";
-                var json = await s.Llm.CompleteJsonAsync("あなたはショート動画の投稿担当です。書き起こしの内容だけに基づき、誇張や事実にない内容を書かずに、タイトル案3件（各40字以内）、説明文（200字以内）、ハッシュタグ5件以内を作ってください。", text, "post_metadata", schema, ct);
+                var json = await s.Llm.CompleteJsonAsync("あなたはショート動画の投稿担当です。書き起こしの内容だけに基づき、誇張や事実にない内容を書かずに、タイトル案3件（各40字以内）、説明文（200字以内）、ハッシュタグ5件以内を作ってください。" + VideoLanguages.Prompt(plan.Language), text, "post_metadata", schema, ct);
                 using var d = JsonDocument.Parse(json);
                 titles = string.Join("\n", d.RootElement.GetProperty("titles").EnumerateArray().Select((t, i) => $"{i + 1}. {t.GetString()}"));
                 desc = d.RootElement.GetProperty("description").GetString() ?? "";
@@ -807,6 +817,7 @@ public sealed class PipelineRunner(PipelineServices s)
         }
         if (titles.Length == 0) titles = $"1. {(c.Headline.Length > 0 ? c.Headline : c.HookText)}";
         if (plan.Series is { } se) return SeriesMetadata(se, plan, titles, desc, tags);
+        if (plan.Language != "ja-JP") return LocalizedMetadata(plan, titles, desc, tags + " #Shorts");
         return $"""
 # 投稿用メタデータ案（AI による提案。投稿前に内容を確認してください）
 
@@ -837,6 +848,11 @@ YouTube の「AI use」は通常「いいえ」で問題ありません（YouTub
             return m.Success && !m.Groups[2].Value.Contains(se.Label, StringComparison.Ordinal) ? $"{m.Groups[1].Value}{label}{m.Groups[2].Value}" : l;
         }));
         if (se.SeriesTitle.Length > 0) prefixed += $"\n{titles.Split('\n').Length + 1}. {label}{se.SeriesTitle}";
+        if (plan.Language != "ja-JP")
+        {
+            var chapterLines = SeriesPlanner.YouTubeChapters(QaEngine.FinalChapters(plan), plan.TotalDuration);
+            return LocalizedMetadata(plan, prefixed, desc, tags, chapterLines, se);
+        }
         double total = plan.TotalDuration;
         var chapters = SeriesPlanner.YouTubeChapters(QaEngine.FinalChapters(plan), total);
         var chapterText = chapters != null ? string.Join("\n", chapters)
@@ -872,6 +888,31 @@ YouTube の「AI use」は通常「いいえ」で問題ありません（YouTub
 この動画は既存の映像を切り出して字幕を付けたもので、AI による写実的な映像・音声の生成や改変は含みません。
 YouTube の「AI use」は通常「いいえ」で問題ありません（YouTube ヘルプ「Disclosing use of GenAI content」）。
 """;
+    }
+
+    static string LocalizedMetadata(EditPlan plan, string titles, string desc, string tags, List<string>? chapters = null, SeriesInfo? series = null)
+    {
+        string T(string en, string zh, string ko) => VideoLanguages.Text(plan.Language, "", en, zh, ko);
+        var text = new StringBuilder();
+        text.AppendLine("# " + T("Posting suggestions — review before publishing", "发布建议——发布前请检查", "게시 제안 — 게시 전에 검토하세요"));
+        text.AppendLine("\n## " + T("Title suggestions", "标题建议", "제목 제안")).AppendLine(titles);
+        text.AppendLine("\n## " + T("Description", "简介", "설명")).AppendLine(desc);
+        if (series != null)
+        {
+            text.AppendLine("\n## " + T("Chapters", "章节", "챕터"));
+            text.AppendLine(chapters != null ? string.Join("\n", chapters) : T("Omitted: at least 3 chapters of 10 seconds are required.", "已省略：需要至少 3 章，每章至少 10 秒。", "생략: 각 10초 이상의 챕터가 3개 이상 필요합니다."));
+            text.AppendLine("\n## " + T("Series links", "系列链接", "시리즈 링크"));
+            foreach (var (label, i) in series.Labels.Select((l, i) => (l, i)))
+                text.AppendLine(label + ": " + (i + 1 == series.Part ? T("This video", "本视频", "이 영상") : T("(Add URL)", "（填写 URL）", "(URL 입력)")));
+        }
+        text.AppendLine("\n" + T("Source video: (add URL)", "原视频：（填写 URL）", "원본 영상: (URL 입력)"));
+        text.AppendLine("\n## " + T("Hashtags", "话题标签", "해시태그")).AppendLine(tags);
+        text.AppendLine("\n## " + T("Duration", "时长", "길이")).AppendLine(SeriesPlanner.Stamp(plan.TotalDuration, plan.TotalDuration));
+        text.AppendLine("\n## " + T("AI disclosure", "AI 使用说明", "AI 사용 고지"))
+            .AppendLine(T("This video uses excerpts and captions from existing footage, not AI-generated realistic video or audio. Check the publishing platform's current disclosure requirements.",
+                "本视频从已有素材中剪辑并添加字幕，不包含 AI 生成的逼真视频或音频。请确认发布平台当前的披露要求。",
+                "이 영상은 기존 영상의 발췌와 자막을 사용하며 AI로 생성한 사실적인 영상이나 음성을 포함하지 않습니다. 게시 플랫폼의 최신 고지 요건을 확인하세요."));
+        return text.ToString();
     }
 }
 

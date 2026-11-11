@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">VideoCreator：准备、操作与产物</title>
+  <desc id="desc">准备已授权讲话视频、Windows PC 和 Speech 配置，添加素材、选择模式、生成候选、检查修改并导出，得到 MP4、字幕、计划、缩略图、元数据。标明云发送和人工发布边界。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f5f8fc"/>
+  <g font-family="'Segoe UI','Microsoft YaHei',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">从长视频到可检查后投稿的视频</text>
+    <rect x="28" y="72" width="280" height="255" rx="12" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="108" font-size="22" font-weight="700">1. 准备</text>
+    <text x="48" y="148" font-size="18">已确认权利的视频</text>
+    <text x="48" y="180" font-size="18">Windows PC 与存储空间</text>
+    <text x="48" y="212" font-size="18">Speech 配置与使用权限</text>
+    <text x="48" y="256" font-size="16">可选：OpenAI / Copilot</text>
+    <text x="48" y="284" font-size="16">BGM、摄像机、注册视频</text>
+    <rect x="360" y="72" width="455" height="255" rx="12" fill="#fff" stroke="#3974a2"/>
+    <text x="380" y="108" font-size="22" font-weight="700">2. 在应用中操作</text>
+    <text x="380" y="148" font-size="18">添加素材与权利确认 → 选择模式</text>
+    <text x="380" y="180" font-size="18">确认发送目标与费用 → 生成候选</text>
+    <text x="380" y="212" font-size="18">播放、修改字幕与声音 → 导出</text>
+    <text x="380" y="256" font-size="16">通常：最多三个精彩候选</text>
+    <text x="380" y="284" font-size="16">系列：拆分全片为前后篇等</text>
+    <rect x="867" y="72" width="305" height="255" rx="12" fill="#e8f5ee" stroke="#28734d"/>
+    <text x="887" y="108" font-size="22" font-weight="700">3. 得到的产物</text>
+    <text x="887" y="148" font-size="18">MP4：1080×1920</text>
+    <text x="887" y="180" font-size="18">SRT / ASS：字幕</text>
+    <text x="887" y="212" font-size="18">JSON：编辑计划</text>
+    <text x="887" y="244" font-size="18">三张缩略图</text>
+    <text x="887" y="276" font-size="18">投稿元数据建议</text>
+    <text x="28" y="365" font-size="18">本地编辑视频／通常音频→Speech，文本与信号摘要→可选 LLM</text>
+    <text x="28" y="402" font-size="18" font-weight="700">自动 QA 仅辅助检查。人工确认内容与权利，自行向社交平台投稿。</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M308 190H352"/><path d="M815 190H859"/></g>
+</svg>

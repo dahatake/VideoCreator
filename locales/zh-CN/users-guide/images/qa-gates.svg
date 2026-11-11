@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">计划 QA、最终 QA 与人工发布判断</title>
+  <desc id="desc">检查计划的文字、时长、讲话、权利和批准，测量成品分辨率、响度及安全区域。失败需修正，未执行不等于通过。通过 QA 后仍需人工确认内容、权利与规则并自行投稿。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI','Microsoft YaHei',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">“QA 通过”与“可以发布”是不同判断</text>
+    <rect x="28" y="75" width="345" height="215" rx="10" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="111" font-size="22" font-weight="700">1. 计划 QA（plan）</text>
+    <text x="48" y="151" font-size="18">时长、讲话剪切、未出现词</text>
+    <text x="48" y="184" font-size="18">AI 文本批准、权利、屏蔽词</text>
+    <text x="48" y="217" font-size="18">字数、字幕速度、换行禁则等</text>
+    <text x="48" y="260" font-size="17">修改后以当前计划重新检查</text>
+    <rect x="422" y="75" width="345" height="215" rx="10" fill="#edf7f1" stroke="#28734d"/>
+    <text x="442" y="111" font-size="22" font-weight="700">2. 最终 QA（final）</text>
+    <text x="442" y="151" font-size="18">ffprobe 测分辨率与时长</text>
+    <text x="442" y="184" font-size="18">测量响度与 True Peak</text>
+    <text x="442" y="217" font-size="18">检查渲染后的安全区域等</text>
+    <text x="442" y="260" font-size="17">硬性结果 pass 后确定输出</text>
+    <rect x="817" y="75" width="355" height="215" rx="10" fill="#fff1db" stroke="#ad7123"/>
+    <text x="837" y="111" font-size="22" font-weight="700">3. 人工检查与投稿</text>
+    <text x="837" y="151" font-size="18">发言含义、上下文、个人信息</text>
+    <text x="837" y="184" font-size="18">真实授权、音乐、肖像权</text>
+    <text x="837" y="217" font-size="18">平台规则、字幕显示</text>
+    <text x="837" y="260" font-size="17">观看成品后自行判断</text>
+    <text x="28" y="340" font-size="19">pass＝该检查通过／warn＝需确认／fail＝失败／not_run＝未执行</text>
+    <text x="28" y="388" font-size="19" font-weight="700">不能把低分辨率预览的 not_run 当成最终文件通过。</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M373 177H414"/><path d="M767 177H809"/></g>
+</svg>

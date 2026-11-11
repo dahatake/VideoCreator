@@ -4,6 +4,8 @@
 
 ## 起動設定
 
+UIの表示言語はブラウザーの言語切り替えで保存します。動画の音声言語はプロジェクトごとに指定します。`POST /api/projects` は `{"name":"Example","language":"en-US"}`、`PATCH /api/projects/{id}` は `{"language":"ko-KR"}` のように指定できます。対応値は `ja-JP`（省略時の既定）・`en-US`・`zh-CN`・`ko-KR`。非対応値は422、生成・書き出し中の言語変更は409です。変更後は新しい候補を生成してください。既存の編集計画は作成時の言語を保持します。
+
 [appsettings.json](../src/VideoCreator.App/appsettings.json)の `VideoCreator` セクション、環境変数、コマンドラインで設定します。環境変数は `VideoCreator__Asr__Endpoint` のように区切りを `__` にします。下表は[AppOptions](../src/VideoCreator.App/AppOptions.cs)の既定です。配布ファイルの具体的なエンドポイントは自分の値へ変更してください。
 
 | 設定 | 既定・意味 |
@@ -14,7 +16,7 @@
 | FfmpegBin / FontsDir / PresetsDir | 未指定ならリポジトリ上位のtools等を探索 |
 | FaceModel / UpscaleModel | 未指定ならtoolsのUltraFace / Real-ESRGANモデル |
 | LocalOnly | `false`。`true`ならLLMを使わないことを固定。ASRは停止しない |
-| Asr.Provider / Endpoint / Locale | `azure` / 空 / `ja-JP`。ProviderがazureでEndpointが設定されているとASR有効 |
+| Asr.Provider / Endpoint / Locale | `azure` / 空 / `ja-JP`。ProviderがazureでEndpointが設定されているとASR有効。アプリからの生成ではプロジェクトの `language` が Locale より優先されます |
 | Llm.Provider | `azure-openai`。`azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 空 / `gpt-chat-latest`。自分のデプロイ名を設定 |
 | Llm.CopilotCliPath / CopilotModel | 未指定ならCLI検出／既定モデル |

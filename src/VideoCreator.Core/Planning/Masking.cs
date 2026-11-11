@@ -53,12 +53,13 @@ public static class Masking
     public static (Transcript Masked, List<Interval> Spans) Apply(Transcript tr, IReadOnlyList<string> words)
     {
         if (words.Count == 0 || tr.Words.Count == 0) return (tr, []);
-        var all = string.Concat(tr.Words.Select(w => w.Text));
+        var all = VideoLanguages.JoinWords(tr.Words.Select(w => w.Text), tr.Language);
         var marks = Marks(all, words);
         if (!marks.Contains(true)) return (tr, []);
         var newWords = new List<Word>(tr.Words.Count); var spans = new List<Interval>(); int pos = 0;
         foreach (var w in tr.Words)
         {
+            pos = all.IndexOf(w.Text, pos, StringComparison.Ordinal);
             var a = w.Text.ToCharArray(); bool hit = false;
             for (int i = 0; i < a.Length; i++) if (marks[pos + i]) { a[i] = Dot; hit = true; }
             pos += a.Length;
@@ -70,7 +71,7 @@ public static class Masking
         var sentences = tr.Sentences.Select(s => s with
         {
             Text = s.FirstWord >= 0 && s.LastWord < newWords.Count && s.LastWord >= s.FirstWord
-                ? string.Concat(newWords.Skip(s.FirstWord).Take(s.LastWord - s.FirstWord + 1).Select(w => w.Text)) : MaskText(s.Text, words),
+                ? VideoLanguages.JoinWords(newWords.Skip(s.FirstWord).Take(s.LastWord - s.FirstWord + 1).Select(w => w.Text), tr.Language) : MaskText(s.Text, words),
         }).ToList();
         return (tr with { Words = newWords, Sentences = sentences }, spans);
     }

@@ -29,14 +29,14 @@ public sealed class CaptionChecks
         ? $"毎秒 {Cps(t):F1} 字（{t.End - t.Start:F1} 秒に {JapaneseText.DisplayWidth(t.Text)} 字）" : null;
 
     /// <summary>S-02 for a caption: a wrapped line wider than the safe zone allows.</summary>
-    public string? Width(Telop t) => AssWriter.CaptionLines(t.Text, p, canvasWidth).Any(l => JapaneseText.DisplayWidth(l) > LineChars)
+    public string? Width(Telop t) => AssWriter.CaptionLines(t.Text, p, canvasWidth, tr.Language).Any(l => JapaneseText.DisplayWidth(l) > LineChars)
         ? $"{JapaneseText.DisplayWidth(t.Text)} 字" : null;
 
     static string Bare(string s) => new(JapaneseText.NormalizeTelop(s).Where(c => !char.IsWhiteSpace(c)).ToArray());
 
     /// <summary>S-08: a line breaks a JIS X 4051 rule, or the caption starts with a particle/auxiliary left over from the previous caption.</summary>
     public string? Kinsoku(Telop t, IEnumerable<Telop> caps) =>
-        JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, canvasWidth)).FirstOrDefault() ?? DetachedHead(t, caps);
+        JapaneseText.KinsokuViolations(AssWriter.CaptionLines(t.Text, p, canvasWidth, tr.Language)).FirstOrDefault() ?? (tr.Language == "ja-JP" ? DetachedHead(t, caps) : null);
 
     string? DetachedHead(Telop t, IEnumerable<Telop> caps)
     {

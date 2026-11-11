@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="580" viewBox="0 0 1200 580" role="img" aria-labelledby="title desc">
+  <title id="title">생성부터 최종 출력까지 파이프라인</title>
+  <desc id="desc">원본 분석, 전사, 신호 분석, 후보 선정, 편집 계획, 저해상도 미리 보기, 사람 확인·수정, 최종 렌더링, 단계별 QA, 결과물 순서다. 캐시와 LLM 실패 시 신호 fallback을 표시한다.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="580" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI','Malgun Gothic',sans-serif" fill="#19344b" text-anchor="middle">
+    <text x="30" y="40" text-anchor="start" font-size="24" font-weight="700">생성은 제안, 내보내기는 확정된 계획으로 제작</text>
+    <g fill="#e6f0fb" stroke="#3974a2">
+      <rect x="25" y="80" width="190" height="115" rx="10"/><rect x="255" y="80" width="190" height="115" rx="10"/>
+      <rect x="485" y="80" width="190" height="115" rx="10"/><rect x="715" y="80" width="190" height="115" rx="10"/>
+      <rect x="945" y="80" width="230" height="115" rx="10"/>
+    </g>
+    <text x="120" y="117" font-size="21" font-weight="700">가져오기</text><text x="120" y="150" font-size="17">권리·형식·SHA</text><text x="120" y="178" font-size="17">프록시·음성</text>
+    <text x="350" y="117" font-size="21" font-weight="700">전사</text><text x="350" y="150" font-size="17">단어·문장·화자</text><text x="350" y="178" font-size="17">시간 유지</text>
+    <text x="580" y="117" font-size="21" font-weight="700">신호 분석</text><text x="580" y="150" font-size="17">음량·무음</text><text x="580" y="178" font-size="17">샷·이벤트</text>
+    <text x="810" y="117" font-size="21" font-weight="700">후보 선정</text><text x="810" y="150" font-size="17">LLM 제안→검증</text><text x="810" y="178" font-size="17">신호 fallback</text>
+    <text x="1060" y="117" font-size="21" font-weight="700">편집 계획</text><text x="1060" y="150" font-size="17">컷·문자·소리</text><text x="1060" y="178" font-size="17">JSON + plan QA</text>
+    <text x="350" y="241" font-size="18">DataDir의 단계 캐시 재사용</text>
+    <g fill="#edf7f1" stroke="#28734d">
+      <rect x="945" y="300" width="230" height="115" rx="10"/><rect x="715" y="300" width="190" height="115" rx="10"/>
+      <rect x="485" y="300" width="190" height="115" rx="10"/><rect x="255" y="300" width="190" height="115" rx="10"/>
+      <rect x="25" y="300" width="190" height="115" rx="10"/>
+    </g>
+    <text x="1060" y="337" font-size="21" font-weight="700">미리 보기</text><text x="1060" y="370" font-size="17">저해상도·비교용</text><text x="1060" y="398" font-size="17">최종 QA 미실행</text>
+    <text x="810" y="337" font-size="21" font-weight="700">확인·수정</text><text x="810" y="370" font-size="17">사람이 내용 판단</text><text x="810" y="398" font-size="17">변경→재렌더링</text>
+    <text x="580" y="337" font-size="21" font-weight="700">최종 렌더링</text><text x="580" y="370" font-size="17">1080×1920</text><text x="580" y="398" font-size="17">음량 조절</text>
+    <text x="350" y="337" font-size="21" font-weight="700">최종 QA</text><text x="350" y="370" font-size="17">실제 파일 측정</text><text x="350" y="398" font-size="17">하드 실패면 중지</text>
+    <text x="120" y="337" font-size="21" font-weight="700">결과물</text><text x="120" y="370" font-size="17">MP4·자막·JSON</text><text x="120" y="398" font-size="17">이미지·메타데이터</text>
+    <text x="30" y="488" text-anchor="start" font-size="19">일괄 내보내기: 후보 승인·지문 전체 검증 후 접수 → 순위대로 한 편씩 처리</text>
+    <text x="30" y="530" text-anchor="start" font-size="19">직접 내보내기: 계획 QA·AI 글 승인 검증(후보 목록 승인과 다른 진입점)</text>
+  </g>
+  <g fill="none" stroke="#245a81" stroke-width="3" marker-end="url(#arrow)">
+    <path d="M215 137H247"/><path d="M445 137H477"/><path d="M675 137H707"/><path d="M905 137H937"/>
+    <path d="M1060 195V292"/><path d="M945 357H913"/><path d="M715 357H683"/><path d="M485 357H453"/><path d="M255 357H223"/>
+    <path d="M810 300V265H1060V292" stroke-dasharray="5 4"/>
+  </g>
+</svg>

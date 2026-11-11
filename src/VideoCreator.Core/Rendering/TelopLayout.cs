@@ -25,7 +25,7 @@ public static class TelopLayout
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Type == TelopType.Caption ? 0 : 1).ThenBy(t => t.Start).ThenBy(t => t.Type))
         {
             var (size, outline, scaleX) = AssWriter.Metrics(t.Style, p);
-            int fit = AssWriter.FitFontSize(t.Text, size, outline, w, p.Telop.Caption.MarginR, scaleX);
+            int fit = AssWriter.FitFontSize(t.Text, size, outline, w, p.Telop.Caption.MarginR, scaleX, plan.Language);
             var band = AssWriter.Band(t.Type, p, h);
             double height = fit * 1.5 + 2 * outline + 12;
             double top = band?.Top ?? (t.Type == TelopType.Sfx ? AssWriter.SfxY - height / 2 : AssWriter.HeadlineMarginV);
@@ -42,7 +42,7 @@ public static class TelopLayout
                 continue;
             }
             // Reserve animation overshoot on all sides instead of shrinking the face-protection margin.
-            fit = AssWriter.FitFontSize(t.Text, size, outline + 6, w, p.Telop.Caption.MarginR, (int)Math.Ceiling(scaleX * PopScale));
+            fit = AssWriter.FitFontSize(t.Text, size, outline + 6, w, p.Telop.Caption.MarginR, (int)Math.Ceiling(scaleX * PopScale), plan.Language);
             height = fit * 1.5 * PopScale + 2 * outline + 16;
             var blocked = faces.Concat(occupied.Where(x => x.Telop.Start < t.End && x.Telop.End > t.Start).Select(x => x.Bounds)).ToList();
             if (plan.Telops.Any(c => c.Enabled && c.Type == TelopType.Caption && c.Start < t.End && c.End > t.Start)) blocked.Add(captionBounds);

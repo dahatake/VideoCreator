@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">VideoCreator: 준비, 조작, 결과물</title>
+  <desc id="desc">권리 확인한 발화 영상, Windows PC, Speech 설정을 준비하고 원본 추가, 패턴 선택, 후보 생성, 확인·수정, 내보내기를 수행한다. MP4, 자막, 편집 계획, 썸네일, 메타데이터를 얻는다. 클라우드 전송과 수동 게시의 경계도 표시한다.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f5f8fc"/>
+  <g font-family="'Segoe UI','Malgun Gothic',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">긴 원본에서, 확인 후 게시할 영상으로</text>
+    <rect x="28" y="72" width="280" height="255" rx="12" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="108" font-size="22" font-weight="700">1. 준비하기</text>
+    <text x="48" y="148" font-size="18">권리를 확인한 영상</text>
+    <text x="48" y="180" font-size="18">Windows PC·저장 공간</text>
+    <text x="48" y="212" font-size="18">Speech 설정·사용 권한</text>
+    <text x="48" y="256" font-size="16">선택: OpenAI / Copilot</text>
+    <text x="48" y="284" font-size="16">BGM·카메라·등록 영상</text>
+    <rect x="360" y="72" width="455" height="255" rx="12" fill="#fff" stroke="#3974a2"/>
+    <text x="380" y="108" font-size="22" font-weight="700">2. 앱에서 조작하기</text>
+    <text x="380" y="148" font-size="18">원본 추가·권리 확인 → 패턴 선택</text>
+    <text x="380" y="180" font-size="18">전송 대상·비용 확인 → 후보 생성</text>
+    <text x="380" y="212" font-size="18">재생·자막과 소리 수정 → 내보내기</text>
+    <text x="380" y="256" font-size="16">일반: 핵심 장면 후보 최대 3개</text>
+    <text x="380" y="284" font-size="16">시리즈: 전체를 전편·후편 등으로 분할</text>
+    <rect x="867" y="72" width="305" height="255" rx="12" fill="#e8f5ee" stroke="#28734d"/>
+    <text x="887" y="108" font-size="22" font-weight="700">3. 얻는 것</text>
+    <text x="887" y="148" font-size="18">MP4: 1080×1920</text>
+    <text x="887" y="180" font-size="18">SRT / ASS: 자막</text>
+    <text x="887" y="212" font-size="18">JSON: 편집 계획</text>
+    <text x="887" y="244" font-size="18">썸네일 이미지 3장</text>
+    <text x="887" y="276" font-size="18">게시용 메타데이터 제안</text>
+    <text x="28" y="365" font-size="18">로컬 영상 편집 / 보통 음성→Speech, 글·신호 요약→선택적 LLM 전송</text>
+    <text x="28" y="402" font-size="18" font-weight="700">자동 QA는 확인 보조입니다. 내용·권리는 사람이 확인하고 SNS에 직접 게시합니다.</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M308 190H352"/><path d="M815 190H859"/></g>
+</svg>

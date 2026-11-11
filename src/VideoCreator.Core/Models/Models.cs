@@ -177,7 +177,7 @@ public sealed record Transcript
     public double Duration { get; init; }
     public List<Word> Words { get; init; } = [];
     public List<Sentence> Sentences { get; init; } = [];
-    public string FullText => string.Concat(Sentences.Select(s => s.Text));
+    public string FullText => VideoLanguages.JoinWords(Sentences.Select(s => s.Text), Language);
 }
 
 // ---- Signals (FR-SIG) ----
@@ -428,6 +428,7 @@ public sealed record PresetRef(string Id, string Version);
 public sealed record EditPlan
 {
     public string SchemaVersion { get; init; } = "1.0";
+    public string Language { get; init; } = "ja-JP";
     public required string EditplanId { get; init; }
     public required string ProjectId { get; init; }
     public required PresetRef Preset { get; init; }

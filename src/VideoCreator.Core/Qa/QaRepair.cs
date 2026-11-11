@@ -539,7 +539,8 @@ public static class QaRepair
                 bool punct = b.SourceWordIds.Count > 0 && wordIndex.TryGetValue(b.SourceWordIds[0], out var wi) && wi > 0 && JapaneseText.IsPunct(ctx.Transcript.Words[wi - 1].Text);
                 bool pause = a.SourceWordIds.Count > 0 && b.SourceWordIds.Count > 0 && mapped.TryGetValue(a.SourceWordIds[^1], out var la) && mapped.TryGetValue(b.SourceWordIds[0], out var fb) && fb.Start - la.End >= 0.25;
                 bool latin = text.Length > 0 && b.Text.Length > 0 && char.IsAsciiLetterOrDigit(text[^1]) && char.IsAsciiLetterOrDigit(b.Text[0]);
-                text += (punct || pause || latin ? "　" : "") + b.Text;
+                text = plan.Language == "ja-JP" ? text + (punct || pause || latin ? "　" : "") + b.Text
+                    : VideoLanguages.JoinWords([text, b.Text], plan.Language);
             }
             var merged = xs[0] with { End = xs[^1].End, Text = text, SourceWordIds = xs.SelectMany(x => x.SourceWordIds).ToList(), Approved = xs.All(x => x.Approved) };
             if (JapaneseText.DisplayWidth(merged.Text) > maxWidth) return null;
@@ -561,10 +562,10 @@ public static class QaRepair
             var all = wa.Concat(wb).ToList();
             foreach (var k in Enumerable.Range(1, all.Count - 1).Where(k => k != wa.Count && Math.Abs(k - wa.Count) <= 3).OrderBy(k => Math.Abs(k - wa.Count)))
             {
-                if (JapaneseText.IsPunct(all[k].Word.Text) || JapaneseText.TokenBreakCost(all[k - 1].Word.Text, all[k].Word.Text) >= JapaneseText.Detached) continue;
+                if (JapaneseText.IsPunct(all[k].Word.Text) || CaptionText.BreakCost(all[k - 1].Word.Text, all[k].Word.Text, plan.Language) >= JapaneseText.Detached) continue;
                 var (A, B) = (all.Take(k).ToList(), all.Skip(k).ToList());
-                var ta = JapaneseText.NormalizeTelop(string.Concat(A.Select(w => w.Word.Text)));
-                var tb = JapaneseText.NormalizeTelop(string.Concat(B.Select(w => w.Word.Text)));
+                var ta = CaptionText.Join(A.Select(w => w.Word.Text), plan.Language);
+                var tb = CaptionText.Join(B.Select(w => w.Word.Text), plan.Language);
                 if (ta.Length == 0 || tb.Length == 0) continue;
                 double boundary = Math.Round(Math.Clamp(B[0].Start, a.Start + 0.2, b.End - 0.2), 3);
                 var na = a with { Text = ta, End = boundary, SourceWordIds = A.Select(w => w.Word.Id).ToList() };
@@ -585,12 +586,12 @@ public static class QaRepair
             for (int n = 2; ids.Contains(newId); n++) newId = $"{x.Id}b{n}";
             var options = Enumerable.Range(1, ws.Count - 1)
                 .Where(k => !JapaneseText.IsPunct(ws[k].Word.Text))
-                .Select(k => (k, cost: JapaneseText.TokenBreakCost(ws[k - 1].Word.Text, ws[k].Word.Text)))
+                .Select(k => (k, cost: CaptionText.BreakCost(ws[k - 1].Word.Text, ws[k].Word.Text, plan.Language)))
                 .Where(o => o.cost < JapaneseText.Detached)
                 .Select(o =>
                 {
-                    var ta = JapaneseText.NormalizeTelop(string.Concat(ws.Take(o.k).Select(w => w.Word.Text)));
-                    var tb = JapaneseText.NormalizeTelop(string.Concat(ws.Skip(o.k).Select(w => w.Word.Text)));
+                    var ta = CaptionText.Join(ws.Take(o.k).Select(w => w.Word.Text), plan.Language);
+                    var tb = CaptionText.Join(ws.Skip(o.k).Select(w => w.Word.Text), plan.Language);
                     bool pause = ws[o.k].Start - ws[o.k - 1].End >= 0.25;
                     double score = (pause ? 0 : o.cost) + Math.Abs(JapaneseText.DisplayWidth(ta) - JapaneseText.DisplayWidth(tb)) * 0.5;
                     return (o.k, ta, tb, score);
@@ -626,7 +627,7 @@ public static class QaRepair
     static string Spoken(EditPlan plan, QaContext ctx, double from, double to)
     {
         var mapped = TelopBuilder.MapWords(plan.Timeline, ctx.Transcript);
-        return string.Concat(mapped.Where(m => m.End > from && m.Start < to).Select(m => m.Word.Text));
+        return VideoLanguages.JoinWords(mapped.Where(m => m.End > from && m.Start < to).Select(m => m.Word.Text), ctx.Transcript.Language);
     }
 
     static (string Kind, string Text, string Constraint, string Context)? Describe(EditPlan plan, QaContext ctx, string target)
@@ -635,7 +636,7 @@ public static class QaRepair
         if (plan.Telops.FirstOrDefault(t => t.Id == target) is { } t)
         {
             var near = Spoken(plan, ctx, t.Start - 1.5, t.End + 1.5);
-            var evidence = string.Concat(TelopGrounding.Evidence(t, plan.Timeline, ctx.Transcript).Select(w => w.Text));
+            var evidence = VideoLanguages.JoinWords(TelopGrounding.Evidence(t, plan.Timeline, ctx.Transcript).Select(w => w.Text), ctx.Transcript.Language);
             var context = evidence.Length > 0 ? $"根拠発話: {evidence}／前後の発話: {near}" : $"前後の発話: {near}";
             switch (t.Type)
             {
@@ -663,7 +664,7 @@ public static class QaRepair
             if (Describe(plan, ctx, target) is { } d)
                 lines.Add($"id: {target}\n種類: {d.Kind}\n指摘: {string.Join(" / ", checks.Zip(details, (c, x) => $"{c} {x}"))}\n制約: {d.Constraint}\n現在: {d.Text}\n{d.Context}");
         if (lines.Count == 0) return [];
-        var json = await llm.CompleteJsonAsync(System, string.Join("\n\n", lines), "qa_repair", Schema, ct);
+        var json = await llm.CompleteJsonAsync(System + VideoLanguages.Prompt(plan.Language), string.Join("\n\n", lines), "qa_repair", Schema, ct);
         using var doc = JsonDocument.Parse(json);
         var res = new Dictionary<string, Answer>();
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
@@ -679,7 +680,7 @@ public static class QaRepair
         var text = answer.Text;
         if (plan.Telops.FirstOrDefault(t => t.Id == item.Target) is { } t)
         {
-            var s = JapaneseText.NormalizeTelop(text);
+            var s = CaptionText.Normalize(text, plan.Language);
             if (t.Type == TelopType.Caption) return (null, "字幕は話した言葉どおりに保持するため、AI で文言を変更しません");
             if (s.Length == 0 || s == t.Text) return (null, "LLM が直せないと判断しました");
             if (s.Length > PlanEditor.MaxTelopLength) return (null, $"修正案が {PlanEditor.MaxTelopLength} 文字を超えました");

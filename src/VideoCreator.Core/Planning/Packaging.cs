@@ -328,7 +328,7 @@ public static class InsertPlanner
         if (count > 0) notes.Add($"ツッコミを {count} 枚の停止カードとして提案しました（承認するまで書き出せません）");
     }
 
-    public static (List<Clip> Clips, List<Insert> Inserts) Plan(List<Clip> clips, JobOptions o, BrandKit? kit, Canvas canvas, double targetLufs, SeriesInfo? series, List<string> notes)
+    public static (List<Clip> Clips, List<Insert> Inserts) Plan(List<Clip> clips, JobOptions o, BrandKit? kit, Canvas canvas, double targetLufs, SeriesInfo? series, List<string> notes, string language = "ja-JP")
     {
         var inserts = new List<Insert>();
         if (clips.Count == 0) return (clips, inserts);
@@ -370,7 +370,7 @@ public static class InsertPlanner
                 {
                     Id = $"card{k + 1}", Kind = "card", At = Math.Round(b.At, 3), Duration = sec, Path = img?.Path, Width = img?.Width ?? 0, Height = img?.Height ?? 0, RightsConfirmed = img != null,
                     ImageAssetId = img?.ImageAssetId,
-                    Text = FixedPhrases[k % FixedPhrases.Length], TextSource = "fixed", SourceT = Math.Round(b.SourceT, 3), Sfx = CardSfx,
+                    Text = FixedPhrase(language, k), TextSource = "fixed", SourceT = Math.Round(b.SourceT, 3), Sfx = CardSfx,
                 });
                 if (clips[b.ClipIndex].TransitionSec > 0) { clips[b.ClipIndex] = clips[b.ClipIndex] with { TransitionSec = 0 }; faded++; }
                 k++;
@@ -383,6 +383,15 @@ public static class InsertPlanner
     }
 
     public const string CardSchema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["card_id","text"],"properties":{"card_id":{"type":"string"},"text":{"type":"string"}}}}}}""";
+
+    public static string FixedPhrase(string language, int index) => language switch
+    {
+        "ja-JP" => FixedPhrases[index % FixedPhrases.Length],
+        "en-US" => new[] { "Up next!", "Meanwhile...", "Moving on", "Next up..." }[index % 4],
+        "zh-CN" => new[] { "接下来！", "话说回来…", "换个话题", "继续来看…" }[index % 4],
+        "ko-KR" => new[] { "다음은!", "그런데…", "화제를 바꿔서", "이어서…" }[index % 4],
+        _ => throw new ArgumentException("Unsupported video language: " + language),
+    };
     const string CardSystem = """
 あなたは日本のバラエティ系 YouTube の編集者です。映像を一時停止するように2〜3秒挟むカードの文字を作ります。
 カードの文字は出演者のセリフではなく、見ている人が心の中で言いたくなる一言の代弁です。
@@ -404,7 +413,7 @@ public static class InsertPlanner
     /// AI viewer-voice text for scene-change cards, with or without an image. Filtered in code like tsukkomi telops (plus no repeats of other cards or
     /// tsukkomi) and created unapproved (H-08). Cards the AI skips keep their fixed phrase. Returns how many cards got AI text.
     /// </summary>
-    public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct)
+    public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct, string language = "ja-JP")
     {
         var cards = inserts.Where(i => i.Kind == "card" && i.TextSource is not ("ai" or "user")).ToList();
         if (cards.Count == 0) return 0;
@@ -421,13 +430,13 @@ public static class InsertPlanner
         }
         if (blocks.Count == 0) return 0;
         if (used.Count > 0) blocks.Add("使用済み: " + string.Join(" / ", used));
-        var json = await llm.CompleteJsonAsync(CardSystem, string.Join("\n", blocks), "scene_cards", CardSchema, ct);
+        var json = await llm.CompleteJsonAsync(CardSystem + VideoLanguages.Prompt(language), string.Join("\n", blocks), "scene_cards", CardSchema, ct);
         using var doc = JsonDocument.Parse(json);
         var seen = used.Select(TsukkomiService.Bare).ToHashSet();
         int n = 0;
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
         {
-            var id = it.GetProperty("card_id").GetString() ?? ""; var text = JapaneseText.NormalizeTelop((it.GetProperty("text").GetString() ?? "").Trim());
+            var id = it.GetProperty("card_id").GetString() ?? ""; var text = CaptionText.Normalize((it.GetProperty("text").GetString() ?? "").Trim(), language);
             int idx = inserts.FindIndex(i => i.Id == id && cards.Contains(i));
             if (idx < 0 || inserts[idx].TextSource == "ai" || TsukkomiService.ValidateText(text, sourceText) != null || !seen.Add(TsukkomiService.Bare(text))) continue;
             inserts[idx] = inserts[idx] with { Text = text, TextSource = "ai", Approved = false };

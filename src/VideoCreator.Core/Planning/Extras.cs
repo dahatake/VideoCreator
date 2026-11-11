@@ -68,18 +68,18 @@ public static partial class TelopExtras
     }
 
     /// <summary>⑤ Onomatopoeia: a laugh burst gets 「ワハハ」, the last emphasis gets 「ドーン」 (decorative; not factual claims).</summary>
-    public static List<Telop> Onomatopoeia(IReadOnlyList<Clip> clips, IReadOnlyList<Interval> bursts, IReadOnlyList<Telop> existing, double total, ref int n)
+    public static List<Telop> Onomatopoeia(IReadOnlyList<Clip> clips, IReadOnlyList<Interval> bursts, IReadOnlyList<Telop> existing, double total, ref int n, string language = "ja-JP")
     {
         var res = new List<Telop>();
         foreach (var b in bursts.Where(b => b.Length >= 0.8).Take(2))
         {
             var t = OutputTime(clips, b.T0);
             if (t < 0 || t > total - 0.8) continue;
-            res.Add(new Telop { Id = $"t{++n}", Type = TelopType.Sfx, Start = Math.Round(t, 3), End = Math.Round(Math.Min(total, t + 1.2), 3), Text = "ワハハ", Style = "Sfx", Animation = "pop" });
+            res.Add(new Telop { Id = $"t{++n}", Type = TelopType.Sfx, Start = Math.Round(t, 3), End = Math.Round(Math.Min(total, t + 1.2), 3), Text = VideoLanguages.Text(language, "ワハハ", "Ha ha!", "哈哈", "하하"), Style = "Sfx", Animation = "pop" });
         }
         var lastEmph = existing.Where(t => t.Type == TelopType.Emphasis).OrderBy(t => t.Start).LastOrDefault();
         if (lastEmph != null && !res.Any(r => Math.Abs(r.Start - lastEmph.Start) < 1.2))
-            res.Add(new Telop { Id = $"t{++n}", Type = TelopType.Sfx, Start = lastEmph.Start, End = Math.Round(Math.Min(total, lastEmph.Start + 1.0), 3), Text = "ドーン", Style = "Sfx", Animation = "pop" });
+            res.Add(new Telop { Id = $"t{++n}", Type = TelopType.Sfx, Start = lastEmph.Start, End = Math.Round(Math.Min(total, lastEmph.Start + 1.0), 3), Text = VideoLanguages.Text(language, "ドーン", "Boom!", "咚", "쾅"), Style = "Sfx", Animation = "pop" });
         return res;
     }
 }
@@ -102,12 +102,12 @@ public static class TsukkomiService
 """;
     static readonly string[] Blocklist = ["死ね", "殺", "バカ", "馬鹿", "アホ", "ブス", "デブ", "キモ", "障害", "ガイジ", "クズ", "ハゲ"];
 
-    public static async Task<List<(string CaptionId, string Text)>> GenerateAsync(IHighlightSelector llm, IReadOnlyList<Telop> captions, string sourceText, CancellationToken ct)
+    public static async Task<List<(string CaptionId, string Text)>> GenerateAsync(IHighlightSelector llm, IReadOnlyList<Telop> captions, string sourceText, CancellationToken ct, string language = "ja-JP")
     {
         var res = new List<(string, string)>();
         if (captions.Count < 3) return res;
         var user = "字幕:\n" + string.Join("\n", captions.Select(c => $"{c.Id}: {c.Text}"));
-        var json = await llm.CompleteJsonAsync(System, user, "tsukkomi", Schema, ct);
+        var json = await llm.CompleteJsonAsync(System + VideoLanguages.Prompt(language), user, "tsukkomi", Schema, ct);
         using var doc = JsonDocument.Parse(json);
         var seen = new HashSet<string>();
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
@@ -141,7 +141,8 @@ public static class TsukkomiService
 
     /// <summary>Colloquial katakana in viewer reactions (「イケてる！」「マジで!?」) — not names, so they need no grounding in the transcript.</summary>
     public static readonly string[] ReactionWords =
-        ["イケ", "マジ", "ヤバ", "ウケ", "スゴ", "エモ", "ガチ", "ナイス", "ドンマイ", "ワクワク", "ドキドキ", "ハラハラ", "ヒヤヒヤ"];
+        ["イケ", "マジ", "ヤバ", "ウケ", "スゴ", "エモ", "ガチ", "ナイス", "ドンマイ", "ワクワク", "ドキドキ", "ハラハラ", "ヒヤヒヤ",
+         "Wow", "Really", "Nice", "Exactly", "Wait", "Seriously", "Amazing", "Incredible", "Relatable", "Well", "done"];
 
     /// <summary>Letters and digits only (NFKC), so 「わかる〜！」 and 「わかる」 compare equal.</summary>
     public static string Bare(string s) => new(s.Normalize(global::System.Text.NormalizationForm.FormKC).Where(char.IsLetterOrDigit).ToArray());

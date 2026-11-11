@@ -59,7 +59,7 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             }
             else if (fullChars <= budget) chunks = [(new Interval(0, duration), tr.Sentences.ToList())];
 
-            var system = SelectionPrompt.System(p, chunks.Count == 1 ? MaxCandidates : 3);
+            var system = SelectionPrompt.System(p, chunks.Count == 1 ? MaxCandidates : 3) + VideoLanguages.Prompt(tr.Language);
             var tasks = chunks.Select(async c =>
             {
                 var user = SelectionPrompt.User(p, duration, c.sents, SelectionPrompt.SignalSummary(sig, c.window), instruction, exclude);

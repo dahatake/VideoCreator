@@ -59,7 +59,9 @@ public static partial class SeriesPlanner
     public const double MinChapterSec = 60, TeaserMin = 1.2, TeaserMax = 6.0, RecapMax = 8.0;
     const double DurationWeight = 40, BoundaryWeight = 2.5;
 
-    public static List<string> Labels(int n) => n switch
+    public static List<string> Labels(int n, string language = "ja-JP") => language != "ja-JP"
+        ? Enumerable.Range(1, n).Select(i => VideoLanguages.Text(language, "", $"Part {i}", $"第{i}部分", $"{i}부")).ToList()
+        : n switch
     {
         2 => ["前編", "後編"],
         3 => ["前編", "中編", "後編"],
@@ -233,10 +235,10 @@ public static partial class SeriesPlanner
 
     public const string OutlineSchema = """
 {"type":"object","additionalProperties":false,"required":["series_title","chapters"],"properties":{
- "series_title":{"type":"string","description":"title of the whole video, max 20 Japanese characters, only facts from the transcript"},
+ "series_title":{"type":"string","description":"title of the whole video in its language, max 20 full-width display units, only facts from the transcript"},
  "chapters":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["start","title","major","split_score","highlight","emphasis_words"],"properties":{
   "start":{"type":"integer","description":"line number (#) of the chapter's first line"},
-  "title":{"type":"string","description":"chapter headline, max 16 Japanese characters"},
+  "title":{"type":"string","description":"chapter headline in the video language, max 16 full-width display units"},
   "major":{"type":"boolean","description":"true = the subject of the conversation changes here; false = a sub-section inside the same subject"},
   "split_score":{"type":"integer","description":"0-10"},
   "highlight":{"type":"integer","description":"line number of the chapter's most watchable line"},
@@ -286,7 +288,7 @@ public static partial class SeriesPlanner
             {
                 try
                 {
-                    var json = await llm.CompleteJsonAsync(OutlineSystem(w.a), user, "series_outline", OutlineSchema, ct);
+                    var json = await llm.CompleteJsonAsync(OutlineSystem(w.a) + VideoLanguages.Prompt(tr.Language), user, "series_outline", OutlineSchema, ct);
                     Interlocked.Add(ref outChars, json.Length);
                     return ParseOutline(json, tr, w.a, w.b);
                 }
@@ -420,7 +422,7 @@ public static partial class SeriesPlanner
         // cold open (~4 s) in every part, recap (~5 s) in all but the first, next teaser (~4 s) in all but the last; exact after planning
         double Extras(int k) => 4 + (k > 0 ? 5 : 0) + (k < parts - 1 ? 4 : 0);
         double target = (total + Enumerable.Range(0, parts).Sum(Extras)) / parts;
-        var labels = Labels(parts);
+        var labels = Labels(parts, tr.Language);
         var depth = TopicEmbedding.Blend(Depth(tr), semanticDepth);
         var cues = SplitCues.Compute(tr, sig, CuesEnabled ? laughs : null, CuesEnabled ? sig.Blacks : null);
         var score = BoundaryScores(tr, depth, outline, CuesEnabled ? cues : null);
@@ -615,8 +617,13 @@ public static partial class SeriesPlanner
         // hook: the part label over the cold open (or over the first seconds when there is none)
         var (h0, h1) = teaser ?? (0, Math.Min(TelopBuilder.HookSeconds, bodyEnd));
         Add(TelopType.Hook, h0, h1, HookText(part), "Hook", "pop");
-        if (teaser != null) chapters.Add(new SeriesChapter(0, "見どころ"));
-        if (recap is { } rs && part.PrevLabel != null) { Add(TelopType.Headline, rs.start, rs.end, $"{part.PrevLabel}のおさらい", "Headline"); chapters.Add(new SeriesChapter(R(rs.start), $"{part.PrevLabel}のおさらい")); }
+        if (teaser != null) chapters.Add(new SeriesChapter(0, VideoLanguages.Text(tr.Language, "見どころ", "Highlights", "精彩看点", "주요 장면")));
+        if (recap is { } rs && part.PrevLabel != null)
+        {
+            var text = VideoLanguages.Text(tr.Language, $"{part.PrevLabel}のおさらい", $"Recap: {part.PrevLabel}", $"{part.PrevLabel}回顾", $"{part.PrevLabel} 다시 보기");
+            Add(TelopType.Headline, rs.start, rs.end, text, "Headline");
+            chapters.Add(new SeriesChapter(R(rs.start), text));
+        }
         var marks = part.Chapters.OrderBy(c => c.Start).ToList();
         for (int k = 0; k < marks.Count; k++)
         {
@@ -626,7 +633,12 @@ public static partial class SeriesPlanner
             if (p.HasTelop("headline")) Add(TelopType.Headline, a, b, marks[k].Title, "Headline");
             chapters.Add(new SeriesChapter(R(k == 0 ? bodyStart : a), marks[k].Title));
         }
-        if (next is { } ns && part.NextLabel != null) { Add(TelopType.Headline, ns.start, ns.end, $"{part.NextLabel}につづく", "Headline"); chapters.Add(new SeriesChapter(R(ns.start), $"{part.NextLabel}の予告")); }
+        if (next is { } ns && part.NextLabel != null)
+        {
+            var text = VideoLanguages.Text(tr.Language, $"{part.NextLabel}につづく", $"Next: {part.NextLabel}", $"待续：{part.NextLabel}", $"다음: {part.NextLabel}");
+            Add(TelopType.Headline, ns.start, ns.end, text, "Headline");
+            chapters.Add(new SeriesChapter(R(ns.start), VideoLanguages.Text(tr.Language, $"{part.NextLabel}の予告", $"Preview: {part.NextLabel}", $"{part.NextLabel}预告", $"{part.NextLabel} 예고")));
+        }
         return (telops, chapters);
     }
 

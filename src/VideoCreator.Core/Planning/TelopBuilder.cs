@@ -43,9 +43,9 @@ public static class TelopBuilder
             foreach (var group in mapped.GroupBy(m => m.ClipIndex))
             {
                 double clipEnd = clips.Take(group.Key + 1).Sum(c => c.Length);
-                foreach (var chunk in Chunk(group.ToList(), Rendering.AssWriter.CaptionLineChars(p) * cap.MaxLines))
+                foreach (var chunk in Chunk(group.ToList(), Rendering.AssWriter.CaptionLineChars(p) * cap.MaxLines, tr.Language))
                 {
-                    var text = JapaneseText.NormalizeTelop(string.Concat(chunk.Select(c => c.Word.Text)));
+                    var text = CaptionText.Join(chunk.Select(c => c.Word.Text), tr.Language);
                     if (text.Length == 0) continue;
                     telops.Add(new Telop
                     {
@@ -75,7 +75,7 @@ public static class TelopBuilder
             {
                 var start = hit.start;
                 var end = Math.Min(total, Math.Max(hit.end, start + EmphasisSeconds));
-                var text = JapaneseText.NormalizeTelop(w);
+                var text = CaptionText.Normalize(w, tr.Language);
                 // Keep verbatim captions (including SRT); omit only the redundant presentation telop.
                 if (telops.Any(t => t.Type == TelopType.Caption && t.Start < end && t.End > start && t.Text == text)) continue;
                 var prevIdx = telops.FindLastIndex(t => t.Type == TelopType.Emphasis);
@@ -88,9 +88,9 @@ public static class TelopBuilder
             }
             // Fill sparse stretches with short, verbatim phrases; never invent text or change captions.
             foreach (var group in mapped.GroupBy(m => m.ClipIndex))
-            foreach (var chunk in Chunk(group.ToList(), 8))
+            foreach (var chunk in Chunk(group.ToList(), 8, tr.Language))
             {
-                var text = JapaneseText.NormalizeTelop(string.Concat(chunk.Select(m => m.Word.Text)));
+                var text = CaptionText.Join(chunk.Select(m => m.Word.Text), tr.Language);
                 double start = chunk[0].Start, end = Math.Min(clips.Take(group.Key + 1).Sum(c => c.Length), Math.Max(chunk[^1].End, start + EmphasisSeconds));
                 if (JapaneseText.DisplayWidth(text) is < 3 or > 10 || end - start < MinCaptionSec) continue;
                 if (telops.Any(t => t.Type == TelopType.Emphasis && (Math.Abs(t.Start - start) < EmphasisInterval || t.Start < end && t.End > start))) continue;
@@ -121,27 +121,27 @@ public static class TelopBuilder
     /// preferring 文節 boundaries and breath pauses, and avoiding flickering captions shorter than <see cref="MinCaptionSec"/>
     /// and greedy orphans like 「…いっぱい」+「ですよ」.
     /// </summary>
-    public static List<List<Mapped>> Chunk(List<Mapped> words, int maxChars)
+    public static List<List<Mapped>> Chunk(List<Mapped> words, int maxChars, string language = "ja-JP")
     {
         var res = new List<List<Mapped>>();
         var phrase = new List<Mapped>();
-        void Flush() { if (phrase.Count > 0) res.AddRange(Balance(phrase, maxChars)); phrase = []; }
+        void Flush() { if (phrase.Count > 0) res.AddRange(Balance(phrase, maxChars, language)); phrase = []; }
         for (int i = 0; i < words.Count; i++)
         {
             if (phrase.Count > 0 && (words[i].Start - phrase[^1].End > 0.6 || words[i].Word.Speaker != phrase[^1].Word.Speaker)) Flush();
             phrase.Add(words[i]);
-            if (JapaneseText.BreakScore(words[i].Word.Text) == 4) Flush();
+            if (JapaneseText.BreakScore(words[i].Word.Text) == 4 || language != "ja-JP" && words[i].Word.Text.EndsWith('.')) Flush();
         }
         Flush();
         return res.Where(c => c.Any(x => !JapaneseText.IsPunct(x.Word.Text))).ToList();
     }
 
-    static List<List<Mapped>> Balance(List<Mapped> ws, int maxChars)
+    static List<List<Mapped>> Balance(List<Mapped> ws, int maxChars, string language)
     {
         int n = ws.Count;
         // width as displayed (、→ full-width space inside a caption, trimmed at its edges), not a sum of per-word widths
         var raw = ws.Select(m => m.Word.Text).ToArray();
-        double SegWidth(int i, int j) => JapaneseText.DisplayWidth(JapaneseText.NormalizeTelop(string.Concat(raw[i..j])));
+        double SegWidth(int i, int j) => JapaneseText.DisplayWidth(CaptionText.Join(raw[i..j], language));
         double total = SegWidth(0, n);
         if (total <= maxChars) return [ws];
         int lines = (int)Math.Ceiling(total / maxChars);
@@ -150,14 +150,14 @@ public static class TelopBuilder
         var breakCost = new double[n];
         for (int k = 0; k + 1 < n; k++)
         {
-            var c = JapaneseText.TokenBreakCost(ws[k].Word.Text, ws[k + 1].Word.Text);
+            var c = CaptionText.BreakCost(ws[k].Word.Text, ws[k + 1].Word.Text, language);
             if (c < JapaneseText.Forbidden && ws[k + 1].Start - ws[k].End >= 0.25) c = Math.Max(0, c - 3);
             breakCost[k] = c;
         }
         var best = new double[n + 1]; var from = new int[n + 1];
         Array.Fill(best, double.PositiveInfinity); best[0] = 0;
         // a katakana/Latin/number word split by ASR into several tokens is one unit: never cut, shrunk to fit if longer than a caption
-        var unitStart = Enumerable.Range(0, n + 1).Select(k => k == 0 || k == n || !JapaneseText.InsideWord(raw[k - 1], raw[k])).ToArray();
+        var unitStart = Enumerable.Range(0, n + 1).Select(k => language != "ja-JP" || k == 0 || k == n || !JapaneseText.InsideWord(raw[k - 1], raw[k])).ToArray();
         for (int j = 1; j <= n; j++)
         {
             if (!unitStart[j]) continue;

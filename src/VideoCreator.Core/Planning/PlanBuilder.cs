@@ -110,9 +110,9 @@ public static class PlanBuilder
         var tsukkomi = new List<(double At, string Text)>();
         var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
-        if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n));
+        if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n, tr.Language));
         var canvas = new Canvas();
-        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes);
+        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes, tr.Language);
         if (p.HasTelop("tsukkomi") && r.Job.Options.Tsukkomi)
         {
             if (r.Llm == null) notes.Add("ツッコミテロップには AI が必要です（現在は無効）");
@@ -122,7 +122,7 @@ public static class PlanBuilder
                 {
                     var caps = telops.Where(t => t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
                     var src = CandidateValidator.TextOf(telopTr, clips.Select(c => new Interval(c.MasterIn, c.MasterOut)));
-                    var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct);
+                    var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct, tr.Language);
                     var style = r.Job.Options.TsukkomiStyle;
                     var picks = TsukkomiPlacement.Choose(style, items.Select(x =>
                     {
@@ -170,7 +170,7 @@ public static class PlanBuilder
             try
             {
                 var src = CandidateValidator.TextOf(telopTr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
-                int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct);
+                int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct, tr.Language);
                 int rest = inserts.Count(i => i.Kind == "card" && i.TextSource == "fixed");
                 if (ai > 0) notes.Add($"場面転換カード {ai} 枚の文字を、視聴者の代弁として AI が提案しました（承認するまで書き出せません）");
                 if (rest > 0) notes.Add($"場面転換カード {rest} 枚は AI の文が使えなかったため、定型の文にしました");
@@ -180,7 +180,7 @@ public static class PlanBuilder
         if (maskWords.Count > 0) inserts = inserts.Select(i => i with { Text = Masking.MaskText(i.Text, maskWords) }).ToList();
         if (maskWords.Count > 0 && series != null)
             series = series with { SeriesTitle = Masking.MaskText(series.SeriesTitle, maskWords), Chapters = series.Chapters.Select(c => c with { Title = Masking.MaskText(c.Title, maskWords) }).ToList() };
-        telops = telops.Select(t => TelopGrounding.Bind(t, packed, telopTr)).ToList();
+        telops = telops.Select(t => TelopGrounding.IsSeriesStructure(t, series) ? t : TelopGrounding.Bind(t, packed, telopTr, series: series)).ToList();
         foreach (var t in telops.Where(t => TelopGrounding.RequiresWords(t, series: series)
                      && TelopGrounding.Problems(t, packed, telopTr, series: series).Count > 0).ToList())
         {
@@ -199,7 +199,7 @@ public static class PlanBuilder
         {
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
-            Series = series, Inserts = inserts,
+            Series = series, Inserts = inserts, Language = tr.Language,
             TelopFaces = r.Assets.ToDictionary(a => a.Id, a => new TelopFaceSource(a.Media, r.Faces.GetValueOrDefault(a.Id) ?? [])),
         };
         var layout = Rendering.TelopLayout.Resolve(plan, p);

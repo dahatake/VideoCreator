@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">계획 QA, 최종 QA, 사람의 공개 판단</title>
+  <desc id="desc">계획의 문자·길이·발화·권리·승인을 검사하고 최종 파일의 해상도·음량·안전 영역을 측정한다. 실패는 수정하며 미실행은 통과가 아니다. QA 통과 후에도 사람이 내용·권리·약관을 확인하고 수동 게시한다.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#245a81"/></marker></defs>
+  <rect width="1200" height="430" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI','Malgun Gothic',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">「QA 통과」와 「공개 가능」은 별도 판단</text>
+    <rect x="28" y="75" width="345" height="215" rx="10" fill="#e6f0fb" stroke="#3974a2"/>
+    <text x="48" y="111" font-size="22" font-weight="700">1. 계획 QA(plan)</text>
+    <text x="48" y="151" font-size="18">길이·발화 컷·미등장 단어</text>
+    <text x="48" y="184" font-size="18">AI 글 승인·권리·단어 가림</text>
+    <text x="48" y="217" font-size="18">글자 수·자막 속도·금칙 등</text>
+    <text x="48" y="260" font-size="17">수정 후 현재 계획 재검사</text>
+    <rect x="422" y="75" width="345" height="215" rx="10" fill="#edf7f1" stroke="#28734d"/>
+    <text x="442" y="111" font-size="22" font-weight="700">2. 최종 QA(final)</text>
+    <text x="442" y="151" font-size="18">ffprobe로 해상도·길이 측정</text>
+    <text x="442" y="184" font-size="18">음량·True Peak 측정</text>
+    <text x="442" y="217" font-size="18">렌더링 후 안전 영역 검사</text>
+    <text x="442" y="260" font-size="17">하드 결과 pass로 출력 확정</text>
+    <rect x="817" y="75" width="355" height="215" rx="10" fill="#fff1db" stroke="#ad7123"/>
+    <text x="837" y="111" font-size="22" font-weight="700">3. 사람 확인·수동 게시</text>
+    <text x="837" y="151" font-size="18">발언 의미·맥락·개인정보</text>
+    <text x="837" y="184" font-size="18">실제 허가·음악·초상권</text>
+    <text x="837" y="217" font-size="18">게시 약관·자막 표시</text>
+    <text x="837" y="260" font-size="17">최종 영상을 보고 직접 판단</text>
+    <text x="28" y="340" font-size="19">pass = 통과 / warn = 확인 필요 / fail = 실패 / not_run = 미실행</text>
+    <text x="28" y="388" font-size="19" font-weight="700">저해상도 미리 보기의 not_run을 최종 파일 통과로 취급하지 않습니다.</text>
+  </g>
+  <g stroke="#245a81" stroke-width="3" marker-end="url(#arrow)"><path d="M373 177H414"/><path d="M767 177H809"/></g>
+</svg>

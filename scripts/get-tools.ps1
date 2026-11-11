@@ -2,7 +2,7 @@
 .SYNOPSIS
   Downloads the third-party tools VideoCreator needs into ./tools (git-ignored):
   - FFmpeg (BtbN static GPL build, includes libass/libx264) for the current architecture
-  - M PLUS 1p (SIL Open Font License) for Japanese telops
+  - M PLUS 1p and Noto Sans CJK SC/KR (SIL Open Font License) for multilingual telops
   - UltraFace RFB-320 ONNX face detector (MIT) for face-following vertical crops
   - Real-ESRGAN realesr-animevideov3 ONNX (BSD-3-Clause) for upscaling low-resolution opening/closing videos
 #>
@@ -38,6 +38,22 @@ foreach ($f in 'MPLUS1p-Bold.ttf', 'MPLUS1p-ExtraBold.ttf', 'OFL.txt') {
         Write-Host "Downloading $f..."
         Invoke-WebRequest "https://github.com/google/fonts/raw/main/ofl/mplus1p/$f" -OutFile $dst -UseBasicParsing
     }
+}
+
+$cjkFonts = @{
+    'NotoSansCJKsc-Bold.otf' = 'SimplifiedChinese'
+    'NotoSansCJKkr-Bold.otf' = 'Korean'
+}
+foreach ($file in $cjkFonts.Keys) {
+    $dst = Join-Path $fontDir $file
+    if ($Force -or -not (Test-Path $dst)) {
+        Write-Host "Downloading $file..."
+        Invoke-WebRequest "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/$($cjkFonts[$file])/$file" -OutFile $dst -UseBasicParsing
+    }
+}
+$cjkLicense = Join-Path $fontDir 'NotoSansCJK-LICENSE.txt'
+if ($Force -or -not (Test-Path $cjkLicense)) {
+    Invoke-WebRequest 'https://github.com/notofonts/noto-cjk/raw/main/Sans/LICENSE' -OutFile $cjkLicense -UseBasicParsing
 }
 
 $modelDir = Join-Path $tools 'models'

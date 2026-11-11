@@ -52,7 +52,7 @@ public sealed class AzureFastTranscriber(Uri endpoint, TokenCredential credentia
             {
                 using var resp = await http.SendAsync(req, ct);
                 body = await resp.Content.ReadAsStringAsync(ct);
-                if (resp.IsSuccessStatusCode) return Parse(body, duration, Name);
+                if (resp.IsSuccessStatusCode) return Parse(body, duration, Name, locale);
                 bool transient = resp.StatusCode is HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError;
                 if (!transient || delay == 16) throw new AsrException($"Speech API {(int)resp.StatusCode}: {Truncate(body)}", transient);
             }
@@ -64,7 +64,7 @@ public sealed class AzureFastTranscriber(Uri endpoint, TokenCredential credentia
 
     static string Truncate(string s) => s.Length > 300 ? s[..300] : s;
 
-    public static Transcript Parse(string json, double duration, string provider)
+    public static Transcript Parse(string json, double duration, string provider, string language = "ja-JP")
     {
         using var doc = JsonDocument.Parse(json);
         var words = new List<Word>();
@@ -85,6 +85,7 @@ public sealed class AzureFastTranscriber(Uri endpoint, TokenCredential credentia
         return new Transcript
         {
             Provider = provider,
+            Language = language,
             Duration = doc.RootElement.TryGetProperty("durationMilliseconds", out var d) ? d.GetInt64() / 1000.0 : duration,
             Words = words,
             Sentences = SentenceBuilder.Build(raw, words),
@@ -131,7 +132,8 @@ public static class SentenceBuilder
         for (int i = 0; i < text.Length; i++)
         {
             sb.Append(text[i]);
-            if (Enders.Contains(text[i]) && (i + 1 >= text.Length || !Enders.Contains(text[i + 1]))) { if (sb.ToString().Trim().Length > 0) res.Add(sb.ToString()); sb.Clear(); }
+            bool period = text[i] == '.' && (i + 1 == text.Length || char.IsWhiteSpace(text[i + 1]));
+            if ((Enders.Contains(text[i]) || period) && (i + 1 >= text.Length || !Enders.Contains(text[i + 1]))) { if (sb.ToString().Trim().Length > 0) res.Add(sb.ToString()); sb.Clear(); }
         }
         if (sb.ToString().Trim().Length > 0) res.Add(sb.ToString());
         return res;

@@ -633,6 +633,10 @@ public sealed partial class Renderer(FFmpeg ff)
     /// <param name="progress">Measured 0..1 across all ffmpeg passes (weighted by typical cost; each pass reports real out_time).</param>
     public async Task<RenderOutput> RenderAsync(EditPlan plan, Preset preset, IReadOnlyDictionary<string, SourceAsset> assets, string outFile, bool preview, CancellationToken ct, IProgress<double>? progress = null)
     {
+        var fontFile = plan.Language switch { "zh-CN" => "NotoSansCJKsc-Bold.otf", "ko-KR" => "NotoSansCJKkr-Bold.otf", _ => null };
+        bool hasText = plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0);
+        if (hasText && fontFile != null && !File.Exists(Path.Combine(ff.FontsDir, fontFile)))
+            throw new FFmpegException($"Missing font {fontFile}. Run scripts/get-tools.ps1 before rendering {plan.Language}.");
         var dir = Path.GetDirectoryName(outFile)!; Directory.CreateDirectory(dir);
         var inp = ResolveInputs(plan, assets, outFile + ".bgmenv.wav");
         var cmds = new List<string>();

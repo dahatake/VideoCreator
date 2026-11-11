@@ -35,8 +35,8 @@ public static class SelectionPrompt
  "type":"object","additionalProperties":false,"required":["segments","hook_text","headline","emphasis_words","reason","scores"],
  "properties":{
   "segments":{"type":"array","description":"1-4 time ranges in seconds, chronological","items":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"number"},"end":{"type":"number"}}}},
-  "hook_text":{"type":"string","description":"opening hook telop, max 14 Japanese characters"},
-  "headline":{"type":"string","description":"situation headline, max 16 Japanese characters"},
+  "hook_text":{"type":"string","description":"opening hook telop in the video language, max 14 full-width display units (Latin characters count as half)"},
+  "headline":{"type":"string","description":"situation headline in the video language, max 16 full-width display units (Latin characters count as half)"},
   "emphasis_words":{"type":"array","items":{"type":"string"},"description":"max 3 keywords copied verbatim from the transcript"},
   "reason":{"type":"string","description":"one sentence why this is entertaining, max 120 characters"},
   "scores":{"type":"object","additionalProperties":false,"required":["hook","standalone","payoff","emotion"],"properties":{

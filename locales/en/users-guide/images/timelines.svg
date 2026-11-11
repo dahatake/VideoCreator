@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="515" viewBox="0 0 1200 515" role="img" aria-labelledby="title desc">
+  <title id="title">Three timelines: source, body, and final file</title>
+  <desc id="desc">Cuts and speed convert source intervals to body time. Insert a two-second opening at body2, one-second card at6, and two-second closing at10 into a ten-second body: final duration15. A caption at body6 starts at final9. Other camera source times use offset/drift corrections.</desc>
+  <rect width="1200" height="515" rx="16" fill="#f7f9fc"/>
+  <g font-family="'Segoe UI',sans-serif" fill="#19344b">
+    <text x="28" y="40" font-size="24" font-weight="700">Keep the three timelines separate</text>
+    <text x="28" y="92" font-size="20" font-weight="700">Source time</text>
+    <rect x="225" y="68" width="220" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="555" y="68" width="220" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="885" y="68" width="220" height="45" fill="#dcecfb" stroke="#3974a2"/>
+    <text x="240" y="98" font-size="18">Source interval A</text><text x="570" y="98" font-size="18">Source interval B</text><text x="900" y="98" font-size="18">Source interval C</text>
+    <text x="225" y="145" font-size="17">Cuts / speed / audio reference → body (source and body timestamps are not the same)</text>
+    <text x="28" y="206" font-size="20" font-weight="700">Body time</text>
+    <rect x="225" y="177" width="120" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="345" y="177" width="240" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="585" y="177" width="240" height="45" fill="#dcecfb" stroke="#3974a2"/>
+    <text x="275" y="206" font-size="18">A</text><text x="455" y="206" font-size="18">B</text><text x="695" y="206" font-size="18">C</text>
+    <text x="225" y="249" font-size="16">0</text><text x="345" y="249" font-size="16">2</text><text x="585" y="249" font-size="16">6</text><text x="810" y="249" font-size="16">10s</text>
+    <text x="225" y="281" font-size="18">Telops / SFX / chapters stored in body time → convert with InsertMap</text>
+    <text x="28" y="345" font-size="20" font-weight="700">Final time</text>
+    <rect x="225" y="316" width="120" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="345" y="316" width="120" height="45" fill="#ffe3af" stroke="#ad7123"/><rect x="465" y="316" width="240" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="705" y="316" width="60" height="45" fill="#ffe3af" stroke="#ad7123"/><rect x="765" y="316" width="240" height="45" fill="#dcecfb" stroke="#3974a2"/><rect x="1005" y="316" width="120" height="45" fill="#ffe3af" stroke="#ad7123"/>
+    <text x="275" y="346" font-size="18">A</text><text x="353" y="346" font-size="18">Opening</text><text x="575" y="346" font-size="18">B</text><text x="713" y="346" font-size="16">Card</text><text x="875" y="346" font-size="18">C</text><text x="1033" y="346" font-size="18">Closing</text>
+    <text x="225" y="388" font-size="16">0</text><text x="345" y="388" font-size="16">2</text><text x="465" y="388" font-size="16">4</text><text x="705" y="388" font-size="16">8</text><text x="765" y="388" font-size="16">9</text><text x="1005" y="388" font-size="16">13</text><text x="1110" y="388" font-size="16">15s</text>
+    <text x="28" y="440" font-size="17">Example: caption starts at body6 → final9. An end exactly at an insertion stops before the insert.</text>
+    <text x="28" y="482" font-size="17">Other camera source time = master time + offset + driftPpm × 10^-6 × master time (CameraTime)</text>
+  </g>
+</svg>

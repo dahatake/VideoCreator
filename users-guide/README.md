@@ -1,5 +1,7 @@
 # VideoCreator 利用者ガイド
 
+[English](../locales/en/users-guide/README.md) | [简体中文](../locales/zh-CN/users-guide/README.md) | [한국어](../locales/ko/users-guide/README.md)
+
 [アプリREADME](../README.md)
 
 このガイドは、動画編集や開発に詳しくない利用者と、実装をカスタマイズするSoftware Engineerのための資料です。現在の実装と実画面を基準にしています。

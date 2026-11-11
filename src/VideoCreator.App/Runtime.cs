@@ -67,6 +67,9 @@ public sealed class Runtime
     public ITranscriber? Asr => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
         ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), _cred.Value, _http, _o.Asr.Locale);
 
+    public ITranscriber? AsrForLanguage(string language) => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
+        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), _cred.Value, _http, language);
+
     public string? CopilotCli => _o.Llm.CopilotCliPath ?? CopilotSelector.FindInstalledCli();
 
     static string Origin(Uri endpoint) => new UriBuilder(endpoint) { UserName = "", Password = "", Path = "", Query = "", Fragment = "" }
@@ -102,7 +105,7 @@ public sealed class Runtime
 
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {
-        Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
+        Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, AsrForLanguage = AsrForLanguage, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
         Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces,
     });
 }
