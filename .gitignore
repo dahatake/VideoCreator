@@ -3,6 +3,7 @@ bin/
 obj/
 *.user
 .vs/
+artifacts/
 
 # third-party tools downloaded by scripts/get-tools.ps1
 tools/

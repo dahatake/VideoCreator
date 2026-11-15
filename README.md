@@ -141,6 +141,41 @@ dotnet run --project src/VideoCreator.App -c Release
 | `DataDir` / `ProjectsDir` | `%LOCALAPPDATA%\VideoCreator` / `ビデオ\VideoCreator` | データベース・キャッシュ / プロジェクトと書き出し先（`ProjectsDir` は［設定］画面で変更でき、画面で選んだ値が優先されます） |
 | `Dictionary` | [] | 固有名詞（書き起こしのフレーズリストとテロップの事実確認に使用） |
 
+## Windows 単一 EXE の作成
+
+SDK 10 と取得済みツールがある開発 PC で、次を実行します。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\get-tools.ps1
+powershell -ExecutionPolicy Bypass -File scripts\publish-single-file.ps1
+# 対象を明示する場合（tools の FFmpeg も同じ CPU 向けである必要があります）
+powershell -ExecutionPolicy Bypass -File scripts\publish-single-file.ps1 -RuntimeIdentifier win-arm64
+# EXE だけを一時フォルダーへコピーして起動・画面資材・字幕描画・動画登録を検証（クラウド呼び出しなし）
+powershell -ExecutionPolicy Bypass -File scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.App.exe
+```
+
+`artifacts\single-file\<win-arm64 または win-x64>\VideoCreator.App.exe` だけをコピーして起動します。
+既定はビルド PC の CPU です。ARM64 版は ARM64 Windows 用、x64 版は x64 Windows 用です。
+.NET ランタイム、画面資材、プリセット、FFmpeg / ffprobe、フォント、顔検出・高画質化モデルを同梱するため、
+実行先で SDK や FFmpeg を別途導入する必要はありません。既定ブラウザーでローカル画面が開き、
+コンソールを閉じるか Ctrl+C で終了します。署名は自動では行いません。
+
+**配布ファイルが1個**であり、実行中もファイルを一切作らない方式ではありません。
+初回起動時に .NET が `%TEMP%\.net` 以下へ依存物を展開します（書き込み権限と十分な空き容量が必要）。
+`DOTNET_BUNDLE_EXTRACT_BASE_DIR` で展開先を変更できますが、他ユーザーが書き換えられる場所は使わないでください。
+DB・キャッシュは `%LOCALAPPDATA%\VideoCreator`、プロジェクトはビデオフォルダーの `VideoCreator` に保存します。
+動画・利用者の認証情報・既存プロジェクトは EXE に含めません。
+
+字幕用の Azure Speech、選定用 AI、インターネット、利用権限・サインインは引き続き必要です。
+設定例のエンドポイントを自分の値にするには、起動前に環境変数
+`VideoCreator__Asr__Endpoint` / `VideoCreator__Llm__Endpoint` /
+`VideoCreator__Llm__Deployment` を設定するか、起動引数
+`--VideoCreator:Asr:Endpoint=https://...` などで上書きします。
+Azure CLI 認証を使う場合は別途 Azure CLI と `az login`、
+Copilot を選ぶ場合は別途サインイン済み Copilot CLI が必要です。完全オフライン版ではありません。
+配布前には [第三者ライセンスの注意事項](THIRD-PARTY-NOTICES.txt)、特に同梱 GPL 版 FFmpeg の
+対応ソース提供義務を確認してください。この発行処理だけで公開配布の法的要件が満たされるわけではありません。
+
 ## バージョン管理
 
 アプリのバージョンはルートの [Directory.Build.props](Directory.Build.props) の

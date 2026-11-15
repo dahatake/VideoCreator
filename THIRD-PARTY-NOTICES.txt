@@ -1,0 +1,37 @@
+VideoCreator single-file distribution
+
+The EXE extracts its dependencies before starting. The extraction directory
+contains the licenses shipped by .NET, FFmpeg and the font authors.
+VideoCreator's own license is in LICENSE.
+
+FFmpeg: GPL-3.0-or-later (BtbN static GPL build).
+  License: tools/ffmpeg/LICENSE.txt
+  Builds and build scripts: https://github.com/BtbN/FFmpeg-Builds
+  Source: https://ffmpeg.org/
+  Redistribution must comply with the GPL, including corresponding-source
+  obligations for the exact binary and its dependencies. Bundling a license
+  and these links alone does not satisfy those obligations.
+
+M PLUS 1p: SIL Open Font License 1.1.
+  License: tools/fonts/OFL.txt
+  Source: https://github.com/google/fonts/tree/main/ofl/mplus1p
+
+Noto Sans CJK SC / KR: SIL Open Font License 1.1.
+  License: tools/fonts/NotoSansCJK-LICENSE.txt
+  Source: https://github.com/notofonts/noto-cjk
+
+UltraFace RFB-320: MIT, Linzaer and contributors.
+  License: tools/models/UltraFace-LICENSE.txt
+  Source and license: https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB
+  ONNX: https://github.com/onnx/models/tree/main/validated/vision/body_analysis/ultraface
+
+Real-ESRGAN realesr-animevideov3: BSD-3-Clause, Xintao Wang and contributors.
+  License: tools/models/Real-ESRGAN-LICENSE.txt
+  Source and license: https://github.com/xinntao/Real-ESRGAN
+  ONNX export: https://huggingface.co/skillsafe-ai/realesr-animevideov3
+
+Other .NET dependencies and their versions are declared in the project files.
+The publish profile also references the DirectML redistributable already used
+by ONNX Runtime. Its license and notices are under licenses/DirectML-*.
+Review all applicable licenses before redistribution. This file is not a
+replacement for those licenses or a public-release compliance certification.

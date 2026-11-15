@@ -58,6 +58,16 @@ if ($Force -or -not (Test-Path $cjkLicense)) {
 
 $modelDir = Join-Path $tools 'models'
 New-Item -ItemType Directory -Force $modelDir | Out-Null
+$modelLicenses = @{
+    'UltraFace-LICENSE.txt' = 'https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/master/LICENSE'
+    'Real-ESRGAN-LICENSE.txt' = 'https://raw.githubusercontent.com/xinntao/Real-ESRGAN/master/LICENSE'
+}
+foreach ($file in $modelLicenses.Keys) {
+    $dst = Join-Path $modelDir $file
+    if ($Force -or -not (Test-Path $dst)) {
+        Invoke-WebRequest $modelLicenses[$file] -OutFile $dst -UseBasicParsing
+    }
+}
 $model = Join-Path $modelDir 'ultraface.onnx'
 if ($Force -or -not (Test-Path $model)) {
     Write-Host 'Downloading ultraface.onnx (face detector, MIT)...'

@@ -1,7 +1,12 @@
 using System.Net;
 using VideoCreator.App;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    // Published content (including a self-extracted bundle) must not depend on the caller's working directory.
+    ContentRootPath = Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot")) ? AppContext.BaseDirectory : null,
+});
 var options = builder.Configuration.GetSection(AppOptions.Section).Get<AppOptions>() ?? new AppOptions();
 builder.Services.AddSingleton(options);
 
