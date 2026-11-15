@@ -1,0 +1,214 @@
+# Builds single-file executables (Windows x64/ARM64, macOS Apple Silicon), verifies each one on a clean runner,
+# and - only when "publish" is checked - creates a GitHub Release with SHA256SUMS and build provenance.
+# Run: Actions > Release > Run workflow, or `gh workflow run release.yml -f publish=true`.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: 'Pre-release suffix (e.g. rc.1). Empty = VersionPrefix from Directory.Build.props as is'
+        required: false
+        default: ''
+      publish:
+        description: 'Create the GitHub Release (unchecked = build and verify only)'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: version
+        env:
+          SUFFIX: ${{ inputs.version_suffix }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          prefix=$(sed -n 's:.*<VersionPrefix>\(.*\)</VersionPrefix>.*:\1:p' Directory.Build.props)
+          [[ "$prefix" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::VersionPrefix '$prefix' is not MAJOR.MINOR.PATCH"; exit 1; }
+          [[ -z "$SUFFIX" || "$SUFFIX" =~ ^[0-9A-Za-z]+(\.[0-9A-Za-z]+)*$ ]] || { echo "::error::Invalid version_suffix '$SUFFIX'"; exit 1; }
+          version="$prefix${SUFFIX:+-$SUFFIX}"
+          if [[ "$PUBLISH" == "true" ]] && git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists. Bump VersionPrefix or set version_suffix."; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: **$version** (publish: $PUBLISH)" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+            test: true
+          - rid: win-arm64
+            os: windows-11-arm
+            test: false
+          - rid: osx-arm64
+            os: macos-15
+            test: false
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RID: ${{ matrix.rid }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SUFFIX: ${{ inputs.version_suffix }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the SDK stamps the commit into informational_version.
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Download FFmpeg, fonts and models
+        run: ./scripts/get-tools.ps1
+      - name: Test
+        if: matrix.test
+        run: dotnet test --project tests/VideoCreator.Tests -c Release
+      - name: Publish single file
+        run: ./scripts/publish-single-file.ps1 -RuntimeIdentifier $env:RID -NeutralSettings -VersionSuffix "$env:SUFFIX"
+      - name: Verify on this runner (isolated folder, minimal PATH, no cloud)
+        run: |
+          $exe = if ($env:RID.StartsWith('win-')) { 'VideoCreator.App.exe' } else { 'VideoCreator.App' }
+          ./scripts/verify-single-file.ps1 -ExePath "artifacts/single-file/$env:RID/$exe" -RequireNeutralSettings
+      - name: Package
+        run: |
+          New-Item -ItemType Directory dist, meta | Out-Null
+          $stem = "VideoCreator-$env:VERSION-$env:RID"
+          if ($env:RID.StartsWith('win-')) {
+            Copy-Item "artifacts/single-file/$env:RID/VideoCreator.App.exe" "dist/$stem.exe"
+            $ffmpeg = 'tools/ffmpeg/bin/ffmpeg.exe'
+          } else {
+            # tar keeps the executable bit and avoids the quarantine flag a browser adds to loose files.
+            New-Item -ItemType Directory stage | Out-Null
+            Copy-Item "artifacts/single-file/$env:RID/VideoCreator.App" stage/VideoCreator
+            chmod 755 stage/VideoCreator
+            tar -czf "dist/$stem.tar.gz" -C stage VideoCreator
+            if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+            $ffmpeg = 'tools/ffmpeg/bin/ffmpeg'
+          }
+          if ($env:RID -eq 'win-x64') { Copy-Item artifacts/single-file/appsettings.neutral.json dist/appsettings.json }
+          $line = & $ffmpeg -hide_banner -version | Select-Object -First 1
+          "- ``$env:RID``: $line" | Set-Content "meta/$env:RID.md"
+          "| File | Bytes | SHA-256 |`n|---|---|---|" | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem dist | ForEach-Object { "| $($_.Name) | $($_.Length) | $((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()) |" } |
+            Add-Content $env:GITHUB_STEP_SUMMARY
+      - name: Attest build provenance
+        if: inputs.publish
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: meta-${{ matrix.rid }}
+          path: meta/*
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: meta-*
+          path: meta
+          merge-multiple: true
+      - name: Create release
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          repo_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          {
+            echo "VideoCreator $VERSION ($GITHUB_SHA)"
+            echo
+            echo "## Downloads"
+            echo
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`VideoCreator-$VERSION-win-x64.exe\` | Windows 10/11 x64 |"
+            echo "| \`VideoCreator-$VERSION-win-arm64.exe\` | Windows 11 ARM64 |"
+            echo "| \`VideoCreator-$VERSION-osx-arm64.tar.gz\` | macOS on Apple Silicon (M1 or later). Intel Macs are not supported |"
+            echo "| \`appsettings.json\` | Settings template: put it next to the executable and fill in your endpoints |"
+            echo
+            echo "Each executable contains the .NET runtime, UI, presets, FFmpeg/ffprobe, fonts and models. No installer and no .NET SDK are needed."
+            echo
+            echo "## Before the first start"
+            echo
+            echo "1. Azure CLI: \`winget install Microsoft.AzureCLI\` (Windows) / \`brew install azure-cli\` (macOS), then \`az login\`."
+            echo "   Your account needs **Cognitive Services User** on the Speech resource (and **Cognitive Services OpenAI User** for Microsoft Foundry)."
+            echo "2. Download \`appsettings.json\` into the same folder as the executable and set \`VideoCreator:Asr:Endpoint\`"
+            echo "   (\`https://<resource>.cognitiveservices.azure.com/\`) and, for AI selection, \`Llm:Endpoint\` / \`Llm:Deployment\`,"
+            echo "   or \`Llm:Provider\` = \`copilot\` (signed-in GitHub Copilot CLI) or \`none\`. Environment variables such as"
+            echo "   \`VideoCreator__Asr__Endpoint\` also work. The startup log shows which settings file was loaded."
+            echo "3. Start the executable. The UI opens at http://127.0.0.1:8765/ ; close the console or press Ctrl+C to stop."
+            echo
+            echo "**macOS:** extract and start from Terminal so \`az\` is on PATH:"
+            echo '```sh'
+            echo "tar -xzf VideoCreator-$VERSION-osx-arm64.tar.gz && ./VideoCreator"
+            echo '```'
+            echo "The binary is signed ad hoc, not notarized. If it was downloaded with a browser and macOS blocks it, run"
+            echo "\`xattr -d com.apple.quarantine VideoCreator\` (or allow it in System Settings > Privacy & Security)."
+            echo "Downloading with \`gh release download\` or \`curl\` avoids this."
+            echo
+            echo "**Windows:** the executable is not code-signed; SmartScreen may ask for confirmation (More info > Run anyway)."
+            echo
+            echo "## Verify the download"
+            echo
+            echo '```sh'
+            echo "sha256sum -c SHA256SUMS.txt --ignore-missing      # macOS: shasum -a 256 -c SHA256SUMS.txt --ignore-missing"
+            echo "gh attestation verify <file> --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo "## Bundled FFmpeg (GPL)"
+            echo
+            cat meta/*.md
+            echo
+            echo "Windows builds come from https://github.com/BtbN/FFmpeg-Builds (source: the FFmpeg commit in the version string);"
+            echo "the macOS build from https://ffmpeg.martin-riedl.de/ (source: FFmpeg tag n9.0.2)."
+            echo "See [THIRD-PARTY-NOTICES.txt]($repo_url/blob/$GITHUB_SHA/THIRD-PARTY-NOTICES.txt) for all licenses."
+          } > notes.md
+          flags=()
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "VideoCreator $VERSION" --notes-file notes.md "${flags[@]}"

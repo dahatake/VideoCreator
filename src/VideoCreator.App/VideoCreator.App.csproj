@@ -5,8 +5,9 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <TargetFramework Condition="'$(VideoCreatorWindows)' == 'true'">net10.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(VideoCreatorWindows)' != 'true'">net10.0</TargetFramework>
+    <UseWindowsForms Condition="'$(VideoCreatorWindows)' == 'true'">true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <CopilotSkipCliDownload>true</CopilotSkipCliDownload>
     <ApplicationIcon>wwwroot\favicon.ico</ApplicationIcon>

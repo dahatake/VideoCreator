@@ -87,7 +87,7 @@
 
 ## 必要なもの
 
-- Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）
+- Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）。ソースからではなく実行ファイル1個で使う場合（Windows / Apple Silicon の macOS）は[単一実行ファイル](#単一実行ファイルwindows--macos)を参照
 - Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Fast Transcription を利用できるリソースと自分のエンドポイント、利用者への `Cognitive Services User` ロール。Microsoft Foundry も使う場合だけ、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](users-guide/quickstart.md#2-自分のクラウド設定を用意する)を参照してください
 - GitHub Copilot を使う場合: GitHub Copilot CLI（`run.cmd --setup --with-copilot` で導入）にサインイン済み
 
@@ -141,38 +141,86 @@ dotnet run --project src/VideoCreator.App -c Release
 | `DataDir` / `ProjectsDir` | `%LOCALAPPDATA%\VideoCreator` / `ビデオ\VideoCreator` | データベース・キャッシュ / プロジェクトと書き出し先（`ProjectsDir` は［設定］画面で変更でき、画面で選んだ値が優先されます） |
 | `Dictionary` | [] | 固有名詞（書き起こしのフレーズリストとテロップの事実確認に使用） |
 
-## Windows 単一 EXE の作成
+## 単一実行ファイル（Windows / macOS）
 
-SDK 10 と取得済みツールがある開発 PC で、次を実行します。
+インストーラーなしで、**実行ファイル1個をコピーして起動するだけ**で使える配布形態です。
+.NET ランタイム、画面資材、プリセット、FFmpeg / ffprobe、フォント、顔検出・高画質化モデルを同梱するため、
+実行先に .NET SDK・FFmpeg・Node.js は不要です。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\get-tools.ps1
-powershell -ExecutionPolicy Bypass -File scripts\publish-single-file.ps1
-# 対象を明示する場合（tools の FFmpeg も同じ CPU 向けである必要があります）
-powershell -ExecutionPolicy Bypass -File scripts\publish-single-file.ps1 -RuntimeIdentifier win-arm64
-# EXE だけを一時フォルダーへコピーして起動・画面資材・字幕描画・動画登録を検証（クラウド呼び出しなし）
-powershell -ExecutionPolicy Bypass -File scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.App.exe
+| ファイル | 対象 |
+|---|---|
+| `VideoCreator-<version>-win-x64.exe` | Windows 10/11（x64） |
+| `VideoCreator-<version>-win-arm64.exe` | Windows 11（ARM64） |
+| `VideoCreator-<version>-osx-arm64.tar.gz` | macOS（Apple Silicon）。**Intel Mac は非対応**（ONNX Runtime に Intel macOS 版がないため） |
+
+### 使う人がすること
+
+1. [Releases](https://github.com/dahatake/VideoCreator/releases) から自分の OS / CPU 用のファイルと `appsettings.json` を同じフォルダーにダウンロードします
+2. Azure CLI を入れて `az login`（Windows: `winget install Microsoft.AzureCLI`、macOS: `brew install azure-cli`）。
+   必要なロールは[必要なもの](#必要なもの)と同じです。Copilot を使う場合はサインイン済みの Copilot CLI
+3. `appsettings.json` の `VideoCreator:Asr:Endpoint`、`Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を自分の値にします
+4. 実行ファイルを起動します。既定ブラウザーで <http://127.0.0.1:8765/> が開き、コンソールを閉じるか Ctrl+C で終了します
+
+macOS では Terminal から起動します（`az` を PATH から見つけるため）。
+
+```sh
+tar -xzf VideoCreator-<version>-osx-arm64.tar.gz
+./VideoCreator
 ```
 
-`artifacts\single-file\<win-arm64 または win-x64>\VideoCreator.App.exe` だけをコピーして起動します。
-既定はビルド PC の CPU です。ARM64 版は ARM64 Windows 用、x64 版は x64 Windows 用です。
-.NET ランタイム、画面資材、プリセット、FFmpeg / ffprobe、フォント、顔検出・高画質化モデルを同梱するため、
-実行先で SDK や FFmpeg を別途導入する必要はありません。既定ブラウザーでローカル画面が開き、
-コンソールを閉じるか Ctrl+C で終了します。署名は自動では行いません。
+macOS 版はアドホック署名のみで公証（notarize）していません。ブラウザーでダウンロードしてブロックされた場合は
+`xattr -d com.apple.quarantine VideoCreator` を実行するか、［システム設定］→［プライバシーとセキュリティ］で許可します
+（`gh release download` や `curl` で取得すると不要）。Windows 版もコード署名していないため、SmartScreen の確認が出ることがあります。
 
-**配布ファイルが1個**であり、実行中もファイルを一切作らない方式ではありません。
-初回起動時に .NET が `%TEMP%\.net` 以下へ依存物を展開します（書き込み権限と十分な空き容量が必要）。
-`DOTNET_BUNDLE_EXTRACT_BASE_DIR` で展開先を変更できますが、他ユーザーが書き換えられる場所は使わないでください。
-DB・キャッシュは `%LOCALAPPDATA%\VideoCreator`、プロジェクトはビデオフォルダーの `VideoCreator` に保存します。
-動画・利用者の認証情報・既存プロジェクトは EXE に含めません。
+**設定の優先順位**（後ろほど優先）: 同梱の既定値 → **実行ファイルと同じフォルダーの `appsettings.json`** →
+環境変数（`VideoCreator__Asr__Endpoint` など）→ 起動引数（`--VideoCreator:Asr:Endpoint=https://...`）。
+起動ログの `User settings file:` に読み込んだファイルが表示されます。配布版に同梱の設定にはエンドポイントが入っていません。
 
-字幕用の Azure Speech、選定用 AI、インターネット、利用権限・サインインは引き続き必要です。
-設定例のエンドポイントを自分の値にするには、起動前に環境変数
-`VideoCreator__Asr__Endpoint` / `VideoCreator__Llm__Endpoint` /
-`VideoCreator__Llm__Deployment` を設定するか、起動引数
-`--VideoCreator:Asr:Endpoint=https://...` などで上書きします。
-Azure CLI 認証を使う場合は別途 Azure CLI と `az login`、
-Copilot を選ぶ場合は別途サインイン済み Copilot CLI が必要です。完全オフライン版ではありません。
+**ファイルは1個**ですが、実行中にファイルを一切作らない方式ではありません。初回起動時に .NET が一時フォルダー
+（Windows: `%TEMP%\.net`、macOS: `$TMPDIR/.net`）へ依存物を展開します（書き込み権限と空き容量が必要）。
+`DOTNET_BUNDLE_EXTRACT_BASE_DIR` で展開先を変えられますが、他ユーザーが書き換えられる場所は使わないでください。
+DB・キャッシュは `%LOCALAPPDATA%\VideoCreator`（macOS: `~/Library/Application Support/VideoCreator`）、
+プロジェクトは `ビデオ\VideoCreator`（macOS: `~/Movies/VideoCreator`）に保存します。
+削除したプロジェクトはごみ箱（macOS: ゴミ箱）へ移動します。動画・認証情報・既存プロジェクトは実行ファイルに含めません。
+字幕用の Azure Speech とインターネット接続は引き続き必要で、完全オフライン版ではありません。
+
+### GitHub Actions で作成・公開する（メンテナー）
+
+[.github/workflows/release.yml](.github/workflows/release.yml) は手動実行（`workflow_dispatch`）だけで動きます。
+各 OS のランナーでビルドし、**その実行ファイルだけを一時フォルダーへコピーして**、最小の PATH・クラウド呼び出しなしで
+起動・画面資材・字幕描画（FFmpeg/libass）・動画登録（ffprobe/SQLite）・実行ファイル横の設定・プロジェクト削除を検証します。
+x64 Windows では全テストも実行します。`publish` を付けた場合だけ、`v<version>` タグの GitHub Release を作り、
+各ファイル・`appsettings.json`・`SHA256SUMS.txt` を添付し、ビルド来歴（attestation）を記録します。
+
+```powershell
+gh workflow run release.yml                                   # ビルドと検証だけ（成果物は Actions の Artifacts）
+gh workflow run release.yml -f publish=true                   # Directory.Build.props の VersionPrefix で正式公開
+gh workflow run release.yml -f publish=true -f version_suffix=rc.1 -f prerelease=true
+gh run watch                                                  # 進行状況
+```
+
+同じタグが既にある場合は公開せずに失敗します（先に `VersionPrefix` を上げてください）。
+利用者はダウンロードしたファイルを次で検証できます。
+
+```sh
+sha256sum -c SHA256SUMS.txt --ignore-missing   # macOS: shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+gh attestation verify VideoCreator-<version>-win-x64.exe --repo dahatake/VideoCreator
+```
+
+### 手元で作成する
+
+SDK 10 がある PC で、**作成する OS / CPU と同じマシン**で実行します（同梱する FFmpeg がその CPU 用のため）。
+macOS では PowerShell 7（`brew install powershell`）を使います。
+
+```powershell
+pwsh scripts/get-tools.ps1
+pwsh scripts/publish-single-file.ps1                       # 既定はこのマシンの OS / CPU（win-x64 / win-arm64 / osx-arm64）
+pwsh scripts/publish-single-file.ps1 -NeutralSettings      # 配布用: 同梱設定からエンドポイントを除く
+pwsh scripts/verify-single-file.ps1 -ExePath artifacts/single-file/win-arm64/VideoCreator.App.exe -RequireNeutralSettings
+```
+
+Windows では `pwsh` の代わりに `powershell -ExecutionPolicy Bypass -File` でも実行できます。
+成果物は `artifacts/single-file/<RID>/VideoCreator.App(.exe)` です。
 配布前には [第三者ライセンスの注意事項](THIRD-PARTY-NOTICES.txt)、特に同梱 GPL 版 FFmpeg の
 対応ソース提供義務を確認してください。この発行処理だけで公開配布の法的要件が満たされるわけではありません。
 

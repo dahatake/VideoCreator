@@ -39,6 +39,17 @@ public sealed class FFmpeg
         FfprobePath = Path.Combine(binDir, "ffprobe" + exe);
         FontsDir = fontsDir;
         if (!File.Exists(FfmpegPath)) throw new FileNotFoundException($"ffmpeg not found at {FfmpegPath}. Run scripts/get-tools.ps1.");
+        if (!OperatingSystem.IsWindows()) { EnsureExecutable(FfmpegPath); EnsureExecutable(FfprobePath); }
+    }
+
+    /// <summary>Zip extraction and single-file self-extraction can drop the Unix execute bit of the bundled tools.</summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    static void EnsureExecutable(string path)
+    {
+        if (!File.Exists(path)) return;
+        var mode = File.GetUnixFileMode(path);
+        const UnixFileMode exec = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+        if ((mode & UnixFileMode.UserExecute) == 0) File.SetUnixFileMode(path, mode | exec);
     }
 
     /// <summary>Find tools/ffmpeg and tools/fonts by walking up from a start directory.</summary>

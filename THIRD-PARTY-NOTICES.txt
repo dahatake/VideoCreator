@@ -1,12 +1,17 @@
 VideoCreator single-file distribution
 
-The EXE extracts its dependencies before starting. The extraction directory
+The executable (Windows .exe or macOS binary) extracts its dependencies before starting. The extraction directory
 contains the licenses shipped by .NET, FFmpeg and the font authors.
 VideoCreator's own license is in LICENSE.
 
-FFmpeg: GPL-3.0-or-later (BtbN static GPL build).
+FFmpeg: GPL-3.0-or-later.
   License: tools/ffmpeg/LICENSE.txt
-  Builds and build scripts: https://github.com/BtbN/FFmpeg-Builds
+  Windows: BtbN static GPL build (latest master at build time; the FFmpeg
+    commit is in "ffmpeg -version"). Builds and build scripts:
+    https://github.com/BtbN/FFmpeg-Builds
+  macOS (Apple Silicon): Martin Riedl static build of FFmpeg 9.0.2.
+    Builds and build scripts: https://ffmpeg.martin-riedl.de/
+    Source: https://github.com/FFmpeg/FFmpeg/tree/n9.0.2
   Source: https://ffmpeg.org/
   Redistribution must comply with the GPL, including corresponding-source
   obligations for the exact binary and its dependencies. Bundling a license
@@ -31,7 +36,8 @@ Real-ESRGAN realesr-animevideov3: BSD-3-Clause, Xintao Wang and contributors.
   ONNX export: https://huggingface.co/skillsafe-ai/realesr-animevideov3
 
 Other .NET dependencies and their versions are declared in the project files.
-The publish profile also references the DirectML redistributable already used
-by ONNX Runtime. Its license and notices are under licenses/DirectML-*.
+Windows builds also include the DirectML redistributable used by ONNX Runtime
+(GPU acceleration). Its license and notices are under licenses/DirectML-*.
+macOS builds use the CPU build of ONNX Runtime and do not include DirectML.
 Review all applicable licenses before redistribution. This file is not a
 replacement for those licenses or a public-release compliance certification.

@@ -1,83 +1,108 @@
 <#
 .SYNOPSIS
-  Verifies a published EXE outside the repository without using cloud services.
+  Verifies a published single-file executable outside the repository without using cloud services.
+  Starts it from an empty folder with a minimal PATH, checks the bundled runtime/UI/models/fonts/FFmpeg,
+  the user settings file next to the executable, the API (ffprobe + SQLite) and project deletion.
+  -RequireNeutralSettings fails if the bundled appsettings.json carries ASR/LLM endpoints (release builds).
+  Runs on Windows PowerShell 5.1 and PowerShell 7 (Windows and macOS).
 #>
-param([Parameter(Mandatory = $true)][string]$ExePath)
+param(
+    [Parameter(Mandatory = $true)][string]$ExePath,
+    [switch]$RequireNeutralSettings
+)
 $ErrorActionPreference = 'Stop'
-$exe = (Resolve-Path -LiteralPath $ExePath).Path
+$onMac = (Test-Path variable:IsMacOS) -and $IsMacOS
+$source = (Resolve-Path -LiteralPath $ExePath).Path
+$name = Split-Path $source -Leaf
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('vc-single-file-' + [Guid]::NewGuid().ToString('N'))
 $appDir = Join-Path $temp 'app'
 $cwd = Join-Path $temp 'unrelated'
 New-Item -ItemType Directory -Path $appDir, $cwd | Out-Null
-Copy-Item -LiteralPath $exe -Destination (Join-Path $appDir 'VideoCreator.App.exe')
+$exe = Join-Path $appDir $name
+Copy-Item -LiteralPath $source -Destination $exe
+if ($onMac) {
+    & chmod 755 $exe
+    & codesign --verify --verbose=2 $exe
+    if ($LASTEXITCODE -ne 0) { throw 'The executable is not validly signed (Apple Silicon will refuse it).' }
+}
+# User settings next to the executable must override the bundled ones (endpoint is never contacted).
+$userSettings = Join-Path $appDir 'appsettings.json'
+[IO.File]::WriteAllText($userSettings,
+    '{ "VideoCreator": { "Llm": { "Provider": "azure-openai", "Endpoint": "https://verify.invalid/openai/v1" } } }',
+    [Text.UTF8Encoding]::new($false))
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $listener.Start()
 $port = $listener.LocalEndpoint.Port
 $listener.Stop()
 $base = "http://127.0.0.1:$port"
-$start = [Diagnostics.ProcessStartInfo]::new((Join-Path $appDir 'VideoCreator.App.exe'))
+$start = [Diagnostics.ProcessStartInfo]::new($exe)
 $start.UseShellExecute = $false
 $start.WorkingDirectory = $cwd
 $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
-$start.Arguments = "--VideoCreator:Port=$port --VideoCreator:OpenBrowser=false --VideoCreator:LocalOnly=true --VideoCreator:Asr:Provider=none"
+$start.Arguments = "--VideoCreator:Port=$port --VideoCreator:OpenBrowser=false --VideoCreator:Asr:Provider=none"
 foreach ($key in @($start.EnvironmentVariables.Keys)) {
     if ($key.StartsWith('VideoCreator__', [StringComparison]::OrdinalIgnoreCase)) { $start.EnvironmentVariables.Remove($key) }
 }
 $start.EnvironmentVariables['VideoCreator__DataDir'] = Join-Path $temp 'data'
 $start.EnvironmentVariables['VideoCreator__ProjectsDir'] = Join-Path $temp 'projects'
 $start.EnvironmentVariables['DOTNET_BUNDLE_EXTRACT_BASE_DIR'] = Join-Path $temp 'extracted'
-$start.EnvironmentVariables['PATH'] = "$env:SystemRoot\System32;$env:SystemRoot"
+$start.EnvironmentVariables.Remove('DOTNET_ROOT')
+$start.EnvironmentVariables['PATH'] = if ($onMac) { '/usr/bin:/bin:/usr/sbin:/sbin' } else { "$env:SystemRoot\System32;$env:SystemRoot" }
 $process = $null
 try {
     $process = [Diagnostics.Process]::Start($start)
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
     $ready = $false
-    for ($i = 0; $i -lt 120; $i++) {
-        if ($process.HasExited) { throw "EXE exited ($($process.ExitCode)): $($stdout.Result) $($stderr.Result)" }
-        try {
-            $response = Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 2
-            if ($response.StatusCode -eq 200) { $ready = $true; break }
-        }
-        catch {
-            if ($i -eq 119) { throw }
-            Start-Sleep -Milliseconds 500
-        }
+    for ($i = 0; $i -lt 120 -and -not $ready; $i++) {
+        if ($process.HasExited) { throw "The executable exited ($($process.ExitCode)): $($stdout.Result) $($stderr.Result)" }
+        try { $ready = (Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 }
+        catch { Start-Sleep -Milliseconds 500 }
     }
-    if (-not $ready) { throw 'EXE did not become ready.' }
+    if (-not $ready) { throw 'The executable did not become ready within 60 seconds.' }
     $health = Invoke-RestMethod "$base/api/health"
     if ($health.presets -ne 10 -or $health.missing_filters.Count -ne 0 -or -not $health.faces_model) {
         throw "Bundled dependencies failed health checks: $($health | ConvertTo-Json -Depth 5)"
     }
+    if ($health.transmission.llm_destination -ne 'https://verify.invalid') {
+        throw "appsettings.json next to the executable was not applied: $($health.transmission | ConvertTo-Json -Compress)"
+    }
     $root = (Get-ChildItem (Join-Path $temp 'extracted') -Recurse -Filter 'VideoCreator.App.dll' -File | Select-Object -First 1).DirectoryName
     if (-not $root) { throw 'The bundled application was not extracted.' }
-    foreach ($file in Get-ChildItem (Join-Path $root 'wwwroot') -Recurse -File) {
-        $relative = $file.FullName.Substring((Join-Path $root 'wwwroot').Length).Replace('\', '/')
+    $bundled = Get-Content (Join-Path $root 'appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($RequireNeutralSettings -and ($bundled.VideoCreator.Asr.Endpoint -or $bundled.VideoCreator.Llm.Endpoint)) {
+        throw 'The bundled appsettings.json contains ASR/LLM endpoints; publish with -NeutralSettings.'
+    }
+    $www = Join-Path $root 'wwwroot'
+    foreach ($file in Get-ChildItem $www -Recurse -File) {
+        $relative = $file.FullName.Substring($www.Length).Replace('\', '/')
         $asset = Invoke-WebRequest "$base$relative" -UseBasicParsing
-        if ($asset.StatusCode -ne 200 -or $asset.RawContentLength -ne $file.Length) {
-            throw "Static asset failed: $relative"
+        if ($asset.StatusCode -ne 200 -or $asset.RawContentLength -ne $file.Length) { throw "Static asset failed: $relative" }
+    }
+    if (-not $onMac) {
+        $runtimeModules = @($process.Modules | Where-Object { $_.ModuleName -like '*coreclr*' })
+        if (@($runtimeModules | Where-Object { -not $_.FileName.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
+            throw 'The executable loaded an external .NET runtime.'
         }
     }
-    $runtimeModules = @($process.Modules | Where-Object { $_.ModuleName -like '*coreclr*' })
-    if ($runtimeModules.Count -gt 0 -and @($runtimeModules | Where-Object { -not $_.FileName.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
-        throw 'The EXE loaded an external .NET runtime.'
-    }
-    foreach ($file in 'e_sqlite3.dll', 'onnxruntime.dll', 'DirectML.dll',
-        'tools\models\ultraface.onnx', 'tools\models\realesr-animevideov3.onnx',
-        'tools\fonts\MPLUS1p-ExtraBold.ttf', 'tools\fonts\NotoSansCJKsc-Bold.otf',
-        'tools\fonts\NotoSansCJKkr-Bold.otf', 'tools\models\UltraFace-LICENSE.txt',
-        'tools\models\Real-ESRGAN-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt') {
+    $natives = if ($onMac) { 'libe_sqlite3.dylib', 'libonnxruntime.dylib' } else { 'e_sqlite3.dll', 'onnxruntime.dll', 'DirectML.dll' }
+    $ffmpegFile = 'tools/ffmpeg/bin/ffmpeg' + $(if ($onMac) { '' } else { '.exe' })
+    $ffmpeg = Join-Path $root $ffmpegFile
+    foreach ($file in @($natives) + @($ffmpegFile,
+        'tools/models/ultraface.onnx', 'tools/models/realesr-animevideov3.onnx',
+        'tools/fonts/MPLUS1p-ExtraBold.ttf', 'tools/fonts/NotoSansCJKsc-Bold.otf',
+        'tools/fonts/NotoSansCJKkr-Bold.otf', 'tools/models/UltraFace-LICENSE.txt',
+        'tools/models/Real-ESRGAN-LICENSE.txt', 'tools/ffmpeg/LICENSE.txt', 'THIRD-PARTY-NOTICES.txt')) {
         if (-not (Test-Path -LiteralPath (Join-Path $root $file) -PathType Leaf)) { throw "Missing bundled file: $file" }
     }
     # Render text with the extracted font and libass, then register the output through the real API/ffprobe/SQLite.
-    $srt = Join-Path $cwd 'test.srt'
-    [IO.File]::WriteAllText($srt, "1`r`n00:00:00,000 --> 00:00:11,000`r`nSingle EXE subtitle test`r`n")
-    $fonts = (Join-Path $root 'tools\fonts').Replace('\', '/').Replace(':', '\:')
+    [IO.File]::WriteAllText((Join-Path $cwd 'test.srt'), "1`r`n00:00:00,000 --> 00:00:11,000`r`nSingle file subtitle test`r`n")
+    $fonts = (Join-Path $root 'tools/fonts').Replace('\', '/').Replace(':', '\:')
     $video = Join-Path $cwd 'test.mp4'
     Push-Location $cwd
     try {
-        & (Join-Path $root 'tools\ffmpeg\bin\ffmpeg.exe') -hide_banner -loglevel error -y `
+        & $ffmpeg -hide_banner -loglevel error -y `
             -f lavfi -i 'color=c=blue:s=640x360:r=10:d=11' -f lavfi -i 'sine=frequency=440:duration=11' `
             -vf "subtitles=test.srt:fontsdir='$fonts':force_style='FontName=M PLUS 1p ExtraBold'" `
             -c:v libx264 -preset ultrafast -c:a aac -shortest $video
@@ -86,14 +111,19 @@ try {
     finally { Pop-Location }
     $headers = @{ 'X-VideoCreator' = '1' }
     $project = Invoke-RestMethod "$base/api/projects" -Method Post -Headers $headers -ContentType 'application/json' `
-        -Body '{"name":"Single EXE verification","language":"en-US"}'
+        -Body '{"name":"Single file verification","language":"en-US"}'
     $asset = Invoke-RestMethod "$base/api/projects/$($project.id)/assets" -Method Post -Headers $headers `
         -ContentType 'application/json' -Body (@{ path = $video } | ConvertTo-Json -Compress)
     if (-not $asset.id -or $asset.media.width -ne 640 -or $asset.media.height -ne 360 -or $asset.media.duration -lt 10) {
         throw "Video registration failed: $($asset | ConvertTo-Json -Depth 5)"
     }
-    if (@(Get-ChildItem -LiteralPath $appDir -Force).Count -ne 1) { throw 'Unexpected files next to the EXE.' }
-    Write-Host "PASS: single EXE; isolated startup; bundled runtime, UI, 10 presets, models, fonts; FFmpeg/libass render; API/ffprobe/SQLite."
+    # Deletion goes through the platform Recycle Bin / Trash, not a permanent delete.
+    $deleted = Invoke-RestMethod "$base/api/projects/$($project.id)" -Method Delete -Headers $headers
+    if ($deleted.folder_path -and (Test-Path -LiteralPath $deleted.folder_path)) { throw "The project folder was not removed: $($deleted.folder_path)" }
+    $beside = @(Get-ChildItem -LiteralPath $appDir -Force | Where-Object { $_.Name -ne 'appsettings.json' })
+    if ($beside.Count -ne 1) { throw "Unexpected files next to the executable: $($beside.Name -join ', ')" }
+    Write-Host 'PASS: single file; isolated startup; bundled runtime, UI, 10 presets, models, fonts; user settings beside the executable;'
+    Write-Host '      FFmpeg/libass render; API/ffprobe/SQLite; project deletion to Recycle Bin/Trash.'
     $health | ConvertTo-Json -Depth 5
 }
 finally {
@@ -102,5 +132,5 @@ finally {
         $process.WaitForExit()
         $process.Dispose()
     }
-    Remove-Item -LiteralPath $temp -Recurse -Force
+    Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

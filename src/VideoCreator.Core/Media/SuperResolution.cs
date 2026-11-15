@@ -28,7 +28,7 @@ public sealed class SuperResolution : IDisposable
 
     public SuperResolution(string modelPath, bool gpu = true)
     {
-        if (gpu)
+        if (gpu && OperatingSystem.IsWindows())
         {
             try
             {

@@ -84,9 +84,10 @@ public static class ProjectDeletion
 
     public static void DeletePermanently(string path) => Directory.Delete(path, true);
 
-    /// <summary>Recycle Bin via SHFileOperation with no UI (this runs inside a background web server).</summary>
+    /// <summary>Recycle Bin via SHFileOperation with no UI (this runs inside a background web server); the user's Trash on macOS.</summary>
     public static void SendToRecycleBin(string path)
     {
+        if (OperatingSystem.IsMacOS()) { MoveToMacTrash(path); return; }
         if (!OperatingSystem.IsWindows()) { DeletePermanently(path); return; }
         var op = new SHFILEOPSTRUCT
         {
@@ -100,6 +101,40 @@ public static class ProjectDeletion
 
     const uint FO_DELETE = 3;
     const ushort FOF_SILENT = 0x4, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_NOERRORUI = 0x400;
+
+    /// <summary>NSFileManager trashItemAtURL: the Finder's own "Move to Trash" (any volume, no Finder automation permission).</summary>
+    static void MoveToMacTrash(string path)
+    {
+        NativeLibrary.Load("/System/Library/Frameworks/Foundation.framework/Foundation");
+        var pool = Objc.PoolPush();
+        var utf8 = Marshal.StringToCoTaskMemUTF8(Path.GetFullPath(path));
+        try
+        {
+            var str = Objc.Send(Objc.Class("NSString"), Objc.Sel("stringWithUTF8String:"), utf8);
+            var url = Objc.Send(Objc.Class("NSURL"), Objc.Sel("fileURLWithPath:"), str);
+            var manager = Objc.Send(Objc.Class("NSFileManager"), Objc.Sel("defaultManager"));
+            if (!Objc.SendTrash(manager, Objc.Sel("trashItemAtURL:resultingItemURL:error:"), url, 0, out var error))
+            {
+                var description = error == 0 ? "" : Marshal.PtrToStringUTF8(Objc.Send(Objc.Send(error, Objc.Sel("localizedDescription")), Objc.Sel("UTF8String")));
+                throw new FolderInUseException($"ゴミ箱への移動に失敗しました（{description}）");
+            }
+        }
+        finally { Marshal.FreeCoTaskMem(utf8); Objc.PoolPop(pool); }
+    }
+
+    static class Objc
+    {
+        const string Lib = "/usr/lib/libobjc.A.dylib";
+        [DllImport(Lib, EntryPoint = "objc_autoreleasePoolPush")] public static extern nint PoolPush();
+        [DllImport(Lib, EntryPoint = "objc_autoreleasePoolPop")] public static extern void PoolPop(nint pool);
+        [DllImport(Lib, EntryPoint = "objc_getClass")] public static extern nint Class(string name);
+        [DllImport(Lib, EntryPoint = "sel_registerName")] public static extern nint Sel(string name);
+        [DllImport(Lib, EntryPoint = "objc_msgSend")] public static extern nint Send(nint receiver, nint selector);
+        [DllImport(Lib, EntryPoint = "objc_msgSend")] public static extern nint Send(nint receiver, nint selector, nint arg);
+        [DllImport(Lib, EntryPoint = "objc_msgSend")]
+        [return: MarshalAs(UnmanagedType.I1)]
+        public static extern bool SendTrash(nint receiver, nint selector, nint url, nint resultingUrl, out nint error);
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct SHFILEOPSTRUCT

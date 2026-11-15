@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Configuration.Json;
 using VideoCreator.App;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -7,6 +8,20 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     // Published content (including a self-extracted bundle) must not depend on the caller's working directory.
     ContentRootPath = Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot")) ? AppContext.BaseDirectory : null,
 });
+// A single-file build runs from its extraction folder, so the user's own settings live next to the executable:
+// they override the bundled appsettings.json, and environment variables / command-line arguments still override them.
+var userSettings = Path.GetDirectoryName(Environment.ProcessPath) is { } exeDir
+    && Path.GetFullPath(builder.Environment.ContentRootPath).TrimEnd(Path.DirectorySeparatorChar) == Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
+    && !string.Equals(Path.GetFullPath(exeDir).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)
+    ? Path.Combine(exeDir, "appsettings.json") : null;
+if (userSettings != null)
+{
+    var sources = builder.Configuration.Sources;
+    var after = sources.Select((s, i) => s is JsonConfigurationSource ? i + 1 : 0).DefaultIfEmpty(0).Max();
+    var json = new JsonConfigurationSource { Path = userSettings, Optional = true, ReloadOnChange = false };
+    json.ResolveFileProvider();
+    sources.Insert(after, json);
+}
 var options = builder.Configuration.GetSection(AppOptions.Section).Get<AppOptions>() ?? new AppOptions();
 builder.Services.AddSingleton(options);
 
@@ -83,7 +98,9 @@ app.Lifetime.ApplicationStarted.Register(() =>
 {
     var url = $"http://127.0.0.1:{options.Port}/";
     app.Logger.LogInformation("VideoCreator {Version} is running at {Url}", AppVersion.InformationalVersion, url);
-    if (options.OpenBrowser && OperatingSystem.IsWindows())
+    if (userSettings != null)
+        app.Logger.LogInformation("User settings file: {Path} ({State})", userSettings, File.Exists(userSettings) ? "loaded" : "not found; using bundled defaults");
+    if (options.OpenBrowser && (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()))
     {
         try
         {

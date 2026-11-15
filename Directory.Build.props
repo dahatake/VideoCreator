@@ -2,4 +2,9 @@
   <PropertyGroup>
     <VersionPrefix>1.0.0</VersionPrefix>
   </PropertyGroup>
+  <PropertyGroup>
+    <!-- Windows builds (win-* RIDs, or no RID on a Windows host) use WinForms and DirectML; others (osx-arm64) use portable APIs. -->
+    <VideoCreatorWindows Condition="'$(VideoCreatorWindows)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier.StartsWith('win-'))</VideoCreatorWindows>
+    <VideoCreatorWindows Condition="'$(VideoCreatorWindows)' == ''">$([MSBuild]::IsOSPlatform('Windows'))</VideoCreatorWindows>
+  </PropertyGroup>
 </Project>

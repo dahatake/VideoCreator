@@ -1001,14 +1001,14 @@ public static class Api
             if (r == null) return Error(404, "E-NOT-FOUND", "書き出しがありません");
             if (Stale(rt, r)) return StaleError();
             if (!File.Exists(r.Path)) return Error(404, "E-NOT-FOUND", "動画ファイルが見つかりません。表示された保存先を確認してください");
-            if (!OperatingSystem.IsWindows()) return Error(501, "E-PLATFORM", "フォルダーを開く操作は Windows のみ対応しています。保存先パスをコピーしてください");
+            if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) return Error(501, "E-PLATFORM", "フォルダーを開く操作は Windows と macOS のみ対応しています。保存先パスをコピーしてください");
             try
             {
-                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe")
-                {
-                    Arguments = $"/select,\"{Path.GetFullPath(r.Path)}\"",
-                    UseShellExecute = true,
-                });
+                // macOS: Finder reveals and selects the file (argv only, no shell).
+                var start = OperatingSystem.IsWindows()
+                    ? new System.Diagnostics.ProcessStartInfo("explorer.exe") { Arguments = $"/select,\"{Path.GetFullPath(r.Path)}\"", UseShellExecute = true }
+                    : new System.Diagnostics.ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-R", Path.GetFullPath(r.Path) }, UseShellExecute = false };
+                using var process = System.Diagnostics.Process.Start(start);
             }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
             {
