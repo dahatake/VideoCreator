@@ -30,6 +30,12 @@ public static class TelopLayout
             double height = fit * 1.5 + 2 * outline + 12;
             double top = band?.Top ?? (t.Type == TelopType.Sfx ? AssWriter.SfxY - height / 2 : AssWriter.HeadlineMarginV);
             var original = new Rect(AssWriter.MarginL, top, w - p.Telop.Caption.MarginR, band?.Bottom ?? top + height);
+            if (t.Type == TelopType.Caption && p.Telop.Caption.AvoidFaces && plan.TelopFaces != null)
+            {
+                result[t.Id] = CaptionSlot(plan, p, t, original, fit);
+                if (result[t.Id].Positioned && result[t.Id].Bounds is { } moved) occupied.Add((t, moved));
+                continue;
+            }
             if (t.Type == TelopType.Caption || plan.TelopFaces == null)
             {
                 result[t.Id] = new(original, fit, false);
@@ -63,6 +69,26 @@ public static class TelopLayout
             if (bounds != null) occupied.Add((t, bounds));
         }
         return result;
+    }
+
+    /// <summary>
+    /// A caption stays on its band unless a face (or an inset) is there over its span; then it moves to the nearest free height inside the
+    /// safe zone, else (when allowed) anywhere on the canvas. Unknown faces or no free height keep the band (QA S-05 reports an overlap).
+    /// </summary>
+    static Placement CaptionSlot(EditPlan plan, Preset p, Telop t, Rect band, int fit)
+    {
+        var faces = Obstacles(plan, t, out bool known);
+        if (!known || !faces.Any(f => f.Intersects(band))) return new(band, fit, false);
+        int w = plan.Canvas.Width, h = plan.Canvas.Height;
+        double height = band.Bottom - band.Top;
+        Rect? Search(double min, double max) => new[] { Math.Clamp(band.Top, min, Math.Max(min, max)), min, max }
+            .Concat(faces.SelectMany(b => new[] { b.Bottom + 8, b.Top - height - 8 }))
+            .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - band.Top))
+            .Select(y => new Rect(band.Left, y, band.Right, y + height))
+            .FirstOrDefault(r => faces.All(o => !r.Intersects(o)));
+        var slot = Search(Qa.QaEngine.SafeZone.Top, h - Qa.QaEngine.SafeZone.Bottom - height)
+                   ?? (p.Telop.Caption.AllowOutsideSafe ? Search(24, h - 24 - height) : null);
+        return slot == null ? new(band, fit, false) : new(slot, fit, true);
     }
 
     public static List<Rect> Obstacles(EditPlan plan, Telop telop, out bool known)
@@ -104,7 +130,9 @@ public static class TelopLayout
                     }
                 }
                 // Protect the entire inset, including faces between samples and the surrounding ring.
-                if (c.Pip is { } pip) result.Add(new(pip.X - FacePadding, pip.Y - FacePadding, pip.X + pip.D + 2 * pip.Border + FacePadding, pip.Y + pip.D + 2 * pip.Border + FacePadding));
+                if (c.Pip is { } pip) result.Add(new(pip.X - FacePadding, pip.Y - FacePadding,
+                    pip.X + (pip.Shape == "rectangle" ? pip.Width : pip.D + 2 * pip.Border) + FacePadding,
+                    pip.Y + (pip.Shape == "rectangle" ? pip.Height : pip.D + 2 * pip.Border) + FacePadding));
             }
             off += c.Length;
         }
@@ -122,6 +150,12 @@ public static class TelopLayout
             x -= FaceTrack.XAt(r.Track!, time); y -= r.TrackY is { Count: > 0 } ty ? FaceTrack.XAt(ty, time) : r.CropY;
             sx = w / r.CropW; sy = (r.Mode == "screen" ? r.BoxH : h) / r.CropH;
             dx = 0; dy = r.Mode == "screen" ? r.BoxY : 0;
+        }
+        else if (r.Mode == "blur_bg" && r.FgScale is > 0 and < 0.999)
+        {
+            sx = sy = ((int)(w * r.FgScale) & ~1) / (double)media.Width;
+            dx = (w - media.Width * sx) / 2;
+            dy = Math.Max(0, r.FgOffsetY);
         }
         else
         {

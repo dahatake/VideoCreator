@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace VideoCreator.Models;
 
 // ---- Project / assets (PRD §9.2) ----
@@ -31,6 +33,8 @@ public sealed record ProjectGenerationSettings
     public string PresetId { get; init; } = "P4";
     public string Scope { get; init; } = "balanced";
     public string Bgm { get; init; } = "auto";
+    /// <summary>Whether this project also chooses from the app-wide BGM (BgmTrack.Source "shared"). Missing in older projects = use them.</summary>
+    public bool UseSharedBgm { get; init; } = true;
     public bool Sfx { get; init; } = true;
     public bool Tsukkomi { get; init; }
     public string TsukkomiStyle { get; init; } = "auto";
@@ -96,11 +100,73 @@ public sealed record SourceAsset
     /// <summary>Median disagreement of the measurement windows with the fit (ms) and how many windows agreed.</summary>
     public double? SyncResidualMs { get; init; }
     public string? SyncWindows { get; init; }
+    /// <summary>
+    /// Measured delay over master time for a recording whose delay is not a straight line (a meeting recording's network audio: the jitter buffer
+    /// shifts it by tenths of a second). Non-empty only for <see cref="SyncMethod"/> "audio-map"; it then replaces SyncOffset/SyncDriftPpm.
+    /// </summary>
+    public List<SyncAnchor> SyncMap { get; init; } = [];
+    /// <summary>User-approved screen intervals in this asset's own time. Empty means no scene is eligible for background-first PiP.</summary>
+    public List<Interval> PipScenes { get; init; } = [];
+    /// <summary>Where the shared content sits inside the selected scenes (meeting chrome, black bars and participant tiles excluded). Null = whole frame.</summary>
+    public PixelRect? PipContent { get; init; }
+    /// <summary>Screen assets: the slides shown in the recording, supplied by the user (optional).</summary>
+    public SlideDeck? Deck { get; init; }
+    /// <summary>Where the recording shows a slide of <see cref="Deck"/> (this asset's own time); empty without a deck.</summary>
+    public List<SlideSpan> SlideSpans { get; init; } = [];
     public List<string> Warnings { get; init; } = [];
 
     /// <summary>This asset's own time for master time <paramref name="masterT"/> (identity for the master itself).</summary>
-    public double CameraTime(double masterT, string masterId) => Id == masterId ? masterT : masterT + SyncOffset + SyncDriftPpm * 1e-6 * masterT;
+    public double CameraTime(double masterT, string masterId) => Id == masterId ? masterT : masterT + (SyncMap.Count > 0 ? MapDelay(masterT) : SyncOffset + SyncDriftPpm * 1e-6 * masterT);
+
+    /// <summary>Master times inside (<paramref name="t0"/>, <paramref name="t1"/>) where the mapped delay jumps by more than <paramref name="minJump"/>: a constant-offset piece must not span them.</summary>
+    public IEnumerable<double> SyncJumps(double t0, double t1, double minJump = 1 / 30.0)
+    {
+        for (int i = 1; i < SyncMap.Count; i++)
+        {
+            double m = (SyncMap[i - 1].T + SyncMap[i].T) / 2;
+            if (m > t0 && m < t1 && Math.Abs(SyncMap[i].D - SyncMap[i - 1].D) > minJump) yield return m;
+        }
+    }
+
+    double MapDelay(double t)
+    {
+        if (t <= SyncMap[0].T) return SyncMap[0].D;
+        if (t >= SyncMap[^1].T) return SyncMap[^1].D;
+        int lo = 0, hi = SyncMap.Count - 1;
+        while (hi - lo > 1) { int m = (lo + hi) / 2; if (SyncMap[m].T <= t) lo = m; else hi = m; }
+        var (a, b) = (SyncMap[lo], SyncMap[hi]);
+        // a delay jump is a step at the midpoint between anchors; a slow change is interpolated
+        if (Math.Abs(b.D - a.D) > 1 / 30.0) return t < (a.T + b.T) / 2 ? a.D : b.D;
+        return a.D + (b.D - a.D) * (t - a.T) / (b.T - a.T);
+    }
 }
+
+/// <summary>At master time <see cref="T"/> the other recording is <see cref="D"/> seconds later (cameraTime = T + D).</summary>
+public sealed record SyncAnchor(double T, double D);
+
+/// <summary>A rectangle in source pixels (display orientation).</summary>
+public sealed record PixelRect(int X, int Y, int W, int H);
+
+/// <summary>One page of a slide deck rendered at full resolution (1-based slide number). <see cref="Step"/> &gt; 0: the page after click build
+/// Step-1 of its animations (1 = before the first click); 0 = the page without click builds.</summary>
+public sealed record SlideImage(int Number, string Path, int Width, int Height, int Step = 0);
+
+/// <summary>
+/// The original slides shown in a screen recording (a PowerPoint file rendered to images, or images exported from it). Where the recording
+/// shows one of these slides, the PiP shows the sharp image instead of the compressed video frame.
+/// </summary>
+public sealed record SlideDeck
+{
+    public required string Path { get; init; }
+    public required string Sha256 { get; init; }
+    /// <summary>powerpoint (rendered here from .pptx) | libreoffice (rendered here without PowerPoint) | images (a .zip of exported pages).</summary>
+    public required string Source { get; init; }
+    public List<SlideImage> Slides { get; init; } = [];
+}
+
+/// <summary>The recording shows slide <see cref="Number"/> (build <see cref="Step"/>, see <see cref="SlideImage.Step"/>) from <see cref="T0"/> to
+/// <see cref="T1"/> (the screen asset's own time); <see cref="Score"/> = image correlation.</summary>
+public sealed record SlideSpan(double T0, double T1, int Number, double Score, int Step = 0);
 
 public sealed record BgmTrack
 {
@@ -109,7 +175,8 @@ public sealed record BgmTrack
     public required string Path { get; init; }
     public double Bpm { get; init; }
     public double Phase { get; init; }
-    public string Source { get; init; } = "library";   // library | user
+    /// <summary>library (synthesised) | user (one project's, ProjectId set) | shared (registered for the whole app, store parent PipelineRunner.SharedBgmParent).</summary>
+    public string Source { get; init; } = "library";
     public string? ProjectId { get; init; }
     public bool RightsConfirmed { get; init; }
     /// <summary>Measured at registration (Audio.BgmAnalyzer); null for tracks registered before the analysis existed (made on first use).</summary>
@@ -282,18 +349,44 @@ public sealed record ReframeSpec
     /// <summary>screen mode: the band of the canvas (full-size pixels) the screen is shown in; the rest is its blurred, dimmed copy.</summary>
     public int BoxY { get; init; }
     public int BoxH { get; init; }
+    /// <summary>screen mode: a still slide image shown in the box instead of the recording.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string? Image { get; init; }
+    /// <summary>screen mode, final render only (never stored): the clip already cropped and super-resolved to the box size, starting at the clip's SrcIn.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string? Video { get; init; }
+    /// <summary>blur_bg mode: the sharp picture's width as a share of the canvas (0 or 1 = full width); below 1 it is centred horizontally with its top at FgOffsetY (canvas pixels).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public double FgScale { get; init; }
 }
 
-/// <summary>Picture-in-picture: a circular inset of another (synchronised) asset, e.g. the presenter's camera over a screen recording.</summary>
+/// <summary>A synchronised inset. Existing plans default to a circular presenter; rectangular insets show the whole screen.</summary>
 public sealed record PipSpec
 {
     public required string AssetId { get; init; }
     /// <summary>Start in the PiP asset's own time; it runs as long as the clip, at the clip's speed.</summary>
     public double SrcIn { get; init; }
+    /// <summary>Null (legacy) = circle; rectangle = whole-screen inset.</summary>
+    public string? Shape { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int Width { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int Height { get; init; }
     /// <summary>Square crop in the PiP asset (source pixels), usually around the face.</summary>
     public int CropX { get; init; }
     public int CropY { get; init; }
     public int CropS { get; init; }
+    /// <summary>Rectangle insets: the shared-content box in the source (source pixels, with <see cref="CropX"/>/<see cref="CropY"/>); 0 = the whole frame.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int CropW { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int CropH { get; init; }
+    /// <summary>Rectangle insets: a still slide image shown instead of the recording (the original of what the recording shows at this time).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string? Image { get; init; }
+    /// <summary>Final render only (never stored): this piece already cropped and super-resolved to the box size, starting at <see cref="SrcIn"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string? Video { get; init; }
     /// <summary>Position (top-left of the ring) and inner diameter on the full-size canvas; <see cref="Border"/> = white ring width.</summary>
     public int X { get; init; }
     public int Y { get; init; }
@@ -646,6 +739,8 @@ public sealed record Render
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public List<QaResult> Qa { get; init; } = [];
     public Dictionary<string, string> Outputs { get; init; } = [];
+    /// <summary>Render-time decisions worth telling the user (e.g. whether small screen content was super-resolved).</summary>
+    public List<string> Notes { get; init; } = [];
 }
 
 public static class RenderValidity

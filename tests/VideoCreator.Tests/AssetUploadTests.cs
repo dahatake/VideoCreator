@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using VideoCreator.App;
 using VideoCreator.Media;
+using VideoCreator.Models;
+using VideoCreator.Storage;
 
 namespace VideoCreator.Tests;
 
@@ -90,5 +92,48 @@ public sealed class AssetUploadTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
         Assert.Equal("E-VALIDATION", body.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Pip_scenes_can_be_reviewed_saved_and_reject_invalid_ranges_and_main_changes_reset_alignment()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var rt = _app.Services.GetRequiredService<Runtime>();
+        var file = Path.Combine(_root, "scenes.mp4");
+        await rt.Ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=12",
+            "-vf", "drawbox=x=0:y=0:w=iw:h=ih:c=blue:t=fill:enable='gte(t,6)'", "-c:v", "libx264", "-preset", "ultrafast", file], ct);
+        SourceAsset Asset(string id, AssetRole role) => new()
+        {
+            Id = id, ProjectId = _id, Path = file, Sha256 = id, Role = role, Media = Fixtures.Landscape(12),
+            SyncOffset = 5, SyncMethod = "manual", SyncConfidence = 9999,
+        };
+        rt.Store.Put(Kinds.Asset, "main", _id, Asset("main", AssetRole.Main));
+        rt.Store.Put(Kinds.Asset, "screen", _id, Asset("screen", AssetRole.Screen));
+        using var scan = await _http.PostAsync("/api/assets/screen/pip-scenes", null, ct);
+        Assert.Equal(HttpStatusCode.OK, scan.StatusCode);
+        var scenes = (await scan.Content.ReadFromJsonAsync<List<Interval>>(VideoCreator.Json.Options, ct))!;
+        Assert.Equal(2, scenes.Count);
+        Assert.InRange(scenes[0].T1, 5.5, 6.5);
+        using var frame = await _http.GetAsync("/api/assets/screen/frame?t=8", ct);
+        Assert.Equal("image/jpeg", frame.Content.Headers.ContentType!.MediaType);
+        Assert.True((await frame.Content.ReadAsByteArrayAsync(ct)).Length > 100);
+        foreach (var ranges in new object[] { new[] { new { t0 = 5, t1 = 13 } }, new[] { new { t0 = 5, t1 = 9 }, new { t0 = 8, t1 = 10 } }, new object?[] { null } })
+        {
+            using var invalid = await _http.PatchAsJsonAsync("/api/assets/screen", new { pip_scenes = ranges }, ct);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        }
+        using var save = await _http.PatchAsJsonAsync("/api/assets/screen", new { pip_scenes = new[] { new { t0 = 6.5, t1 = 11 } } }, ct);
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        Assert.Equal(new Interval(6.5, 11), Assert.Single(rt.Store.Get<SourceAsset>(Kinds.Asset, "screen")!.PipScenes));
+        using var change = await _http.PatchAsJsonAsync("/api/assets/screen", new { role = "main" }, ct);
+        Assert.Equal(HttpStatusCode.OK, change.StatusCode);
+        var oldMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!;
+        var newMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "screen")!;
+        Assert.Equal(AssetRole.CamB, oldMain.Role);
+        Assert.Equal(AssetRole.Main, newMain.Role);
+        Assert.Null(oldMain.SyncMethod);
+        Assert.Null(newMain.SyncConfidence);
+        Assert.Equal(0, oldMain.SyncOffset);
+        Assert.Single(newMain.PipScenes);
     }
 }

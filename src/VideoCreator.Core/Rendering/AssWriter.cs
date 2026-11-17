@@ -166,7 +166,7 @@ public static class AssWriter
             var (size, outline, scaleX) = Metrics(style, p);
             var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, scaleX, plan.Language));
-            if (placement.Positioned) fit = placement.FontSize;
+            if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
             var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
@@ -264,7 +264,7 @@ public static class AssWriter
             var (size, outline, _) = Metrics(style, p);
             var lines = t.Type == TelopType.Caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, language: plan.Language));
-            if (placement.Positioned) fit = placement.FontSize;
+            if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
             var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
             // body time → file time; a telop running across a card or bumper is split around it
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))

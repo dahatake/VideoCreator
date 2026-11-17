@@ -214,6 +214,12 @@ public static class PlanBuilder
 
     static List<Clip> Screen(List<Clip> clips, PlanRequest r, List<string> notes)
     {
+        if (r.Preset.Planner == "pip")
+        {
+            var screens = r.Assets.Where(a => a.Id != r.Master.Id && a.Role == AssetRole.Screen).ToList();
+            if (screens.Count != 1) throw new PlanException("E-PIP-ASSETS", "主映像と、役割を「画面」にした副映像を 1 本ずつ指定してください");
+            return PipPlanner.Plan(clips, r.Transcript, r.Master, screens[0], r.Preset, new Canvas(), notes, r.Faces.GetValueOrDefault(r.Master.Id));
+        }
         if (r.Preset.Planner != "screen") return clips;
         if (r.Screen == null) { notes.Add("画面収録の解析結果がないため、基準映像だけで編集しました"); return clips; }
         return ScreenPlanner.Plan(clips, r.Transcript, r.Assets, r.Master, r.Screen, r.Faces, r.Preset, new Canvas(), notes);

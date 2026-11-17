@@ -11,6 +11,10 @@ public sealed record CaptionStyle
     public double MaxCps { get; init; } = 6;
     public int MarginV { get; init; } = 620;
     public int MarginR { get; init; } = 160;
+    /// <summary>Move a caption off the band when a face (or a PiP inset) is there: to the nearest free height inside the safe zone.</summary>
+    public bool AvoidFaces { get; init; }
+    /// <summary>With <see cref="AvoidFaces"/>: when the safe zone has no free height, a caption may sit outside it (an SNS app's UI may cover it there).</summary>
+    public bool AllowOutsideSafe { get; init; }
 }
 
 public sealed record PresetTarget
@@ -54,8 +58,9 @@ public sealed record PresetSwitching(double MinHoldSec = 2.0, double ReactionSec
 /// <param name="TailSec">Stay on the screen this long after a change ends (time to read the result).</param>
 /// <param name="HookPresenterSec">The first seconds show the presenter's face (a face holds attention), unless the screen is changing.</param>
 /// <param name="MaxZoom">Largest magnification of screen pixels onto the canvas (beyond it text gets soft).</param>
+/// <param name="MainMinScale">P11: the main picture may shrink to this share of the canvas width (top-anchored over its blurred copy) so the face clears the captions and the inset gets room; 1 = never.</param>
 public sealed record PresetScreen(double MinHoldSec = 2.0, double PresenterAfterStaticSec = 4.0, double LeadSec = 0.6, double TailSec = 1.0,
-    double HookPresenterSec = 2.0, double MaxZoom = 1.5, int PipDiameter = 360);
+    double HookPresenterSec = 2.0, double MaxZoom = 1.5, int PipDiameter = 360, double MainMinScale = 1.0);
 
 public sealed record PresetTelop
 {
@@ -110,7 +115,7 @@ public sealed record Preset
     public List<PresetExample> Examples { get; init; } = [];
     public List<string> IncompatibleWith { get; init; } = [];
     public string SelectionRules { get; init; } = "";
-    /// <summary>speech | switch | speed | beat | screen — which planner turns a candidate into an EditPlan.</summary>
+    /// <summary>speech | switch | speed | beat | screen | pip — which planner turns a candidate into an EditPlan.</summary>
     public string Planner { get; init; } = "speech";
     /// <summary>auto: follow a single face when there is one (else blurred background); blur: always blurred background.</summary>
     public string Reframe { get; init; } = "auto";
@@ -157,7 +162,9 @@ public static class PresetStore
         Req(c.MaxCps is >= 3 and <= 10, "caption.max_cps 3..10");
         Req(c.MarginV >= 580, "caption.margin_v >= 580 (C-4 safe zone)");
         Req(c.MarginR >= 160, "caption.margin_r >= 160 (C-4 safe zone)");
-        Req(p.Planner is "speech" or "switch" or "speed" or "beat" or "screen", "planner must be speech|switch|speed|beat|screen");
+        Req(!c.AllowOutsideSafe || c.AvoidFaces, "caption.allow_outside_safe needs caption.avoid_faces");
+        Req(p.Screen is null || p.Screen.MainMinScale is >= 0.5 and <= 1, "screen.main_min_scale 0.5..1");
+        Req(p.Planner is "speech" or "switch" or "speed" or "beat" or "screen" or "pip", "planner must be speech|switch|speed|beat|screen|pip");
         Req(p.Reframe is "auto" or "blur", "reframe must be auto|blur");
         Req(p.Audio.Sfx is "none" or "light" or "heavy", "audio.sfx must be none|light|heavy");
         Req(p.Audio.BgmDb is >= -40 and <= -6, "audio.bgm_db -40..-6");

@@ -17,7 +17,7 @@ public static class Api
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
     public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null, string? DerivedFromJobId = null);
-    public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker);
+    public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker, List<Interval>? PipScenes = null);
     public sealed record Regenerate(string? Instruction, List<string>? ExcludeCandidateIds);
     public sealed record PatchPlan(List<PlanOp> Ops);
     /// <summary>A BGM file that could not be added (the others in the same upload still are).</summary>
@@ -418,16 +418,114 @@ public static class Api
             return Results.Json(new { cost = runner.EstimateCost(main), scopes = runner.EstimateScopes(main), duration = main.Media.Duration, series, analysis }, Json.Options);
         });
 
-        api.MapPatch("/assets/{id}", (Runtime rt, string id, PatchAsset req) =>
+        // where each video goes per preset, for the current roles (the UI animates it); faces come from an earlier analysis when there is one
+        api.MapGet("/projects/{id}/layouts", (Runtime rt, string id) =>
+        {
+            if (rt.Store.Get<Project>(Kinds.Project, id) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
+            var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
+            var faces = main == null ? [] : rt.CreateRunner().CachedFaces(main);
+            var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])).Select(p => Planning.LayoutPreview.For(p, assets, faces)).ToList();
+            return Results.Json(layouts, Json.Options);
+        });
+
+        api.MapPost("/assets/{id}/pip-scenes", async (Runtime rt, string id, CancellationToken ct) =>
         {
             var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
             if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            var cacheDir = Path.Combine(rt.Options.ResolvedDataDir, "cache", a.Sha256);
+            var analysis = await ScreenActivity.AnalyzeAsync(rt.Ff, a.Path, Path.Combine(cacheDir, "pip-scenes.v1.json"), ct);
+            // suggestions: the scenes that show the deck's slides (or, without a deck, a full-screen app such as a slideshow); the editor confirms
+            var slides = await SlideDecks.AnalyzeAsync(rt.Ff, a, cacheDir, ct);
+            return Results.Json(SlideDecks.Suggest(ScreenScenes.Detect(analysis, a.Media.Duration), slides, a.Deck != null), Json.Options);
+        });
+        // the presentation shown in a screen recording: rendered to sharp images that replace the recorded slide in the PiP
+        api.MapPost("/assets/{id}/deck", async (Runtime rt, string id, HttpRequest request, CancellationToken ct) =>
+        {
+            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+            if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            var p = rt.Store.Get<Project>(Kinds.Project, a.ProjectId);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (!request.HasFormContentType) return Error(422, "E-VALIDATION", "multipart/form-data で送信してください");
+            var form = await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = 1L << 30 }, ct);
+            var file = form.Files.FirstOrDefault();
+            if (file == null) return Error(422, "E-VALIDATION", "ファイルがありません");
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (!SlideDecks.DeckExtensions.Contains(ext)) return Error(422, "E-VALIDATION", "スライドは PowerPoint ファイル（.pptx）か、スライドを書き出した画像の zip を指定してください");
+            var dir = Path.Combine(p.Directory, "assets"); Directory.CreateDirectory(dir);
+            var stem = SafeName(Path.GetFileNameWithoutExtension(a.Path)) + ".deck";
+            var dest = Path.Combine(dir, stem + ext);
+            var slidesDir = Path.Combine(dir, stem + "-slides");
+            PipelineRunner.EnsureInside(p.Directory, dest);   // NFR-SEC-05
+            PipelineRunner.EnsureInside(p.Directory, slidesDir);
+            await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
+            SlideDeck deck;
+            try { deck = await SlideDecks.RenderAsync(rt.Ff, dest, slidesDir, ct); }
+            catch (SlideDeckException ex) { File.Delete(dest); return Error(422, "E-DECK", ex.Message); }
+            var withDeck = a with { Deck = deck };
+            var slides = await SlideDecks.AnalyzeAsync(rt.Ff, withDeck, Path.Combine(rt.Options.ResolvedDataDir, "cache", a.Sha256), ct);
+            return rt.Store.Atomic<IResult>(() =>
+            {
+                var cur = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+                if (cur == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+                var u = cur with { Deck = deck, SlideSpans = slides.Spans };
+                rt.Store.Put(Kinds.Asset, id, cur.ProjectId, u);
+                return Results.Json(u, Json.Options);
+            });
+        }).DisableAntiforgery();
+        api.MapDelete("/assets/{id}/deck", (Runtime rt, string id) => rt.Store.Atomic<IResult>(() =>
+        {
+            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+            if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            var u = a with { Deck = null, SlideSpans = [] };
+            rt.Store.Put(Kinds.Asset, id, a.ProjectId, u);
+            return Results.Json(u, Json.Options);
+        }));
+        api.MapGet("/assets/{id}/slides/{n:int}", async (Runtime rt, string id, int n, CancellationToken ct) =>
+        {
+            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+            var slide = a?.Deck?.Slides.Where(s => s.Number == n).MaxBy(s => s.Step);   // a slide with click builds: its final state
+            if (slide == null || !File.Exists(slide.Path)) return Error(404, "E-NOT-FOUND", "スライドがありません");
+            using var image = new MemoryStream();
+            var result = await rt.Ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-i", slide.Path, "-frames:v", "1", "-vf", "scale=480:-2", "-f", "image2pipe", "-c:v", "mjpeg", "-"], ct, stdout: image);
+            if (result.ExitCode != 0 || image.Length == 0) return Error(422, "E-RND-FFMPEG", "スライドを読み込めませんでした");
+            return Results.File(image.ToArray(), "image/jpeg");
+        });
+        api.MapGet("/assets/{id}/frame", async (Runtime rt, string id, double t, CancellationToken ct) =>
+        {
+            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+            if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            if (!double.IsFinite(t) || t < 0 || t >= a.Media.Duration) return Error(422, "E-VALIDATION", "フレーム時刻が不正です");
+            using var image = new MemoryStream();
+            var result = await rt.Ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-ss", t.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture),
+                "-i", a.Path, "-map", "0:v:0", "-an", "-frames:v", "1", "-vf", "scale=480:-2", "-f", "image2pipe", "-c:v", "mjpeg", "-"], ct, stdout: image);
+            if (result.ExitCode != 0 || image.Length == 0) return Error(422, "E-RND-FFMPEG", "候補フレームを読み込めませんでした: " + FFmpeg.Tail(result.StdErr));
+            return Results.File(image.ToArray(), "image/jpeg");
+        });
+        api.MapPatch("/assets/{id}", (Runtime rt, string id, PatchAsset req) => rt.Store.Atomic<IResult>(() =>
+        {
+            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+            if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            if (req.PipScenes != null && !ScreenScenes.Valid(req.PipScenes, a.Media.Duration))
+                return Error(422, "E-VALIDATION", "シーンの開始・終了は素材内の重ならない区間にしてください");
             var siblings = rt.Store.List<SourceAsset>(Kinds.Asset, a.ProjectId);
-            if (req.Role is AssetRole.Main && a.Role != AssetRole.Main)
-                foreach (var o in siblings.Where(o => o.Role == AssetRole.Main && o.Id != id)) rt.Store.Put(Kinds.Asset, o.Id, o.ProjectId, o with { Role = AssetRole.CamB });
+            bool newMain = req.Role is AssetRole.Main && a.Role != AssetRole.Main;
+            if (newMain)
+            {
+                // Every stored offset is relative to the old master, including manual offsets. Never reuse it against a different master.
+                foreach (var o in siblings.Where(o => o.Id != id))
+                    rt.Store.Put(Kinds.Asset, o.Id, o.ProjectId, o with
+                    {
+                        Role = o.Role == AssetRole.Main ? AssetRole.CamB : o.Role,
+                        SyncOffset = 0, SyncConfidence = null, SyncDriftPpm = 0, SyncMethod = null, SyncResidualMs = null, SyncWindows = null, SyncMap = [],
+                    });
+                a = a with { SyncOffset = 0, SyncConfidence = null, SyncDriftPpm = 0, SyncMethod = null, SyncResidualMs = null, SyncWindows = null, SyncMap = [] };
+            }
             var u = a with
             {
                 Role = req.Role ?? a.Role,
+                PipScenes = req.PipScenes?.OrderBy(s => s.T0).ToList() ?? a.PipScenes,
+                PipContent = req.PipScenes != null ? null : a.PipContent,
                 Speaker = req.ClearSpeaker == true ? null : req.Speaker is int sp ? Math.Clamp(sp, 1, 8) : a.Speaker,
                 SyncOffset = req.SyncOffset is double so ? Math.Round(Math.Clamp(so, -600, 600), 3) : a.SyncOffset,
                 SyncConfidence = req.SyncOffset != null ? Audio.SyncResult.Manual : a.SyncConfidence,   // a manual offset is trusted
@@ -435,10 +533,11 @@ public static class Api
                 SyncMethod = req.SyncOffset != null ? "manual" : a.SyncMethod,
                 SyncResidualMs = req.SyncOffset != null ? null : a.SyncResidualMs,
                 SyncWindows = req.SyncOffset != null ? null : a.SyncWindows,
+                SyncMap = req.SyncOffset != null ? [] : a.SyncMap,
             };
             rt.Store.Put(Kinds.Asset, id, a.ProjectId, u);
             return Results.Json(u, Json.Options);
-        });
+        }));
 
         // ---- transcript (FR-ASR-06) ----
         api.MapGet("/assets/{id}/transcript", (Runtime rt, string id) =>
@@ -468,64 +567,66 @@ public static class Api
         }));
 
         // ---- BGM (FR-AUD-01..04): synthesised library + user-supplied tracks with a rights confirmation; each track is measured at registration ----
+        // Tracks belong to one project (Source "user") or to the whole app (Source "shared", offered to every project that keeps UseSharedBgm on).
         api.MapGet("/bgm", async (Runtime rt, string? project_id, CancellationToken ct) =>
         {
             var lib = await rt.Audio.MeasuredTracksAsync(ct);
-            var user = project_id == null ? [] : rt.Store.List<BgmTrack>(Kinds.Bgm, project_id).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
-            return Results.Json(lib.Concat(user), Json.Options);
+            if (project_id == null) return Results.Json(lib, Json.Options);
+            var runner = rt.CreateRunner();
+            var user = runner.RegisteredBgm(project_id);
+            // a shared track an existing plan already uses stays listed (named on the review screen) after the project stops using shared tracks
+            var used = rt.Store.List<EditPlan>(Kinds.EditPlan, project_id).SelectMany(e => e.Audio.BgmCues.Select(c => c.Track).Append(e.Audio.Bgm)).OfType<string>().ToHashSet();
+            var kept = rt.Store.List<BgmTrack>(Kinds.Bgm, PipelineRunner.SharedBgmParent).Where(t => used.Contains(t.Id) && user.All(u => u.Id != t.Id));
+            return Results.Json(lib.Concat(user).Concat(kept), Json.Options);
         });
+        api.MapGet("/bgm/shared", (Runtime rt) =>
+            Results.Json(rt.Store.List<BgmTrack>(Kinds.Bgm, PipelineRunner.SharedBgmParent).OrderBy(t => t.Name, StringComparer.Ordinal), Json.Options));
+        api.MapPost("/bgm/shared", async (Runtime rt, HttpRequest request, CancellationToken ct) =>
+            await RegisterBgmAsync(rt, request, Path.Combine(rt.Options.ResolvedDataDir, "bgm"), PipelineRunner.SharedBgmParent, null, ct)).DisableAntiforgery();
         api.MapPost("/projects/{id}/bgm", async (Runtime rt, string id, HttpRequest request, CancellationToken ct) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
-            request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>()!.MaxRequestBodySize = 2000L * 1024 * 1024;
-            if (!request.HasFormContentType) return Error(422, "E-VALIDATION", "multipart/form-data で送信してください");
-            var form = await request.ReadFormAsync(ct);
-            if (form["rights_confirmed"] != "true") return Error(422, "E-RIGHTS-REQUIRED", "BGM の権利（著作権・利用許諾）の確認にチェックしてください");
-            if (form.Files.Count == 0) return Error(422, "E-VALIDATION", "ファイルがありません");
-            if (form.Files.Count > MaxBgmPerUpload) return Error(422, "E-VALIDATION", $"一度に追加できるのは {MaxBgmPerUpload} 曲までです");
-            var dir = Path.Combine(p.Directory, "bgm"); Directory.CreateDirectory(dir);
-            var added = new List<BgmTrack>(); var skipped = new List<SkippedBgm>();
-            var existing = rt.Store.List<BgmTrack>(Kinds.Bgm, id);
-            foreach (var file in form.Files)
-            {
-                var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-                if (ext is not (".mp3" or ".wav" or ".m4a" or ".aac" or ".flac" or ".ogg")) { skipped.Add(new SkippedBgm(file.FileName, "音声ファイル（mp3 / wav / m4a / aac / flac / ogg）ではありません")); continue; }
-                var dest = Path.Combine(dir, SafeName(Path.GetFileNameWithoutExtension(file.FileName)) + ext);
-                PipelineRunner.EnsureInside(p.Directory, dest);
-                await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
-                (double Duration, int Channels) probe;
-                try { probe = await new MediaProbe(rt.Ff).ProbeAudioAsync(dest, ct); }
-                catch (IngestException ex) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, ex.Message)); continue; }
-                if (probe.Channels == 0 || probe.Duration < 5) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, "5 秒以上の音声ではありません")); continue; }
-                BgmAnalysis analysis;
-                try { analysis = await Audio.BgmAnalyzer.AnalyzeAsync(rt.Ff, dest, ct); }
-                catch (FFmpegException ex) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, ex.Message)); continue; }
-                var (bpm, phase) = await Audio.TempoEstimator.AnalyzeFileAsync(rt.Ff, dest, ct);
-                // the same file name again replaces that track (same id), instead of adding a duplicate that points at the overwritten file
-                var same = existing.FirstOrDefault(t => string.Equals(t.Path, dest, StringComparison.OrdinalIgnoreCase));
-                var track = new BgmTrack
-                {
-                    Id = same?.Id ?? "bgm_" + Guid.NewGuid().ToString("N")[..8], Name = Path.GetFileName(file.FileName), Path = dest, Bpm = Math.Round(bpm, 1), Phase = Math.Round(phase, 3),
-                    Source = "user", ProjectId = id, RightsConfirmed = true, Analysis = analysis,
-                };
-                rt.Store.Put(Kinds.Bgm, track.Id, id, track);
-                added.Add(track);
-            }
-            if (added.Count == 0) return Error(422, "E-ING-UNSUPPORTED", "追加できる曲がありませんでした: " + string.Join(" / ", skipped.Select(s => $"{s.Name}: {s.Reason}")));
-            return Results.Json(new { tracks = added, skipped }, Json.Options, statusCode: 201);
+            return await RegisterBgmAsync(rt, request, Path.Combine(p.Directory, "bgm"), id, p, ct);
         }).DisableAntiforgery();
         api.MapDelete("/projects/{id}/bgm/{bgmId}", (Runtime rt, string id, string bgmId) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             var t = rt.Store.Get<BgmTrack>(Kinds.Bgm, bgmId);
             if (p == null || t == null || t.ProjectId != id) return Error(404, "E-NOT-FOUND", "BGM がありません");
-            var using_ = rt.Store.List<EditPlan>(Kinds.EditPlan, id).Where(e => e.Audio.Bgm == bgmId || e.Audio.BgmCues.Any(c => c.Track == bgmId)).Select(e => e.EditplanId).ToList();
-            if (using_.Count > 0) return Error(409, "E-BGM-IN-USE", $"この曲は {using_.Count} 本の動画の編集計画で使われています。確認画面で別の曲に変えるか、その動画を削除してから外してください");
+            var using_ = PlansUsingBgm(rt, bgmId, id);
+            if (using_ > 0) return Error(409, "E-BGM-IN-USE", $"この曲は {using_} 本の動画の編集計画で使われています。確認画面で別の曲に変えるか、その動画を削除してから外してください");
             rt.Store.Delete([(Kinds.Bgm, bgmId)]);
             try { PipelineRunner.EnsureInside(p.Directory, t.Path); if (File.Exists(t.Path)) File.Delete(t.Path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PipelineException) { }
             return Results.Json(new { deleted = bgmId }, Json.Options);
         });
+        api.MapDelete("/bgm/shared/{bgmId}", (Runtime rt, string bgmId) =>
+        {
+            var t = rt.Store.Get<BgmTrack>(Kinds.Bgm, bgmId);
+            if (t == null || t.Source != "shared") return Error(404, "E-NOT-FOUND", "BGM がありません");
+            var using_ = PlansUsingBgm(rt, bgmId, null);
+            if (using_ > 0) return Error(409, "E-BGM-IN-USE", $"この曲は {using_} 本の動画の編集計画で使われています。確認画面で別の曲に変えるか、その動画を削除してから外してください");
+            rt.Store.Delete([(Kinds.Bgm, bgmId)]);
+            try { PipelineRunner.EnsureInside(Path.Combine(rt.Options.ResolvedDataDir, "bgm"), t.Path); if (File.Exists(t.Path)) File.Delete(t.Path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PipelineException) { }
+            return Results.Json(new { deleted = bgmId }, Json.Options);
+        });
+        // a project's track becomes app-wide: same id (plans that use it keep working), file moved into the app data folder
+        api.MapPost("/projects/{id}/bgm/{bgmId}/share", (Runtime rt, string id, string bgmId) => rt.Store.Atomic<IResult>(() =>
+        {
+            var p = rt.Store.Get<Project>(Kinds.Project, id);
+            var t = rt.Store.Get<BgmTrack>(Kinds.Bgm, bgmId);
+            if (p == null || t == null || t.Source != "user" || t.ProjectId != id) return Error(404, "E-NOT-FOUND", "BGM がありません");
+            if (!File.Exists(t.Path)) return Error(404, "E-BGM-NOTFOUND", "BGM ファイルがありません");
+            var dir = Path.Combine(rt.Options.ResolvedDataDir, "bgm"); Directory.CreateDirectory(dir);
+            var dest = Path.Combine(dir, Path.GetFileName(t.Path));
+            if (File.Exists(dest) || rt.Store.List<BgmTrack>(Kinds.Bgm, PipelineRunner.SharedBgmParent).Any(x => string.Equals(x.Name, t.Name, StringComparison.OrdinalIgnoreCase)))
+                return Error(409, "E-BGM-EXISTS", "同じ名前の曲がすでにアプリ共通の BGM にあります");
+            try { File.Move(t.Path, dest); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Error(409, "E-FILE-IN-USE", "曲のファイルを移せませんでした。再生中なら止めてからもう一度試してください"); }
+            var shared = t with { Source = "shared", ProjectId = null, Path = dest };
+            rt.Store.Put(Kinds.Bgm, bgmId, PipelineRunner.SharedBgmParent, shared);
+            return Results.Json(shared, Json.Options);
+        }));
 
         // ---- brand kit: opening / closing videos and scene-card images (one per installation, rights confirmed at registration) ----
         api.MapPost("/dialogs/folder", async (IFolderPicker picker, PickFolderRequest req, CancellationToken ct) =>
@@ -778,7 +879,9 @@ public static class Api
                     return Error(422, "E-VALIDATION", "ビート同期では BGM を変えるとカットも変わります。条件を変えて作り直してください");
                 if (plan.Series != null && req.Ops.Any(o => o.Op is "adjust" or "replan"))
                     return Error(422, "E-VALIDATION", "前編・後編の区切りは前後のパートとつながっているため、ここでは動かせません。本数か1本あたりの長さを変えて作り直してください");
-                if (req.Ops.Any(o => o.Op == "set_bgm" && !string.IsNullOrEmpty(o.Target) && o.Target is not ("none" or "scene") && rt.Audio.Find(o.Target) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, o.Target) == null))
+                // a track already in this plan stays choosable (e.g. an app-wide one after the project stopped using them); new ones must be the project's
+                var inPlan = plan.Audio.BgmCues.Select(c => c.Track).Append(plan.Audio.Bgm).OfType<string>().ToHashSet();
+                if (req.Ops.Any(o => o.Op is "set_bgm" or "set_bgm_cue" && (o.Op == "set_bgm" ? o.Target : o.Text) is { Length: > 0 } t && t is not ("none" or "scene" or "auto") && !inPlan.Contains(t) && runner.SelectableBgm(plan.ProjectId, t) == null))
                     return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
                 // scene-matched music: edits look tracks up (measured), and duck depths are re-derived after every edit (inserts move the music too)
                 var bgmCtx = plan.Audio.BgmCues.Count > 0 ? await runner.BgmContextAsync(plan.ProjectId, ct) : null;
@@ -1064,6 +1167,54 @@ public static class Api
         return Selection.CandidateValidator.MergeOverlaps(body, 2.0);
     }
 
+    /// <summary>Edit plans whose music uses the track (in one project, or anywhere for an app-wide track).</summary>
+    static int PlansUsingBgm(Runtime rt, string bgmId, string? projectId) =>
+        rt.Store.List<EditPlan>(Kinds.EditPlan, projectId).Count(e => e.Audio.Bgm == bgmId || e.Audio.BgmCues.Any(c => c.Track == bgmId));
+
+    /// <summary>
+    /// Saves uploaded tracks into <paramref name="dir"/> under the store parent <paramref name="parent"/> (a project id, or the app-wide parent when
+    /// <paramref name="project"/> is null), measuring each one exactly like every other registered track.
+    /// </summary>
+    static async Task<IResult> RegisterBgmAsync(Runtime rt, HttpRequest request, string dir, string parent, Project? project, CancellationToken ct)
+    {
+        request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>()!.MaxRequestBodySize = 2000L * 1024 * 1024;
+        if (!request.HasFormContentType) return Error(422, "E-VALIDATION", "multipart/form-data で送信してください");
+        var form = await request.ReadFormAsync(ct);
+        if (form["rights_confirmed"] != "true") return Error(422, "E-RIGHTS-REQUIRED", "BGM の権利（著作権・利用許諾）の確認にチェックしてください");
+        if (form.Files.Count == 0) return Error(422, "E-VALIDATION", "ファイルがありません");
+        if (form.Files.Count > MaxBgmPerUpload) return Error(422, "E-VALIDATION", $"一度に追加できるのは {MaxBgmPerUpload} 曲までです");
+        Directory.CreateDirectory(dir);
+        var added = new List<BgmTrack>(); var skipped = new List<SkippedBgm>();
+        var existing = rt.Store.List<BgmTrack>(Kinds.Bgm, parent);
+        foreach (var file in form.Files)
+        {
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (ext is not (".mp3" or ".wav" or ".m4a" or ".aac" or ".flac" or ".ogg")) { skipped.Add(new SkippedBgm(file.FileName, "音声ファイル（mp3 / wav / m4a / aac / flac / ogg）ではありません")); continue; }
+            var dest = Path.Combine(dir, SafeName(Path.GetFileNameWithoutExtension(file.FileName)) + ext);
+            PipelineRunner.EnsureInside(dir, dest);
+            await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
+            (double Duration, int Channels) probe;
+            try { probe = await new MediaProbe(rt.Ff).ProbeAudioAsync(dest, ct); }
+            catch (IngestException ex) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, ex.Message)); continue; }
+            if (probe.Channels == 0 || probe.Duration < 5) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, "5 秒以上の音声ではありません")); continue; }
+            BgmAnalysis analysis;
+            try { analysis = await Audio.BgmAnalyzer.AnalyzeAsync(rt.Ff, dest, ct); }
+            catch (FFmpegException ex) { File.Delete(dest); skipped.Add(new SkippedBgm(file.FileName, ex.Message)); continue; }
+            var (bpm, phase) = await Audio.TempoEstimator.AnalyzeFileAsync(rt.Ff, dest, ct);
+            // the same file name again replaces that track (same id), instead of adding a duplicate that points at the overwritten file
+            var same = existing.FirstOrDefault(t => string.Equals(t.Path, dest, StringComparison.OrdinalIgnoreCase));
+            var track = new BgmTrack
+            {
+                Id = same?.Id ?? "bgm_" + Guid.NewGuid().ToString("N")[..8], Name = Path.GetFileName(file.FileName), Path = dest, Bpm = Math.Round(bpm, 1), Phase = Math.Round(phase, 3),
+                Source = project == null ? "shared" : "user", ProjectId = project?.Id, RightsConfirmed = true, Analysis = analysis,
+            };
+            rt.Store.Put(Kinds.Bgm, track.Id, parent, track);
+            added.Add(track);
+        }
+        if (added.Count == 0) return Error(422, "E-ING-UNSUPPORTED", "追加できる曲がありませんでした: " + string.Join(" / ", skipped.Select(s => $"{s.Name}: {s.Reason}")));
+        return Results.Json(new { tracks = added, skipped }, Json.Options, statusCode: 201);
+    }
+
     static IResult StartGeneration(Runtime rt, JobQueue q, string projectId, List<string> presetIds, string? instruction, List<string> exclude, JobOptions? options = null, string? derivedFrom = null)
     {
         options ??= new JobOptions();
@@ -1072,7 +1223,7 @@ public static class Api
         if (options.MaskWords.Count > Planning.Masking.MaxWords || options.MaskWords.Any(w => w.Trim().Length > Planning.Masking.MaxWordLength))
             return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
         options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };
-        if (options.Bgm is not ("auto" or "none" or "scene") && rt.Audio.Find(options.Bgm) == null && rt.Store.Get<BgmTrack>(Kinds.Bgm, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
+        if (options.Bgm is not ("auto" or "none" or "scene") && rt.CreateRunner().SelectableBgm(projectId, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
         if (options.Opening || options.Closing)
         {
             var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
@@ -1131,7 +1282,8 @@ public static class Api
                 Id = id, ProjectId = projectId, Path = path, Sha256 = sha, Media = media, Warnings = warnings,
                 Role = prev?.Role ?? (existing.Count == 0 ? AssetRole.Main : AssetRole.CamB),
                 Speaker = prev?.Speaker, SyncOffset = prev?.SyncOffset ?? 0, SyncConfidence = prev?.SyncConfidence,
-                SyncDriftPpm = prev?.SyncDriftPpm ?? 0, SyncMethod = prev?.SyncMethod, SyncResidualMs = prev?.SyncResidualMs, SyncWindows = prev?.SyncWindows,
+                SyncDriftPpm = prev?.SyncDriftPpm ?? 0, SyncMethod = prev?.SyncMethod, SyncResidualMs = prev?.SyncResidualMs, SyncWindows = prev?.SyncWindows, SyncMap = prev?.SyncMap ?? [],
+                PipScenes = prev?.PipScenes ?? [], PipContent = prev?.PipContent,
             };
             rt.Store.Put(Kinds.Asset, asset.Id, projectId, asset);
             return Results.Json(asset, Json.Options, statusCode: 201);

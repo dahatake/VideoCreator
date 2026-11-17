@@ -25,6 +25,19 @@ public class UpscaleTests : IAsyncLifetime
         Files = [new() { Path = path, Kind = "opening", Width = 720, Height = 1280, Duration = 3, HasAudio = true, Lufs = -15, Enhancement = e }],
     };
 
+    [Theory]
+    [InlineData(0.45, 0.44, true)]                  // measured improvement
+    [InlineData(0.30, -0.10, true)]                 // XPSNR within its 0.1 dB tolerance
+    [InlineData(0.0, 0.0, false)]                   // no improvement → lanczos
+    [InlineData(0.0, 0.5, false)]                   // VMAF-NEG must improve, not just XPSNR
+    [InlineData(-0.2, 0.3, false)]
+    [InlineData(0.5, -0.11, false)]
+    [InlineData(double.NaN, 0.4, false)]            // a metric that could not be measured is no evidence
+    [InlineData(0.5, double.NaN, false)]
+    [InlineData(double.PositiveInfinity, 0.4, false)]
+    public void Upscale_is_adopted_only_on_a_measured_improvement(double vmaf, double xpsnr, bool adopt) =>
+        Assert.Equal(adopt, BrandKitEnhancer.Adopt(new QualityGain(vmaf, xpsnr, 0)));
+
     [Fact]
     public void Planner_uses_the_upscaled_copy_and_qa_reports_it()
     {
@@ -104,12 +117,90 @@ public class UpscaleTests : IAsyncLifetime
         var e1 = (await BrandKitEnhancer.EnhanceAsync(Ff, sr, f, canvas, cache, null, Ct)).Enhancement!;
         Assert.NotNull(e1.Gain);
         Assert.False(double.IsNaN(e1.Gain!.Xpsnr));
-        if (e1.Adopted) { Assert.True(File.Exists(e1.Path)); Assert.Equal((360, 640), (e1.Width, e1.Height)); Assert.True(e1.Gain.Vmaf >= 0 && e1.Gain.Xpsnr >= -0.1); }
-        else Assert.True(e1.Gain.Vmaf < 0 || e1.Gain.Xpsnr < -0.1, "only rejected when the measurement says it is less faithful");
+        Assert.Equal(BrandKitEnhancer.Adopt(e1.Gain), e1.Adopted);
+        if (e1.Adopted) { Assert.True(File.Exists(e1.Path)); Assert.Equal((360, 640), (e1.Width, e1.Height)); }
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var e2 = (await BrandKitEnhancer.EnhanceAsync(Ff, sr, f, canvas, cache, null, Ct)).Enhancement!;
         Assert.True(sw.Elapsed.TotalSeconds < 2, "cached");
         Assert.Equal(e1.Gain, e2.Gain);
         Assert.Null((await BrandKitEnhancer.EnhanceAsync(Ff, sr, f with { Width = 360, Height = 640 }, canvas, cache, null, Ct)).Enhancement);   // already canvas-sized: untouched
+    }
+
+    static SourceAsset ScreenAsset(string id, string path, int w, int h) => new() { Id = id, ProjectId = "p", Path = path, Sha256 = id + "0123456789abcdef", Media = Fixtures.Landscape(6) with { Width = w, Height = h } };
+
+    static EditPlan PipPlan(PipSpec pip) => new()
+    {
+        EditplanId = "ep", ProjectId = "p", Preset = Fixtures.Presets["P11"].Ref, Audio = new AudioSpec { Master = "m", SfxEnabled = false },
+        Timeline = [new() { ClipId = "c1", AssetId = "m", SrcIn = 0, SrcOut = 3, Reframe = new ReframeSpec { Mode = "blur_bg" }, Pip = pip }],
+    };
+
+    [Fact] // no FFmpeg: what is (not) magnified, and the fallbacks say what happened without touching the plan
+    public async Task Screen_enhancer_only_targets_magnified_non_slide_content()
+    {
+        var slide = Path.Combine(_dir, "slide.png"); File.WriteAllText(slide, "x");
+        var small = new Dictionary<string, SourceAsset> { ["s"] = ScreenAsset("s", "small.mp4", 640, 360) };
+        var big = new Dictionary<string, SourceAsset> { ["s"] = ScreenAsset("s", "big.mp4", 1920, 1080) };
+        var inset = new PipSpec { AssetId = "s", Shape = "rectangle", X = 24, Y = 1200, Width = 1032, Height = 580, Border = 0, SrcIn = 1 };
+
+        var piece = Assert.Single(ScreenEnhancer.Pieces(PipPlan(inset), small));
+        Assert.Equal((640, 360, 1032, 580), (piece.W, piece.H, piece.OutW, piece.OutH));
+        Assert.Equal(580.0 / 360, piece.Factor, 4);
+        Assert.Empty(ScreenEnhancer.Pieces(PipPlan(inset with { Image = slide }), small));   // the deck's own image is already sharp
+        // a content crop is what gets magnified, not the whole frame
+        Assert.Equal(1032.0 / 400, Assert.Single(ScreenEnhancer.Pieces(PipPlan(inset with { CropX = 100, CropY = 50, CropW = 400, CropH = 225 }), big)).Factor, 4);
+
+        var plan = PipPlan(inset);
+        var (same, notes) = await ScreenEnhancer.ApplyAsync(Ff, Model, plan, big, _dir, null, Ct);
+        Assert.Same(plan, same);
+        Assert.Contains("不要", Assert.Single(notes));
+        (same, notes) = await ScreenEnhancer.ApplyAsync(Ff, null, plan, small, _dir, null, Ct);
+        Assert.Same(plan, same);
+        Assert.Contains("lanczos", Assert.Single(notes));
+    }
+
+    [Fact] // real model + FFmpeg: self-checked, cut to the inset's size, frame-aligned with the recording, cached
+    public async Task Magnified_screen_piece_is_super_resolved_in_place_and_frame_aligned()
+    {
+        Assert.True(File.Exists(Model), "run scripts/get-tools.ps1 (realesr-animevideov3.onnx)");
+        var screen = await MakeAsync("screen.mp4", 640, 360, 6);
+        var mainFile = Path.Combine(_dir, "main.mp4");
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=6", "-f", "lavfi", "-i", "sine=f=440:d=6",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", mainFile], Ct);
+        var assets = new Dictionary<string, SourceAsset>
+        {
+            ["m"] = new() { Id = "m", ProjectId = "p", Path = mainFile, Sha256 = "m0123456789abcdef", Media = await new MediaProbe(Ff).ProbeAsync(mainFile, Ct) },
+            ["s"] = ScreenAsset("s", screen, 640, 360),
+        };
+        var plan = PipPlan(new PipSpec { AssetId = "s", Shape = "rectangle", X = 24, Y = 1200, Width = 1032, Height = 580, Border = 0, SrcIn = 1 });
+        var cache = Path.Combine(_dir, "cache");
+        var (enhanced, notes) = await ScreenEnhancer.ApplyAsync(Ff, Model, plan, assets, cache, null, Ct);
+        var note = Assert.Single(notes);
+        var pip = enhanced.Timeline[0].Pip!;
+        if (pip.Video == null) { Assert.Contains("lanczos", note); return; }   // the self-check is the judge; testsrc2 is normally improved
+        Assert.Contains("高画質化しました", note);
+        Assert.Null(plan.Timeline[0].Pip!.Video);   // the stored plan is untouched
+        var size = (await Ff.RunProbeAsync(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", pip.Video], Ct)).StdOut.Trim();
+        Assert.Equal("1032,580", size);
+
+        // final renders (previews are half size); the substituted inset shows the same picture at the same time as the lanczos render: aligned beats one frame early or late
+        var p = Fixtures.Presets["P11"];
+        var a = (await new Renderer(Ff).RenderAsync(enhanced, p, assets, Path.Combine(_dir, "sr.mp4"), preview: false, Ct)).Path;
+        var b = (await new Renderer(Ff).RenderAsync(plan, p, assets, Path.Combine(_dir, "lz.mp4"), preview: false, Ct)).Path;
+        async Task<double> Psnr(int shift)
+        {
+            string inset = "crop=1032:580:24:1200,trim=start_frame=5:end_frame=80,setpts=PTS-STARTPTS";
+            string other = $"crop=1032:580:24:1200,trim=start_frame={5 + shift}:end_frame={80 + shift},setpts=PTS-STARTPTS";
+            var log = (await Ff.RunFfmpegAsync(["-hide_banner", "-i", a, "-i", b, "-lavfi", $"[0:v]{inset}[x];[1:v]{other}[y];[x][y]psnr", "-f", "null", "-"], Ct)).StdErr;
+            var m = System.Text.RegularExpressions.Regex.Match(log, @"PSNR y:([\d.]+)");
+            Assert.True(m.Success, FFmpeg.Tail(log));
+            return double.Parse(m.Groups[1].Value, IC);
+        }
+        double aligned = await Psnr(0), early = await Psnr(-1), late = await Psnr(1);
+        Assert.True(aligned > 28 && aligned > early + 1 && aligned > late + 1, $"inset PSNR aligned {aligned:F2} / -1 frame {early:F2} / +1 frame {late:F2}");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var again = await ScreenEnhancer.ApplyAsync(Ff, Model, plan, assets, cache, null, Ct);
+        Assert.True(sw.Elapsed.TotalSeconds < 3, "cached");
+        Assert.Equal(pip.Video, again.Plan.Timeline[0].Pip!.Video);
     }
 }

@@ -220,7 +220,7 @@ export const translated = `
 218|Reaction presentation|吐槽显示方式|반응 표시 방식
 219|Mask words (comma-separated). Replaced by ● in captions/overlays and a beep in audio.|屏蔽词（逗号分隔）。字幕显示为 ●，音频替换为提示音。|가릴 단어(쉼표 구분). 자막은 ●, 음성은 삐 소리로 바뀝니다.
 220|Example: shop name, person name|示例：店名、人名|예: 가게 이름, 사람 이름
-221|Your BGM ({0})|自有 BGM（{0}）|내 BGM({0})
+221|This project's BGM ({0})|本项目的 BGM（{0}）|이 프로젝트의 BGM({0})
 222|BGM files (multiple selection)|BGM 文件（可多选）|BGM 파일(여러 개 선택)
 223|Add BGM|添加 BGM|BGM 추가
 224|Measures each track’s loudness, tempo, onsets and brightness to match scene energy.|添加后测量各曲目的响度、节拍、起音和明亮度，用于匹配场景活跃度。|각 곡의 음량·템포·어택·밝기를 측정해 장면 에너지에 맞춥니다.

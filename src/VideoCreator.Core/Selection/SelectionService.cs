@@ -59,7 +59,8 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             }
             else if (fullChars <= budget) chunks = [(new Interval(0, duration), tr.Sentences.ToList())];
 
-            var system = SelectionPrompt.System(p, chunks.Count == 1 ? MaxCandidates : 3) + VideoLanguages.Prompt(tr.Language);
+            // A source whose whole talk fits the target is "pick the best part", not "find a hit": an empty answer is not useful there.
+            var system = SelectionPrompt.System(p, chunks.Count == 1 ? MaxCandidates : 3, mustReturn: chunks.Count == 1 && FitsTarget(tr, p)) + VideoLanguages.Prompt(tr.Language);
             var tasks = chunks.Select(async c =>
             {
                 var user = SelectionPrompt.User(p, duration, c.sents, SelectionPrompt.SignalSummary(sig, c.window), instruction, exclude);
@@ -81,8 +82,11 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
         if (normalized.Count == 0)
         {
             fallback = true;
-            warnings.Add(llm == null ? "AI が設定されていないため、音声の盛り上がりから選びました" : "AI選定に失敗したため音声の盛り上がりから選びました");
+            var whole = FitsTarget(tr, p) ? WholeTalk(tr, sig, duration, exclude) : null;
+            warnings.Add(whole != null ? (llm == null ? "AI が設定されていないため、短い素材の発話全体を候補にしました" : "AI が候補を返さなかったため、短い素材の発話全体を候補にしました")
+                : llm == null ? "AI が設定されていないため、音声の盛り上がりから選びました" : "AI選定に失敗したため音声の盛り上がりから選びました");
             normalized = Fallback(tr, sig, p, duration, exclude);
+            if (whole != null) normalized.Insert(0, whole);
         }
         return new SelectionOutcome(CandidateValidator.Dedup(normalized, PresentCount), model, inTok, outTok, fallback, warnings, fullChars, sentChars);
     }
@@ -144,6 +148,18 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             if (s.Count > 0) res.Add((w, s));
         }
         return res;
+    }
+
+    /// <summary>The whole talk (first to last sentence) is no longer than the target.</summary>
+    public static bool FitsTarget(Transcript tr, Preset p) => tr.Sentences.Count > 0 && tr.Sentences[^1].T1 - tr.Sentences[0].T0 <= p.Target.Max;
+
+    /// <summary>Short sources: whole sentences from the first to the last utterance, instead of loudness windows that cut speech.</summary>
+    static Candidate? WholeTalk(Transcript tr, SignalSet sig, double duration, IReadOnlyList<Interval> exclude)
+    {
+        var iv = new Interval(tr.Sentences[0].T0, Math.Min(duration, tr.Sentences[^1].T1));
+        if (iv.Length <= 0 || exclude.Any(e => Math.Min(iv.T1, e.T1) - Math.Max(iv.T0, e.T0) > 0.5 * iv.Length)) return null;
+        var raw = new RawCandidate([iv], "", "", [], "短い素材のため発話全体を候補にしました", 5, 5, 5, 5);
+        return CandidateValidator.Normalize(raw, tr, sig, duration, "fb_00", "fallback");
     }
 
     /// <summary>FR-SEL-02 fallback: windows around the strongest loudness peaks (or the most voiced windows).</summary>

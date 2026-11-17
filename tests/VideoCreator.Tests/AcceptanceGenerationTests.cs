@@ -64,4 +64,60 @@ public sealed class AcceptanceGenerationTests : IDisposable
                 Sentences = words.Select((w, i) => new Sentence(i, w.T0, w.T1, w.Text, w.Speaker, i, i)).ToList() });
         }
     }
+
+    [Fact]
+    public async Task Pip_generation_persists_a_synced_two_source_plan_and_preview_without_covering_unknown_faces()
+    {
+        var ff = Fixtures.Ff ?? throw new InvalidOperationException("run scripts/get-tools.ps1");
+        Directory.CreateDirectory(_root);
+        var mainFile = Path.Combine(_root, "main.mp4");
+        var screenFile = Path.Combine(_root, "screen.mp4");
+        await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=360x640:r=30:d=27",
+            "-f", "lavfi", "-i", "sine=f=330:d=27", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", mainFile], Ct);
+        await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=29",
+            "-c:v", "libx264", "-preset", "ultrafast", screenFile], Ct);
+        using var store = new Store(Path.Combine(_root, "data", "db.sqlite"));
+        var project = new Project { Id = "p_pip", Name = "PiP", Directory = Path.Combine(_root, "project") };
+        store.Put(Kinds.Project, project.Id, null, project);
+        var main = new SourceAsset
+        {
+            Id = "m", ProjectId = project.Id, Path = mainFile, Sha256 = new string('a', 64), Role = AssetRole.Main,
+            Media = Fixtures.Landscape(27) with { Width = 360, Height = 640 },
+        };
+        var screen = main with
+        {
+            Id = "s", Path = screenFile, Sha256 = new string('b', 64), Role = AssetRole.Screen,
+            Media = Fixtures.Landscape(29) with { Width = 640, Height = 360, AudioChannels = 0 },
+            SyncOffset = 2, SyncConfidence = 9999, SyncMethod = "manual", PipScenes = [new(6, 14)],
+        };
+        foreach (var a in new[] { main, screen })
+        {
+            store.Put(Kinds.Asset, a.Id, project.Id, a);
+            store.Put(Kinds.Rights, "r_" + a.Id, project.Id, new RightsConfirmation { Id = "r_" + a.Id, ProjectId = project.Id, AssetId = a.Id });
+        }
+        var runner = new PipelineRunner(new PipelineServices
+        {
+            Ff = ff, Store = store, Presets = Fixtures.Presets, DataDir = Path.Combine(_root, "data"), Asr = new FixedTranscriber(27),
+        });
+        var job = new Job { Id = "job_pip", ProjectId = project.Id, PresetIds = ["P11"], Options = new JobOptions { Bgm = "none", Sfx = false } };
+        var progress = new VideoCreator.Media.SyncProgress<JobUpdate>(_ => { });
+        var result = await runner.GenerateAsync(job, progress, Ct);
+        Assert.Equal(JobStatus.Ready, result.Status);
+        Assert.NotEmpty(result.CandidateIds);
+        foreach (var candidate in store.List<Candidate>(Kinds.Candidate, job.Id))
+        {
+            var plan = store.Get<EditPlan>(Kinds.EditPlan, candidate.EditPlanId!)!;
+            Assert.Equal("m", plan.Audio.Master);
+            Assert.Contains(plan.Timeline, c => c.AssetId == "m");
+            Assert.Contains(plan.Timeline, c => c.AssetId == "s");
+            Assert.DoesNotContain(plan.Timeline, c => c.Pip != null);
+            Assert.All(plan.Timeline.Where(c => c.AssetId == "s"), c =>
+            {
+                Assert.InRange(c.SrcIn, 6, 14);
+                Assert.InRange(c.SrcOut, 6, 14.001);
+                Assert.Equal(c.MasterIn + 2, c.SrcIn, 3);
+            });
+            Assert.True(File.Exists(store.Get<Render>(Kinds.Render, candidate.PreviewRenderId!)!.Path));
+        }
+    }
 }

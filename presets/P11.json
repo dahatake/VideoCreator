@@ -1,0 +1,30 @@
+{
+  "id": "P11",
+  "version": "1.0.0",
+  "name": "人物背景＋資料PiP",
+  "genre": "プレゼンテーション",
+  "available": true,
+  "target": { "duration_sec": [15, 60], "aspect": "9:16" },
+  "hook": { "prefer": ["question", "strong_claim"], "max_sec": 2 },
+  "cut": {
+    "snap_to": ["sentence_end"], "min_shot_sec": 2,
+    "target_asl_sec": [2, 8], "remove_silence_over_sec": 0.8,
+    "punch_in_scale": 1, "cold_open": "none"
+  },
+  "telop": {
+    "types": ["caption"],
+    "caption": { "max_lines": 1, "margin_v": 640, "margin_r": 160, "font_px": 64, "max_cps": 6, "max_chars_per_line": 14, "avoid_faces": true }
+  },
+  "audio": { "sfx": "none", "bgm": "none", "loudnorm": { "tp": -1.5, "i": -14 } },
+  "loop": { "required": false, "enabled": false },
+  "card": {
+    "opening": "主映像の人物から始める",
+    "tempo": "会話中だけ資料を表示。顔を避けて自動配置、難しければ全画面切り替え",
+    "telop": "逐語字幕と顔を避けた資料表示",
+    "sound": "主映像の音声1本（副映像は音声同期のみ）"
+  },
+  "selection_rules": "プレゼンテーションの説明が目的から結論まで伝わる発話区間を選ぶ。挨拶や準備中より、スライドを使った説明を優先する。",
+  "planner": "pip",
+  "screen": { "min_hold_sec": 2, "lead_sec": 0.3, "tail_sec": 0.5, "hook_presenter_sec": 2, "main_min_scale": 0.72 },
+  "reframe": "blur"
+}

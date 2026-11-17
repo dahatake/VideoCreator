@@ -20,6 +20,21 @@ public sealed class QaEngine(FFmpeg ff)
     public static readonly (int Top, int Bottom, int Left, int Right) SafeZone = (250, 580, 60, 160);
     public const double WordTolerance = 0.15;
 
+    /// <summary>
+    /// <paramref name="b"/> continues <paramref name="a"/> without a visible cut: same camera, contiguous source, same framing and inset box
+    /// (the inset's content may change, as it does in the recording).
+    /// </summary>
+    public static bool Seamless(Clip a, Clip b) =>
+        a.AssetId == b.AssetId && Math.Abs(b.SrcIn - a.SrcOut) < 0.02 && Math.Abs(b.MasterIn - a.MasterOut) < 0.02 && a.Speed == b.Speed && a.Zoom == b.Zoom
+        && b.TransitionSec <= 0 && a.Reframe.Mode == b.Reframe.Mode && a.Reframe.FgScale == b.Reframe.FgScale && a.Reframe.FgOffsetY == b.Reframe.FgOffsetY
+        && a.Reframe.CropW == 0 && b.Reframe.CropW == 0 && a.Reframe.Image == null && b.Reframe.Image == null
+        && (a.Pip, b.Pip) switch
+        {
+            (null, null) => true,
+            ({ } p, { } q) => p.Shape == q.Shape && p.X == q.X && p.Y == q.Y && p.Width == q.Width && p.Height == q.Height,
+            _ => false,
+        };
+
     /// <summary>Checks that need no rendered file (also used for instant re-evaluation after edits, AT-09).</summary>
     public static List<QaResult> PlanChecks(QaContext ctx)
     {
@@ -146,9 +161,18 @@ public sealed class QaEngine(FFmpeg ff)
             res.Add(new("S-03", hookOk ? QaStatus.Pass : QaStatus.Warn, hookOk ? "speech/teaser in opening" : "no speech in opening", $"発話 ≤{p.Hook.MaxSec}s", "冒頭フック")
                 { Items = hookOk || plan.Timeline.Count == 0 ? [] : [ClipItem(0, $"最初の {p.Hook.MaxSec} 秒に発話がありません")] });
 
-        var shortShots = plan.Timeline.Select((c, ci) => (c, ci)).Where(x => x.c.Role == "body" && x.c.Length < p.Cut.MinShotSec - 0.01).ToList();
-        res.Add(new("S-04", shortShots.Count == 0 ? QaStatus.Pass : QaStatus.Warn, shortShots.Count == 0 ? "ok" : string.Join(",", shortShots.Select(x => $"{x.c.ClipId} {x.c.Length:F2}s")), $"≥{p.Cut.MinShotSec}s", "最短ショット")
-            { Items = shortShots.Select(x => ClipItem(x.ci, $"{x.c.Length:F2} 秒のショット")).ToList() });
+        // a shot is a run of seamless body clips (e.g. a PiP split only where the slide changes): the camera and layout continue, so it is not a cut
+        var shots = new List<(Clip c, int ci, double len)>();
+        for (int i = 0; i < plan.Timeline.Count; i++)
+        {
+            var c = plan.Timeline[i];
+            if (c.Role != "body") continue;
+            if (i > 0 && shots.Count > 0 && plan.Timeline[i - 1].Role == "body" && Seamless(plan.Timeline[i - 1], c)) shots[^1] = shots[^1] with { len = shots[^1].len + c.Length };
+            else shots.Add((c, i, c.Length));
+        }
+        var shortShots = shots.Where(x => x.len < p.Cut.MinShotSec - 0.01).ToList();
+        res.Add(new("S-04", shortShots.Count == 0 ? QaStatus.Pass : QaStatus.Warn, shortShots.Count == 0 ? "ok" : string.Join(",", shortShots.Select(x => $"{x.c.ClipId} {x.len:F2}s")), $"≥{p.Cut.MinShotSec}s", "最短ショット")
+            { Items = shortShots.Select(x => ClipItem(x.ci, $"{x.len:F2} 秒のショット")).ToList() });
 
         var firstBody = plan.Timeline.FirstOrDefault(c => c.Role == "body") ?? plan.Timeline.FirstOrDefault();
         var firstSentence = firstBody == null ? null : tr.Sentences.FirstOrDefault(s => s.T1 > firstBody.MasterIn + 0.05);
@@ -393,7 +417,11 @@ public sealed class QaEngine(FFmpeg ff)
                         items.Add(new(owners[o].Id, owners[o].Kind, $"文字が安全領域からはみ出しています（x{x1}–{x2}, y{y1}–{y2}）", Math.Round(owners[o].Start, 3), Math.Round(owners[o].End, 3)));
             }
         }
-        return new("H-05", violations.Count == 0 ? QaStatus.Pass : QaStatus.Fail, violations.Count == 0 ? "all telops inside (measured)" : string.Join("; ", violations.Take(3)),
+        // allow_outside_safe: a caption moved off a face on purpose may leave the safe zone; that alone is a warning, not a failure
+        var movedCaptions = ctx.Preset.Telop.Caption.AllowOutsideSafe
+            ? ctx.Plan.Telops.Where(t => t.Type == TelopType.Caption && layout.TryGetValue(t.Id, out var pl) && pl.Positioned).Select(t => t.Id).ToHashSet() : [];
+        bool onlyMoved = violations.Count > 0 && items.Count > 0 && items.All(i => movedCaptions.Contains(i.Target));
+        return new("H-05", violations.Count == 0 ? QaStatus.Pass : onlyMoved ? QaStatus.Warn : QaStatus.Fail, violations.Count == 0 ? "all telops inside (measured)" : string.Join("; ", violations.Take(3)),
             $"x {SafeZone.Left}–{1080 - SafeZone.Right}, y {SafeZone.Top}–{1920 - SafeZone.Bottom}", "テロップの安全領域（実測）") { Items = items };
     }
 

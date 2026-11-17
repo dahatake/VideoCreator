@@ -237,6 +237,61 @@ public static class AudioSync
     /// <summary>A window agrees with the fit within a quarter frame at 30 fps.</summary>
     public const double AgreeSec = 0.008;
 
+    // ---- piecewise map (meeting recordings) ----
+
+    public const double MapWindowSec = 2, MapHopSec = 1;
+    /// <summary>How far the delay may wander from the coarse offset (measured on a Teams recording: −0.02 … +0.72 s).</summary>
+    public const double MapSearchSec = 1.5;
+    /// <summary>Per-window gate; a window also needs a neighbour within <see cref="MapAgreeSec"/> (random peaks of unrelated audio do not repeat).</summary>
+    public const double MapMinConfidence = 15, MapAgreeSec = 0.012;
+    /// <summary>Share of the overlap that must carry agreeing anchors before the map is trusted.</summary>
+    public const double MapMinCoverage = 0.4;
+    const double MapChunkSec = 60;
+
+    /// <summary>
+    /// Delay trace of short windows around <paramref name="d0"/> for a recording whose delay changes in steps (VoIP jitter buffer), where
+    /// <see cref="AlignAsync"/>'s straight line cannot agree. Empty when the trace is not trustworthy.
+    /// </summary>
+    public static async Task<List<Models.SyncAnchor>> MapAsync(FFmpeg ff, string masterFile, double masterDur, string otherFile, double otherDur, double d0, CancellationToken ct)
+    {
+        double lo = Math.Max(0, -d0 + MapSearchSec), hi = Math.Min(masterDur, otherDur - d0 - MapSearchSec);
+        var raw = new List<(double T, double D, double Conf)>();
+        for (double c = lo; c + MapWindowSec <= hi; c += MapChunkSec)
+        {
+            double len = Math.Min(MapChunkSec + MapWindowSec, hi - c), ob = Math.Max(0, c + d0 - MapSearchSec);
+            var m = await LoadAsync(ff, masterFile, FineRate, 0, ct, c, len);
+            var o = await LoadAsync(ff, otherFile, FineRate, 0, ct, ob, len + 2 * MapSearchSec);
+            raw.AddRange(Trace(m, o, FineRate, ob - c, d0).Select(p => (T: p.T + c, p.D, p.Conf)).Where(p => p.T < c + MapChunkSec + MapWindowSec / 2 || c + MapChunkSec >= hi));
+        }
+        return Anchors(raw, hi - lo);
+    }
+
+    /// <summary>Windows of <paramref name="master"/> (time 0 = its first sample) against <paramref name="other"/>, which starts <paramref name="otherLead"/> s later in master time.</summary>
+    public static List<(double T, double D, double Conf)> Trace(float[] master, float[] other, int rate, double otherLead, double d0)
+    {
+        var res = new List<(double, double, double)>();
+        int w = (int)(MapWindowSec * rate), span = (int)((MapWindowSec + 2 * MapSearchSec) * rate);
+        for (int a = 0; a + w <= master.Length; a += (int)(MapHopSec * rate))
+        {
+            double t = (double)a / rate;
+            int b = (int)Math.Round((t + d0 - MapSearchSec - otherLead) * rate);
+            if (b < 0 || b + span > other.Length) continue;
+            var g = Gcc(master[a..(a + w)], other[b..(b + span)], rate, 2 * MapSearchSec + 0.05);
+            res.Add((t + MapWindowSec / 2, otherLead + (double)b / rate - t + g.Delay, g.Confidence));
+        }
+        return res;
+    }
+
+    /// <summary>Strong windows confirmed by a neighbour; empty unless they cover <see cref="MapMinCoverage"/> of <paramref name="span"/>.</summary>
+    public static List<Models.SyncAnchor> Anchors(IReadOnlyList<(double T, double D, double Conf)> raw, double span)
+    {
+        var strong = raw.Where(p => p.Conf >= MapMinConfidence).OrderBy(p => p.T).ToList();
+        var keep = strong.Where((p, i) => i > 0 && p.T - strong[i - 1].T <= MapHopSec * 1.5 && Math.Abs(p.D - strong[i - 1].D) <= MapAgreeSec
+            || i + 1 < strong.Count && strong[i + 1].T - p.T <= MapHopSec * 1.5 && Math.Abs(p.D - strong[i + 1].D) <= MapAgreeSec).ToList();
+        if (keep.Count < 3 || keep.Count * MapHopSec < MapMinCoverage * span) return [];
+        return keep.Select(p => new Models.SyncAnchor(Math.Round(p.T, 3), Math.Round(p.D, 4))).ToList();
+    }
+
     /// <summary>Theil–Sen line d(t) = offset + ppm·1e-6·t; a drift too small to matter over the measured span (or implausibly large) is dropped.</summary>
     public static (double Offset, double Ppm) Fit(IReadOnlyList<(double T, double D, double Conf)> pts)
     {

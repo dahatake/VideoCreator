@@ -299,3 +299,25 @@ details.help p { margin: var(--s4) 0 0; }
 .bgm-cue { padding: var(--s8, 8px) 0; border-top: 1px solid var(--colorNeutralStroke2, #e0e0e0); }
 .bgm-cue p { margin: 2px 0; }
 .bgm-list li { display: flex; flex-wrap: wrap; gap: var(--s8, 8px); align-items: center; }
+
+/* layout previews: where each video appears / when it switches (layout-preview.js) */
+.lp-chip { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #fff; font-size: 12px; font-weight: 700; line-height: 1; margin-right: var(--s8); vertical-align: 1px; forced-color-adjust: none; }
+.lp-svg { display: block; flex: none; }
+.lp-beat { opacity: 0; }
+.lp-beat.lp-key { opacity: 1; }
+.lp-glyph { fill: #fff; opacity: .85; }
+.lp-badge text { font: 700 100px system-ui, sans-serif; }
+.lp-card-row { display: flex; gap: var(--s12); align-items: flex-start; }
+.lp-card-row dl.facts { flex: 1; min-width: 0; }
+.lp-card-icon .lp-svg { width: 40px; height: 72px; margin-top: var(--s8); }
+#layoutPreview:not(:empty) { border-top: 1px solid var(--colorNeutralStroke2); padding-top: var(--s12); }
+.lp-body { display: flex; gap: var(--s16); align-items: flex-start; flex-wrap: wrap; }
+.lp-large { width: 160px; height: auto; aspect-ratio: 9 / 16; }
+.lp-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s4); flex: 1; min-width: 12em; }
+.lp-steps li { position: relative; isolation: isolate; display: grid; grid-template-columns: 32px 1fr; gap: var(--s8); align-items: center; padding: var(--s4); border-radius: var(--borderRadiusMedium, 4px); }
+.lp-step-svg .lp-svg { width: 32px; height: 57px; }
+.lp-now { position: absolute; inset: 0; border: 2px solid var(--colorBrandStroke1, #0f6cbd); border-radius: inherit; background: var(--colorBrandBackground2, #ebf3fc); z-index: -1; opacity: 0; pointer-events: none; }
+.lp-steps li > :not(.lp-now) { position: relative; }
+.lp-notes { margin: var(--s8) 0 0; padding-left: 1.2em; }
+.lp-notes li.warn { color: var(--colorPaletteDarkOrangeForeground1, #bc4b09); }
+@media (prefers-reduced-motion: reduce) { .lp-beat, .lp-now { animation: none !important; } }

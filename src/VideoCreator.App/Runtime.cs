@@ -106,6 +106,6 @@ public sealed class Runtime
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {
         Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, AsrForLanguage = AsrForLanguage, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
-        Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces,
+        Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces, UpscaleModel = UpscaleModel,
     });
 }

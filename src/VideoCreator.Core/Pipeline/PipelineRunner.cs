@@ -41,6 +41,8 @@ public sealed class PipelineServices
     public Action<string> Log { get; init; } = _ => { };
     public AudioLibrary? Audio { get; init; }
     public FaceService? Faces { get; init; }
+    /// <summary>Real-ESRGAN model for final-render super-resolution of magnified screen content (null/missing = lanczos only).</summary>
+    public string? UpscaleModel { get; init; }
     public MediaProbe Probe => new(Ff);
     public SignalExtractor Signals => new(Ff);
     public Renderer Renderer => new(Ff) { BgmResolver = id => Audio?.Find(id)?.Path ?? Store.Get<BgmTrack>(Kinds.Bgm, id)?.Path, SfxResolver = k => Audio?.SfxPath(k) };
@@ -72,6 +74,9 @@ public sealed class PipelineRunner(PipelineServices s)
         await File.WriteAllTextAsync(tmp, json, ct);
         File.Move(tmp, file, true);
     }
+
+    /// <summary>Face detections an earlier run cached for this source (empty when it has not been analysed).</summary>
+    public List<FaceSample> CachedFaces(SourceAsset a) => FaceService.Load(Path.Combine(CacheDir(a), "faces.json"));
 
     /// <summary>What an earlier run left for this source: whether the transcript (the paid step) is cached, and when the analysis was last made.</summary>
     public (bool TranscriptCached, DateTimeOffset? UpdatedAt) CachedAnalysis(SourceAsset a)
@@ -119,13 +124,40 @@ public sealed class PipelineRunner(PipelineServices s)
         if (!File.Exists(t.Path)) throw new PipelineException("E-BGM-NOTFOUND", $"BGM ファイルがありません: {t.Path}");
         var m = t with { Analysis = await BgmAnalyzer.AnalyzeAsync(s.Ff, t.Path, ct), Bpm = t.Bpm };
         if (t.Source == "user" && t.ProjectId != null) s.Store.Put(Kinds.Bgm, t.Id, t.ProjectId, m);
+        else if (t.Source == "shared") s.Store.Put(Kinds.Bgm, t.Id, SharedBgmParent, m);
         return m;
     }
 
-    /// <summary>What "scene" chooses from: the project's own tracks (rights confirmed) when there are any, otherwise the synthesised library.</summary>
+    /// <summary>Store parent of the app-wide BGM tracks (registered once, offered to every project that uses them).</summary>
+    public const string SharedBgmParent = "app";
+
+    public bool UsesSharedBgm(string projectId) => s.Store.Get<Project>(Kinds.Project, projectId)?.GenerationSettings.UseSharedBgm ?? true;
+
+    /// <summary>
+    /// The registered tracks this project chooses from: its own, then the app-wide ones when the project uses them. A shared track with the
+    /// same file name as one of the project's is left out, so one song is not offered (and picked for scenes) twice.
+    /// </summary>
+    public List<BgmTrack> RegisteredBgm(string projectId)
+    {
+        static bool Usable(BgmTrack t) => t.RightsConfirmed && File.Exists(t.Path);
+        var own = s.Store.List<BgmTrack>(Kinds.Bgm, projectId).Where(Usable).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        if (!UsesSharedBgm(projectId)) return own;
+        var names = own.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. own, .. s.Store.List<BgmTrack>(Kinds.Bgm, SharedBgmParent).Where(t => Usable(t) && !names.Contains(t.Name)).OrderBy(t => t.Name, StringComparer.Ordinal)];
+    }
+
+    /// <summary>A track this project may newly choose: synthesised, its own, or app-wide while the project uses those. Other projects' tracks never.</summary>
+    public BgmTrack? SelectableBgm(string projectId, string id)
+    {
+        if (s.Audio?.Find(id) is { } lib) return lib;
+        var t = s.Store.Get<BgmTrack>(Kinds.Bgm, id);
+        return t == null ? null : t.Source == "shared" ? (UsesSharedBgm(projectId) ? t : null) : t.ProjectId == projectId ? t : null;
+    }
+
+    /// <summary>What "scene" chooses from: the project's registered tracks (its own + app-wide, rights confirmed) when there are any, otherwise the synthesised library.</summary>
     public async Task<List<BgmTrack>> BgmPoolAsync(string projectId, CancellationToken ct)
     {
-        var user = s.Store.List<BgmTrack>(Kinds.Bgm, projectId).Where(t => t.RightsConfirmed && File.Exists(t.Path)).OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        var user = RegisteredBgm(projectId);
         if (user.Count > 0)
         {
             var res = new List<BgmTrack>();
@@ -135,13 +167,15 @@ public sealed class PipelineRunner(PipelineServices s)
         return s.Audio == null ? [] : (await s.Audio.MeasuredTracksAsync(ct)).ToList();
     }
 
-    /// <summary>Every track a plan of this project can use (measured), and the automatic pool — for edits on the review screen.</summary>
+    /// <summary>Every track a plan of this project can use (measured), and the automatic pool — for edits on the review screen. App-wide tracks
+    /// stay findable even after the project stops using them, so plans that already have one keep working.</summary>
     public async Task<BgmContext> BgmContextAsync(string projectId, CancellationToken ct)
     {
         var pool = await BgmPoolAsync(projectId, ct);
         var all = new Dictionary<string, BgmTrack>();
         if (s.Audio != null) foreach (var t in await s.Audio.MeasuredTracksAsync(ct)) all[t.Id] = t;
-        foreach (var t in s.Store.List<BgmTrack>(Kinds.Bgm, projectId).Where(t => t.RightsConfirmed && File.Exists(t.Path))) all[t.Id] = await MeasuredBgmAsync(t, ct);
+        foreach (var t in s.Store.List<BgmTrack>(Kinds.Bgm, SharedBgmParent).Concat(s.Store.List<BgmTrack>(Kinds.Bgm, projectId)).Where(t => t.RightsConfirmed && File.Exists(t.Path)))
+            all[t.Id] = await MeasuredBgmAsync(t, ct);
         return new BgmContext(id => all.GetValueOrDefault(id), pool);
     }
 
@@ -230,6 +264,13 @@ public sealed class PipelineRunner(PipelineServices s)
             used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         }
         else if (preset.Planner == "screen") used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
+        else if (preset.Planner == "pip")
+        {
+            var screens = assets.Where(a => a.Id != main.Id && a.Role == AssetRole.Screen).ToList();
+            if (screens.Count != 1) throw new PipelineException("E-PIP-ASSETS", "主映像と、役割を「画面」にした副映像を 1 本ずつ指定してください");
+            if (screens[0].PipScenes.Count == 0) throw new PipelineException("E-PIP-SCENES", "副画面のシーンを分割・確認して、使うシーンを選んでください");
+            used.Add(screens[0]);
+        }
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
         if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
             throw new PipelineException("E-SOL-INFEASIBLE", $"素材が{preset.Id}の尺の下限（{preset.Target.Min:0.#}秒）より短い");
@@ -256,12 +297,21 @@ public sealed class PipelineRunner(PipelineServices s)
                 SyncFit fit;
                 if (a.Media.AudioChannels > 0 && main.Media.AudioChannels > 0) fit = await AudioSync.AlignAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, ct);
                 else fit = new SyncFit { Method = "none" };
-                if (!fit.Reliable && await AudioSync.FromMetadataAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, ct) is { } meta) fit = meta;
+                // a meeting recording's network audio shifts in steps, so no straight line agrees; trace the delay instead (screen sources only)
+                List<SyncAnchor> map = [];
+                if (!fit.Reliable && fit.Method == "audio" && a.Role == AssetRole.Screen)
+                {
+                    map = await AudioSync.MapAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, fit.Offset, ct);
+                    s.Log($"[{job.Id}] sync map {name}: {map.Count} anchors" + (map.Count > 0 ? $", delay {map.Min(p => p.D):F3}…{map.Max(p => p.D):F3}s" : ""));
+                    if (map.Count > 0) fit = fit with { Offset = map.OrderBy(p => p.D).ElementAt(map.Count / 2).D, DriftPpm = 0, Method = "audio-map", Windows = map.Count, Agreeing = map.Count };
+                }
+                if (!fit.Reliable && fit.Method != "audio-map" && await AudioSync.FromMetadataAsync(s.Ff, main.Path, main.Media.Duration, a.Path, a.Media.Duration, ct) is { } meta) fit = meta;
                 a = a with
                 {
-                    SyncOffset = fit.Method is "audio" or "metadata" ? Math.Round(fit.Offset, 4) : 0, SyncDriftPpm = fit.Method == "audio" ? fit.DriftPpm : 0,
-                    SyncConfidence = Math.Round(fit.Confidence, 1), SyncMethod = fit.Reliable || fit.Method == "metadata" ? fit.Method : "none",
-                    SyncResidualMs = fit.Method == "audio" ? fit.ResidualMs : null, SyncWindows = fit.Method == "audio" ? $"{fit.Agreeing}/{fit.Windows}" : null,
+                    SyncOffset = fit.Method is "audio" or "metadata" or "audio-map" ? Math.Round(fit.Offset, 4) : 0, SyncDriftPpm = fit.Method == "audio" ? fit.DriftPpm : 0,
+                    SyncConfidence = Math.Round(fit.Confidence, 1), SyncMethod = fit.Reliable || fit.Method is "metadata" or "audio-map" ? fit.Method : "none",
+                    SyncResidualMs = fit.Method == "audio" ? fit.ResidualMs : null, SyncWindows = fit.Method is "audio" or "audio-map" ? $"{fit.Agreeing}/{fit.Windows}" : null,
+                    SyncMap = map,
                 };
                 s.Store.Put(Kinds.Asset, a.Id, a.ProjectId, a); used[i] = a;
                 s.Log($"[{job.Id}] sync {name}: {fit.Method} offset {fit.Offset:F4}s drift {fit.DriftPpm:F1}ppm conf {fit.Confidence:F0} windows {fit.Agreeing}/{fit.Windows} residual {fit.ResidualMs:F2}ms");
@@ -269,6 +319,9 @@ public sealed class PipelineRunner(PipelineServices s)
             switch (a.SyncMethod)
             {
                 case "audio":
+                    break;
+                case "audio-map":
+                    warnings.Add($"{name} は音声の遅れが一定でない（会議録画など）ため、区間ごとに測った遅れ（{a.SyncMap.Min(p => p.D):+0.00;-0.00}〜{a.SyncMap.Max(p => p.D):+0.00;-0.00} 秒）で合わせました");
                     break;
                 case "metadata":
                     warnings.Add($"{name} は音声で同期できないため、撮影日時（メタデータ）で合わせました（{a.SyncOffset:+0.0;-0.0} 秒、誤差 ±1 秒程度）。ずれていれば「ずれ(秒)」で直せます");
@@ -285,6 +338,34 @@ public sealed class PipelineRunner(PipelineServices s)
                     warnings.Add($"{name} の音声が基準映像と一致しません（信頼度 {a.SyncConfidence}）。この素材は使いません");
                     used.RemoveAt(i--);
                     break;
+            }
+        }
+        if (preset.Planner == "pip" && (used.Count != 2 || used[1].SyncMethod is not ("audio" or "audio-map" or "manual")))
+            throw new PipelineException("E-PIP-SYNC", "副映像を音声で同期できませんでした。同期結果を確認し、必要なら「ずれ(秒)」を指定してください");
+        if (preset.Planner == "pip" && used[1].PipScenes.Count > 0)
+        {
+            // meeting recordings frame the shared slide with black bars and participant tiles: show only the content
+            var content = await ScreenScenes.ContentAsync(s.Ff, used[1], ct);
+            if (content != used[1].PipContent)
+            {
+                used[1] = used[1] with { PipContent = content };
+                s.Store.Put(Kinds.Asset, used[1].Id, used[1].ProjectId, used[1]);
+            }
+            if (content != null) warnings.Add($"副画面の資料部分（{content.W}×{content.H}）だけを表示します。会議アプリの黒帯や参加者の映像は除きます");
+            if (used[1].Deck is { } deck)
+            {
+                var missing = deck.Slides.Where(x => !File.Exists(x.Path)).ToList();
+                if (missing.Count > 0) throw new PipelineException("E-DECK", "スライドの画像が見つかりません。副画面のスライド資料を追加し直してください");
+                var slides = await SlideDecks.AnalyzeAsync(s.Ff, used[1], Path.Combine(s.DataDir, "cache", used[1].Sha256), ct);   // shared with the scene-split API
+                if (!slides.Spans.SequenceEqual(used[1].SlideSpans))
+                {
+                    used[1] = used[1] with { SlideSpans = slides.Spans };
+                    s.Store.Put(Kinds.Asset, used[1].Id, used[1].ProjectId, used[1]);
+                }
+                double inScenes = used[1].PipScenes.Sum(sc => used[1].SlideSpans.Where(p => p.T1 > sc.T0 && p.T0 < sc.T1).Sum(p => Math.Min(sc.T1, p.T1) - Math.Max(sc.T0, p.T0)));
+                warnings.Add(inScenes > 0
+                    ? $"選んだシーンのうち {inScenes:0.#} 秒はスライド資料（{Path.GetFileName(deck.Path)}）と一致したため、録画の代わりに資料の高解像度画像を表示します"
+                    : "スライド資料が、選んだシーンの画面と一致しませんでした（録画のまま表示します）。資料が録画と同じ版か確認してください");
             }
         }
         if (preset.Planner == "switch" && used.Count < 2) throw new PipelineException("E-SWT-SYNC", "カメラの音声を同期できませんでした。同じ場面を撮影した素材を選んでください");
@@ -331,7 +412,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             if (s.Audio != null) await s.Audio.EnsureAsync(ct);
             var t0 = FindBgm(bgmId) ?? throw new PipelineException("E-BGM-NOTFOUND", $"BGM「{bgmId}」が見つかりません");
-            if (t0.Source == "user" && !t0.RightsConfirmed) throw new PipelineException("E-RIGHTS-REQUIRED", "BGM の権利確認が完了していません");
+            if (t0.Source != "library" && !t0.RightsConfirmed) throw new PipelineException("E-RIGHTS-REQUIRED", "BGM の権利確認が完了していません");
             t0 = await MeasuredBgmAsync(t0, ct);
             bgm = preset.Planner == "beat" || t0.Bpm <= 0 ? await AnalyzedBgmAsync(t0, ct) : t0;
         }
@@ -354,7 +435,19 @@ public sealed class PipelineRunner(PipelineServices s)
         else
         {
             var selector = new SelectionService(s.Llm, s.Log, s.SelectionCharBudget);
-            outcome = await selector.SelectAsync(tr, sig, preset, main.Media.Duration, job.Instruction, exclude, ct, job.Options.Scope);
+            var instruction = job.Instruction;
+            var pipWindows = preset.Planner == "pip" ? PipPlanner.SceneWindows(main, used[1]) : [];
+            if (pipWindows.Count > 0)
+                instruction = (string.IsNullOrWhiteSpace(instruction) ? "" : instruction + "\n")
+                    + $"副画面（資料）が映るのは次の時間帯だけです。この時間帯の会話を含む候補にしてください: {string.Join(", ", pipWindows.Select(w => $"{w.T0:F1}-{w.T1:F1}"))}";
+            outcome = await selector.SelectAsync(tr, sig, preset, main.Media.Duration, instruction, exclude, ct, job.Options.Scope);
+            if (preset.Planner == "pip")
+            {
+                var (pref, built) = PipPlanner.PreferScenes(outcome.Candidates, pipWindows, tr, sig, preset, main.Media.Duration);
+                if (built) warnings.Add("選ばれた区間が副画面の選択シーンと重ならないため、選択シーンの前後の会話で候補を作りました");
+                else if (pref.Count < outcome.Candidates.Count) warnings.Add($"副画面の選択シーンと重ならない候補 {outcome.Candidates.Count - pref.Count} 件を除きました");
+                outcome = outcome with { Candidates = pref };
+            }
         }
         warnings.AddRange(outcome.Warnings);
         Mark("select");
@@ -395,6 +488,8 @@ public sealed class PipelineRunner(PipelineServices s)
             candidates.Add(cand);
             s.Store.Put(Kinds.Candidate, cid, job.Id, cand);
         }
+        if (candidates.Count == 0 && preset.Planner == "pip")
+            throw new PipelineException("E-PIP-SCENES", "選択シーンと会話が重なる候補を作成できませんでした: " + string.Join(" / ", warnings.TakeLast(3)));
         if (candidates.Count == 0) throw new PipelineException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした。別のパターンを試してください。");
         if (seriesParts.Count > 0 && candidates.Count != seriesParts.Count) throw new PipelineException("E-SOL-INFEASIBLE", "一部のパートの編集計画を作れませんでした: " + string.Join(" / ", warnings.TakeLast(seriesParts.Count - candidates.Count)));
         if (!job.Options.IsSeries && candidates.Count < SelectionService.PresentCount)
@@ -433,7 +528,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>Series mode: chapters (AI, or TextTiling without AI) → split into exactly <paramref name="parts"/> parts, or parts of about <paramref name="partMinutes"/> → one candidate per part, in order.</summary>
     async Task<(SelectionOutcome, Dictionary<string, SeriesPart>)> SelectSeriesAsync(Transcript tr, SignalSet sig, Preset preset, SourceAsset main, double? partMinutes, int? parts0, IReadOnlyList<Interval> laughs, List<string> warnings, CancellationToken ct)
     {
-        if (preset.Planner is not ("speech" or "switch" or "screen")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
+        if (preset.Planner is not ("speech" or "switch" or "screen" or "pip")) throw new PipelineException("E-SERIES-PRESET", $"「{preset.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9〜P11）を選んでください");
         if (tr.Sentences.Count == 0) throw new PipelineException("E-SERIES-NOSPEECH", "前編・後編の分割は、話の切れ目を書き起こしから探します。発話のある動画を選んでください");
         ChapterOutline? outline = null;
         if (s.Llm != null)
@@ -591,7 +686,9 @@ public sealed class PipelineRunner(PipelineServices s)
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, old.ProjectId);
         var main = assets.First(a => a.Id == old.Audio.Master);
         var p = s.Presets[old.Preset.Id];
-        var used = p.Planner is "switch" or "screen"
+        if (p.Planner == "pip" && main.Role != AssetRole.Main)
+            throw new PipelineException("E-PIP-SYNC", "主映像が変更されています。現在の主映像で新しく生成して、音声を再同期してください");
+        var used = p.Planner is "switch" or "screen" or "pip"
             ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id || t.Pip?.AssetId == a.Id)).ToList() : [main];
         var faces = new Dictionary<string, List<FaceSample>>();
         foreach (var a in used) { var f = FaceService.Load(Path.Combine(CacheDir(a), "faces.json")); if (f.Count > 0) faces[a.Id] = f; }
@@ -676,7 +773,14 @@ public sealed class PipelineRunner(PipelineServices s)
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
         if (!preview) EnsureInside(project.Directory, file);
         var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
-        var outp = await s.Renderer.RenderAsync(plan, preset, assets, file, preview, ct,
+        var toRender = plan; var notes = new List<string>();
+        if (!preview)
+        {
+            (toRender, notes) = await ScreenEnhancer.ApplyAsync(s.Ff, s.UpscaleModel, plan, assets, Path.Combine(s.DataDir, "cache"),
+                progress == null ? null : new SyncProgress<double>(v => progress.Report((0, $"拡大表示する画面録画を高画質化しています（{v:P0}）"))), ct);
+            foreach (var n in notes) s.Log(n);
+        }
+        var outp = await s.Renderer.RenderAsync(toRender, preset, assets, file, preview, ct,
             progress == null ? null : new SyncProgress<double>(v => progress.Report((0.9 * v, encodeStep))));
         progress?.Report((0.9, "自動チェック（QA）をしています"));
         var qa = await s.Qa.RunAsync(ctx, file, preview, Path.Combine(s.DataDir, "qa", renderId), ct);
@@ -729,7 +833,7 @@ public sealed class PipelineRunner(PipelineServices s)
             Id = renderId, EditplanId = plan.EditplanId, Kind = preview ? "preview" : "final", Path = file, Duration = plan.TotalDuration,
             PlanHash = EditPlanFingerprint.Of(plan),
             FfmpegVersion = await s.Ff.VersionAsync(), Commands = outp.Commands, Qa = qa, Outputs = outputs,
-            Reproducibility = reproducibility,
+            Reproducibility = reproducibility, Notes = notes,
         };
         if (!preview)
         {

@@ -73,11 +73,16 @@ dotnet run --project src\VideoCreator.App -c Release
 | Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
 | 見積もり | GET `/projects/{id}/estimate?preset=P4` | scope別の送信量・単価ベースの推定 |
+| 画面構成 | GET `/projects/{id}/layouts` | パターンごとの画面構成の図データの配列 `[{preset_id, planner, width, height, captions, beats:[{kind, sec, speaker, boxes:[{slot, asset_id, shape, x, y, w, h, backdrop}]}], issues, face_basis}]`。位置は生成と同じ計算（現在の役割・選択シーン・解析済みの顔）、`sec` は代表値。`asset_id` が null の枠は未登録の素材の例示。`issues` は生成できない・映らない組み合わせ（`need_screen`・`no_scenes`・`many_screens`・`only_main`・`auto_screen`・`auto_speaker`・`one_camera`・`implicit_main`・`no_place`） |
 | Asset | PATCH `/assets/{id}` | role、speaker、sync_offset、clear_speaker |
 | Transcript | GET / PATCH `/assets/{id}/transcript` | 読取／`{"edits":[{"word_id":"...","text":"修正文"}]}` |
-| 音 | GET `/bgm?project_id=...` | ライブラリとプロジェクトの曲。各曲の `analysis`（lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term） |
+| 音 | GET `/bgm?project_id=...` | ライブラリ、プロジェクトの曲、使う設定ならアプリ共通の曲（使わない設定でも、編集計画で使っている共通曲は含む）。各曲の `analysis`（lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term） |
 | 音 | POST `/projects/{id}/bgm` | multipart。file（複数可、最大20）、権利確認 `rights_confirmed`。登録時に曲を測定。201 `{tracks, skipped}`（読めない・5秒未満の曲は skipped に理由） |
 | 音 | DELETE `/projects/{id}/bgm/{bgmId}` | 登録を外す（ファイルも削除）。編集計画で使っていると 409 `E-BGM-IN-USE` |
+| 音 | GET `/bgm/shared` | アプリ共通の曲（`source: "shared"`）。プロジェクトの生成設定 `use_shared_bgm`（標準 true）が true のとき、そのプロジェクトの `/bgm?project_id=...` にも含まれる（同じファイル名はプロジェクトの曲を優先） |
+| 音 | POST `/bgm/shared` | multipart。`/projects/{id}/bgm` と同じ形式で、アプリのデータフォルダーの `bgm` に保存 |
+| 音 | DELETE `/bgm/shared/{bgmId}` | アプリ共通から外す（ファイルも削除）。どのプロジェクトでも編集計画で使っていると 409 `E-BGM-IN-USE` |
+| 音 | POST `/projects/{id}/bgm/{bgmId}/share` | プロジェクトの曲をアプリ共通にする（同じ id のまま、ファイルをアプリのデータフォルダーへ移動）。同じ名前の共通曲があると 409 `E-BGM-EXISTS` |
 | OS | POST `/dialogs/folder` | `{"initial_path":"..."}`。取消は `{"path":null}` |
 | カード | POST `/projects/{id}/scene-cards` | asset_id **か** brand_path、count 2〜6（既定4）。両方指定不可 |
 | カード | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}`。以後の生成で画像を使用 |
@@ -97,7 +102,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | Preview | POST `/editplans/{id}/preview` | その計画のプレビュー再作成 |
 | Preview | GET `/editplans/{id}/preview/progress` | running、progress、step |
 | 直接出力 | POST `/editplans/{id}/render` | 計画QAを確認して単独書き出し受付 |
-| Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled等 |
+| Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled等。`notes` は書き出し時の補足（拡大表示する画面録画の高画質化の採否と実測値など） |
 | Render | POST `/renders/{id}/cancel` | queuedのみ取り消し |
 | Artifacts | GET `/renders/{id}/artifacts` | 完了した書き出しの `path`（絶対パス）、`available`、`files:[{key,path,available,preview_type}]`。種類は `video` / `image` / `text`（非対応は省略）。記録済み成果物のみで、投稿文を生成しない |
 | Files | GET `/renders/{id}/files/{key}` | outputsのキーに対応するファイル。動画はRange対応 |
@@ -105,6 +110,18 @@ dotnet run --project src\VideoCreator.App -c Release
 | Post | GET / POST `/renders/{id}/post` | GETは保存済み投稿文を返す（なければ生成・保存）。POSTは別案で上書き。画面は保存済みファイルの有無を確認し、未生成時は明示操作で呼び出す |
 | OS | POST `/renders/{id}/open-folder` | 完了ファイルをエクスプローラーで選択。ファイル欠損は404、起動失敗は500 `E-OPEN-FOLDER`、Windows以外は501 `E-PLATFORM` |
 | Media | GET `/media/{renderId}` | 主にプレビュー動画。Range対応 |
+| PiP | POST `/assets/{id}/pip-scenes` | ローカルで画面変化を検出し、副映像自身の時刻によるシーン候補 `[{t0,t1,kind,suggested,slides,coverage}]` を返す。`kind` は `slide`（スライド原本と一致）／`fullscreen`（タスクバーのない全画面）／`screen`、`suggested` は初期選択の推奨、`slides` は 0.5 秒以上写るスライド番号。使用許可の保存は行わない |
+| PiP | GET `/assets/{id}/frame?t=秒` | 登録素材から候補確認用JPEGを取得 |
+| PiP | PATCH `/assets/{id}` | `{"pip_scenes":[{"t0":34,"t1":38}]}` で使用可能シーンを保存。最大500区間、有限・素材内・正の長さ・重複なし。空配列は全解除。P11生成時に1本の基準映像＋1本の `screen` が必要 |
+| PiP | POST `/assets/{id}/deck` | multipart で スライド原本（.pptx/.ppsx/.ppt/.pps、またはスライド画像の .zip）を登録。幅 3840 px の PNG に書き出し、録画と照合して `deck`・`slide_spans` を保存した素材を返す。.pptx の変換は Windows の PowerPoint、なければ LibreOffice（環境変数 `VIDEOCREATOR_SOFFICE` で `soffice` を指定可）。クリックのビルドは段階ごとの画像（`slides[].step`）。どちらもない・変換失敗は422 `E-DECK`。`deck.source` は `powerpoint` / `libreoffice` / `images` |
+| PiP | DELETE `/assets/{id}/deck` | スライド原本を解除（以後は録画のフレームを表示） |
+| PiP | GET `/assets/{id}/slides/{n}` | スライド n のサムネイルJPEG（幅480） |
+
+P11の `pip_scenes` は使用を許可する範囲であり、全区間を表示する指定ではありません。発話との重なりで絞り、顔・字幕を避けて自動配置し、小さすぎる場合や顔位置不明時は資料へ切り替えます。音声同期不能は `E-PIP-SYNC`、使用区間未設定・重なりなしは `E-PIP-SCENES`。主映像の変更は全素材の同期値（手入力を含む）を初期化します。反映には新しい生成が必要です。
+
+会議録画のように遅れが段階的に変わる副映像は `sync_method: "audio-map"` となり、`sync_map: [{"t":…, "d":…}]`（基準映像の秒 `t` で副映像が `d` 秒遅い）に区間ごとの遅れを保存します。`sync_offset` はその中央値です。生成時に選択シーンから資料部分を検出し、`pip_content: {"x","y","w","h"}`（副映像の画素）に保存します。PiP・切り替えはこの範囲だけを表示します。`pip_scenes` を保存し直すと `pip_content` は消え、次回生成時に再検出されます。
+
+スライド原本を登録すると、録画の資料部分を 2fps で各スライドと照合し（正規化相互相関、スコア 0.85 以上かつ他スライドより 0.2 以上高いときだけ一致）、一致区間を `slide_spans` に保存します。生成時は一致した区間だけ録画の代わりに原本画像を表示し、スライドの変わり目でクリップを分けます（QA の最短ショットは同じ配置の連続を1ショットとして数えます）。パターンの `screen.main_min_scale`（0.5〜1、P11 は 0.72）は顔と資料・字幕が重なるときに人物映像を縮小できる下限、`telop.caption.avoid_faces` は字幕を顔・資料と重ならない高さへ移す設定、`allow_outside_safe` はセーフゾーン外への移動の許可です。
 
 BGM multipartの権利確認等は[Api.csの実装](../src/VideoCreator.App/Api.cs)を参照してください。パスを渡すAPIやOSダイアログは単一ローカルユーザー向けで、リモート操作の汎用契約ではありません。
 

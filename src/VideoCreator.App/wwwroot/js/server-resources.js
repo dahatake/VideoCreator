@@ -1,6 +1,11 @@
 // Preset display metadata is keyed by the API's stable preset IDs, never by media text.
 // Each row: name, genre, opening, pace, text, sound, optional localized example title(s).
 export const presetDisplays = {
+  P11: {
+    en: ['Presenter background + slides PiP', 'Presentation', 'Start with the main camera', 'Avoid faces automatically; switch to slides when no safe inset fits', 'Verbatim captions; slides avoid faces and text', 'Main audio only; screen audio used for sync'],
+    'zh-CN': ['人物背景＋资料画中画', '演示', '从主视频开始', '自动避开人脸，无法安全放置时切换至资料', '逐字字幕，资料避开人脸和文字', '仅主音轨；屏幕音频用于同步'],
+    ko: ['인물 배경＋자료 PiP', '프레젠테이션', '주 영상으로 시작', '얼굴을 자동 회피하고 안전한 배치가 없으면 자료로 전환', '축어 자막, 얼굴·자막을 피한 자료 배치', '주 음성만 사용, 화면 음성은 동기화용'],
+  },
   P1: {
     en: ['High-energy challenge', 'Entertainment', 'Reveal result or prize within 1.5 s', 'Fast 0.8–1.5 s cuts and zooms', 'Emphasis, sound effects and counters', 'Upbeat BGM and sound effects'],
     'zh-CN': ['高能挑战', '娱乐', '1.5 秒内展示结果或奖金', '0.8～1.5 秒快速剪辑与缩放', '强调、音效与计数器', '快节奏 BGM 和音效'],

@@ -87,6 +87,30 @@ public class SelectionTests
         Assert.All(res.Candidates, c => Assert.Equal("fallback", c.Source));
     }
 
+    [Fact] // a short recording (whole talk ≤ target) must still yield its whole talk, not loudness windows cutting sentences
+    public async Task Short_sources_ask_for_a_candidate_and_fall_back_to_the_whole_talk()
+    {
+        var sents = new List<Sentence> { new(0, 1.5, 6.6, "はい、音入ってるかな。", 0, 0, 0), new(1, 6.6, 18.4, "画面共有してデモしてる感じですね。", 0, 1, 1), new(2, 18.4, 32.8, "パワポで今日こんな感じで話してる。", 0, 2, 2) };
+        var tr = new Transcript { Provider = "t", Duration = 33.3, Words = sents.Select(s => new Word($"w{s.T0}", s.T0, s.T1, s.Text, 0)).ToList(), Sentences = sents };
+        string? system = null;
+        var llm = new CapturingSelector(s => system = s);
+        var res = await new SelectionService(llm).SelectAsync(tr, Fixtures.Signals(tr), Fixtures.Presets["P11"], 33.3, null, [], TestContext.Current.CancellationToken);
+        Assert.Contains("必ず1件以上返す", system);
+        Assert.True(res.UsedFallback);
+        Assert.Contains("AI が候補を返さなかったため、短い素材の発話全体を候補にしました", res.Warnings);
+        var first = res.Candidates[0].Segments;
+        Assert.Equal(1.5, first[0].T0, 1);
+        Assert.Equal(32.8, first[^1].T1, 1);
+    }
+
+    sealed class CapturingSelector(Action<string> onSystem) : IHighlightSelector
+    {
+        public string Name => "fake";
+        public string Model => "fake-model";
+        public Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct) { onSystem(system); return Task.FromResult(new LlmResult([], "fake", new LlmUsage(10, 1))); }
+        public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct) => Task.FromResult("{}");
+    }
+
     [Fact]
     public async Task Selection_uses_llm_candidates_and_excludes_previous_ones()
     {
@@ -109,7 +133,7 @@ public class SelectionTests
     public void All_presets_load_and_mvp_presets_are_available()
     {
         var ps = Fixtures.Presets;
-        Assert.Equal(10, ps.Count);
+        Assert.Equal(11, ps.Count);
         Assert.True(ps.Values.All(p => p.Available));
         Assert.Equal("switch", ps["P7"].Planner);
         Assert.Equal("speed", ps["P8"].Planner);

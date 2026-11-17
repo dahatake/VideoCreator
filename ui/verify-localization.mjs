@@ -25,6 +25,16 @@ assert.ok(!source.includes('MutationObserver'));
 assert.ok(!source.includes("toLocaleString('ja-JP'"));
 assert.ok(!/[\u3040-\u30ff\u3400-\u9fff]/.test(source.replace(/^\s*\/\/.*$/gm, '')), 'no untranslated Japanese source literals');
 assert.deepEqual(VIDEO_LANGUAGES, ['ja-JP', 'en-US', 'zh-CN', 'ko-KR']);
+// the layout sketch names every beat, issue and slot the C# LayoutPreview can emit
+const layoutSource = fs.readFileSync(new URL('../../VideoCreator.Core/Planning/LayoutPreview.cs', root), 'utf8');
+const layoutKeys = [
+  ...[...layoutSource.matchAll(/new Beat\("(\w+)"/g)].map(m => `lp.b.${m[1]}`),
+  ...[...layoutSource.matchAll(/issues\.Add\("(\w+)"\)/g)].map(m => `lp.i.${m[1]}`),
+  ...[...layoutSource.matchAll(/(?:Picture\(\w+(?: with \{[^}]*\})?, |Placeholder\(|new Box\()"(\w+)"/g)].map(m => `lp.slot.${m[1]}`).filter(k => k !== 'lp.slot.captions'),
+  ...['main', 'cam_a', 'cam_b', 'wide', 'screen', 'audio_master'].map(s => `lp.slot.${s}`), 'lp.face.measured', 'lp.face.typical',
+];
+assert.ok(layoutKeys.length > 20, 'layout keys found');
+for (const key of layoutKeys) assert.ok(catalogs.ja[key], `missing ${key}`);
 
 for (const rows of [qaNames, qaRecommendations]) {
   for (const [key, values] of Object.entries(rows)) assert.equal(values.length, 4, key);

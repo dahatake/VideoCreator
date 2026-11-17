@@ -130,8 +130,8 @@ public static partial class BrandKitService
 /// <summary>
 /// Registration-time upscale of opening / closing videos smaller than the canvas (e.g. 720x1280 for a 1080x1920 output). Per file, the method is
 /// first checked on the file itself: its middle (up to 4 s) is downscaled to 2/3, brought back with the render-time lanczos and with
-/// <see cref="SuperResolution"/>, and both are compared with the original. The upscaled copy is only used when it is at least as faithful
-/// (VMAF-NEG not lower, XPSNR not more than 0.1 dB lower); otherwise the file is used as registered and the render scales it with lanczos.
+/// <see cref="SuperResolution"/>, and both are compared with the original. The upscaled copy is only used when it is measurably more faithful
+/// (VMAF-NEG higher, XPSNR not more than 0.1 dB lower, both metrics available, see <see cref="Adopt"/>); otherwise the file is used as registered and the render scales it with lanczos.
 /// Results are cached by file content (name, size, time) next to a JSON record, so re-registering the same files is instant.
 /// </summary>
 public static class BrandKitEnhancer
@@ -141,6 +141,35 @@ public static class BrandKitEnhancer
     public static bool Needs(BrandFile f, Canvas canvas) => f.Kind != "card" && BrandKitService.Upscale(f.Width, f.Height, canvas) > MinFactor;
 
     static int Even(double x) => Math.Max(2, (int)Math.Round(x / 2) * 2);
+
+    /// <summary>
+    /// The adoption rule: both metrics measured, VMAF-NEG higher than lanczos (by at least <see cref="MinVmafGain"/>) and XPSNR not more than
+    /// 0.1 dB lower. No measured improvement, or a metric that could not be computed (NaN/∞), keeps lanczos: an unproven upscale is not used.
+    /// </summary>
+    public static bool Adopt(QualityGain gain) =>
+        double.IsFinite(gain.Vmaf) && double.IsFinite(gain.Xpsnr) && gain.Vmaf >= MinVmafGain && gain.Xpsnr >= -0.1;
+
+    /// <summary>The smallest VMAF-NEG gain counted as an improvement (gains are rounded to 0.01).</summary>
+    public const double MinVmafGain = 0.01;
+
+    /// <summary>
+    /// Does super-resolution help on THIS material? [start, start+len) of <paramref name="src"/> (w×h) is downscaled to 2/3 and brought back with
+    /// lanczos and with <paramref name="sr"/>; the result is SR minus lanczos, both scored against the original.
+    /// </summary>
+    public static async Task<QualityGain> SelfCheckAsync(FFmpeg ff, SuperResolution sr, string src, double start, double len, int w, int h, double fps, string work,
+        IProgress<double>? progress, CancellationToken ct)
+    {
+        string I(double x) => x.ToString("0.###", CultureInfo.InvariantCulture);
+        int lw = Even(w * 2.0 / 3), lh = Even(h * 2.0 / 3);
+        string reference = Path.Combine(work, "ref.mp4"), lo = Path.Combine(work, "lo.mp4"), lz = Path.Combine(work, "lanczos.mp4"), en = Path.Combine(work, "enhanced.mp4");
+        await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-ss", I(start), "-t", I(len), "-i", src, "-an", "-vf", "format=yuv420p", "-c:v", "libx264", "-crf", "4", "-preset", "veryfast", reference], ct);
+        await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", reference, "-vf", $"scale={lw}:{lh}:flags=area,format=yuv420p", "-c:v", "libx264", "-crf", "4", "-preset", "veryfast", lo], ct);
+        await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", lo, "-vf", $"scale={w}:{h}:flags=lanczos,format=yuv420p", "-c:v", "libx264", "-crf", "10", "-preset", "slow", lz], ct);
+        await sr.UpscaleVideoAsync(ff, lo, lw, lh, fps, w, h, en, progress, ct);
+        var a = await VideoQuality.ScoreAsync(ff, lz, reference, ct);
+        var b = await VideoQuality.ScoreAsync(ff, en, reference, ct);
+        return new QualityGain(Math.Round(b.Vmaf - a.Vmaf, 2), Math.Round(b.Xpsnr - a.Xpsnr, 2), Math.Round(b.Ssim - a.Ssim, 5));
+    }
 
     public static async Task<BrandFile> EnhanceAsync(FFmpeg ff, SuperResolution sr, BrandFile f, Canvas canvas, string cacheDir, IProgress<(string Stage, double Progress)>? progress, CancellationToken ct)
     {
@@ -163,21 +192,14 @@ public static class BrandKitEnhancer
             // 1) does it help on THIS file?
             progress?.Report(("確認", 0));
             double len = Math.Min(SampleSec, m.Duration), start = Math.Max(0, m.Duration / 2 - len / 2);
-            string I(double x) => x.ToString("0.###", CultureInfo.InvariantCulture);
-            int lw = Even(m.Width * 2.0 / 3), lh = Even(m.Height * 2.0 / 3);
-            string reference = Path.Combine(work, "ref.mp4"), lo = Path.Combine(work, "lo.mp4"), lz = Path.Combine(work, "lanczos.mp4"), en = Path.Combine(work, "enhanced.mp4");
-            await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-ss", I(start), "-t", I(len), "-i", f.Path, "-an", "-vf", "format=yuv420p", "-c:v", "libx264", "-crf", "4", "-preset", "veryfast", reference], ct);
-            await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", reference, "-vf", $"scale={lw}:{lh}:flags=area,format=yuv420p", "-c:v", "libx264", "-crf", "4", "-preset", "veryfast", lo], ct);
-            await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", lo, "-vf", $"scale={m.Width}:{m.Height}:flags=lanczos,format=yuv420p", "-c:v", "libx264", "-crf", "10", "-preset", "slow", lz], ct);
-            await sr.UpscaleVideoAsync(ff, lo, lw, lh, m.Fps, m.Width, m.Height, en, new Progress<double>(p => progress?.Report(("確認", 0.2 * p))), ct);
-            var a = await VideoQuality.ScoreAsync(ff, lz, reference, ct);
-            var b = await VideoQuality.ScoreAsync(ff, en, reference, ct);
-            var gain = new QualityGain(Math.Round(b.Vmaf - a.Vmaf, 2), Math.Round(b.Xpsnr - a.Xpsnr, 2), Math.Round(b.Ssim - a.Ssim, 5));
-            bool better = !(gain.Vmaf < 0) && !(gain.Xpsnr < -0.1);   // NaN (metric unavailable) does not block
+            var gain = await SelfCheckAsync(ff, sr, f.Path, start, len, m.Width, m.Height, m.Fps, work, new Progress<double>(p => progress?.Report(("確認", 0.2 * p))), ct);
+            bool better = Adopt(gain);
             BrandEnhancement result;
             if (!better)
                 result = new BrandEnhancement { Method = SuperResolution.Method, Device = sr.Device, Gain = gain, Seconds = Math.Round(sw.Elapsed.TotalSeconds, 1),
-                    Note = "この動画では高画質化しても元に忠実にならなかったため、元の動画を使います（書き出し時に lanczos で拡大）" };
+                    Note = double.IsFinite(gain.Vmaf) && double.IsFinite(gain.Xpsnr)
+                        ? "この動画では高画質化しても元に忠実にならなかったため、元の動画を使います（書き出し時に lanczos で拡大）"
+                        : "画質の改善を測定できなかったため、元の動画を使います（書き出し時に lanczos で拡大）" };
             else
             {
                 // 2) the real job

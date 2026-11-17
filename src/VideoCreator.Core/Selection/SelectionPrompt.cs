@@ -23,7 +23,7 @@ public interface IHighlightSelector
 
 public static class SelectionPrompt
 {
-    public const string Version = "sel-1.0.0";
+    public const string Version = "sel-1.1.0";
 
     /// <summary>
     /// Wire schema for strict structured outputs. Azure strict mode rejects maxLength/minimum/maximum/maxItems
@@ -48,7 +48,7 @@ public static class SelectionPrompt
  "required":["id","hook","standalone","payoff","emotion"],"properties":{"id":{"type":"string"},"hook":{"type":"integer"},"standalone":{"type":"integer"},"payoff":{"type":"integer"},"emotion":{"type":"integer"}}}}}}
 """;
 
-    public static string System(Preset p, int maxCandidates) => $"""
+    public static string System(Preset p, int maxCandidates, bool mustReturn = false) => $"""
 あなたはYouTube Shorts / TikTok のショート動画編集者です。秒付きの書き起こしと音声の信号サマリから、縦型ショート候補を最大{maxCandidates}件選びます。
 編集パターン: {p.Id} {p.Name}
 パターンの方針: {(string.IsNullOrWhiteSpace(p.SelectionRules) ? "単体で意味が通り、冒頭に結果・驚き・強い主張・問いがあり、最後にオチがある場面を選ぶ。" : p.SelectionRules)}
@@ -61,7 +61,10 @@ public static class SelectionPrompt
 - hook_text は14字以内、headline は16字以内、reason は1文（120字以内）
 - scores は0〜10の整数（hook=冒頭の引き, standalone=単体で通じるか, payoff=オチ, emotion=感情の動き）
 - 互いに大きく重なる候補は出さない
+{(mustReturn ? MustReturnRule : "")}
 """;
+
+    const string MustReturnRule = "- この動画は発話全体が尺の上限に収まる短い素材です。規則を完全に満たす区間がなくても、最善の区間を必ず1件以上返す（見つからなければ発話全体を1件として返し、scores で弱さを表す）";
 
     public static string User(Preset p, double duration, IEnumerable<Sentence> sentences, string signalSummary, string? instruction, IEnumerable<Interval> exclude)
     {

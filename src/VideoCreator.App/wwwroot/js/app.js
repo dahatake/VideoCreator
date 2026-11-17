@@ -2,6 +2,7 @@
 // Every dynamic string is escaped with esc() before reaching innerHTML (LLM/user text is untrusted).
 import { trUi, getLanguage, setLanguage, formatDate, formatNumber, applyShell, VIDEO_LANGUAGES } from './i18n.js';
 import { serverText, localizePreset, localizeQa, jobMessage, errorMessage, libraryTrackName } from './server-i18n.js';
+import { layoutSvg, layoutPanel, assetChip } from './layout-preview.js';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -378,11 +379,14 @@ function confirmDelete(p, opener) {
 // ---------------- project: assets + rights + pattern + generate ----------------
 async function project(id, showSettings = false) {
   const gone = routeGuard();
-  const [d, rawPresets, rawBgmList, kitView, settings] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings')]);
+  const [d, rawPresets, rawBgmList, kitView, settings, sharedBgm] = await Promise.all([api(`/api/projects/${id}`), api('/api/presets'), api(`/api/bgm?project_id=${encodeURIComponent(id)}`), api('/api/brandkit'), api('/api/settings'), api('/api/bgm/shared')]);
   if (gone()) return;
   const presets = rawPresets.map(localizePreset), bgmList = rawBgmList.map(b => ({ ...b, name: libraryTrackName(b) }));
   const resumeRoute = workflowRoute(id, d.resume_state ?? { step: 'project' });
   const userBgm = bgmList.filter(b => b.source === 'user');
+  // registered tracks "scene" chooses from: this project's own + the app-wide ones it uses (as listed by the server)
+  const registeredBgm = bgmList.filter(b => b.source !== 'library');
+  const bgmItem = (b) => `<b>${esc(b.name)}</b> <span class="caption">${b.analysis ? trUi('m210', [Number(b.analysis.lufs).toFixed(1), b.analysis.bpm ? trUi('m209', [Math.round(b.analysis.bpm)]) : '', energyWord(b.analysis.energy), Number(b.analysis.energy).toFixed(2), fmt(b.analysis.start), fmt(b.analysis.end)]) : trUi('m211')}</span>`;
   if (!showSettings && resumeRoute && resumeRoute !== `#/p/${id}`) { location.hash = resumeRoute; return; }
   await saveWorkflowState(id, { step: showSettings ? 'settings' : 'project' });
   if (gone()) return;
@@ -392,12 +396,21 @@ async function project(id, showSettings = false) {
   const notReady = !assets.length ? trUi('m141') : !allRights ? trUi('m142') : '';
   const saved = d.project.generation_settings ?? {};
   let selected = saved.preset_id ?? 'P4';
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
   if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
   if (gone()) return;
+  // where each video appears per pattern for the current roles (Planning.LayoutPreview); the page works without it
+  let layouts = [];
+  try { layouts = await api(`/api/projects/${id}/layouts`); } catch { }
+  if (gone()) return;
+  const multiPlanner = (p) => ['switch', 'screen', 'pip'].includes(p.planner);
+  const layoutIcon = (p) => {
+    const lp = layouts.find(l => l.preset_id === p.id);
+    return lp && (multiPlanner(p) || assets.length > 1) ? `<span class="lp-card-icon">${layoutSvg(lp, assets)}</span>` : '';
+  };
   const lastJob = d.jobs[0];
   const roleLabel = { main: trUi('m143'), cam_a: trUi('m144'), cam_b: trUi('m145'), wide: trUi('m146'), audio_master: trUi('m147'), screen: trUi('m148') };
   const syncText = (a) => {
@@ -407,6 +420,7 @@ async function project(id, showSettings = false) {
       (a.sync_drift_ppm ? trUi('m152', [a.sync_drift_ppm > 0 ? '+' : '', a.sync_drift_ppm.toFixed(1), (Math.abs(a.sync_drift_ppm) * 3.6).toFixed(0)]) : '') +
       (a.sync_windows ? trUi('m153', [a.sync_windows, a.sync_residual_ms]) : '');
     if (a.sync_method === 'metadata') return trUi('m154', [a.sync_offset.toFixed(1)]);
+    if (a.sync_method === 'audio-map' && a.sync_map?.length) return trUi('sync.map', [Math.min(...a.sync_map.map(p => p.d)).toFixed(2), Math.max(...a.sync_map.map(p => p.d)).toFixed(2), a.sync_map.length]);
     if (a.sync_method === 'none') return trUi('m155');
     return a.sync_confidence != null ? trUi('m156', [a.sync_confidence]) : trUi('m157');
   };
@@ -457,20 +471,32 @@ async function project(id, showSettings = false) {
           <form id="byPath" class="row" style="margin-top:8px"><fluent-text-input id="path" placeholder="C:\\Videos\\stream.mp4" style="flex:1" aria-label="${trUi('m286')}"></fluent-text-input><fluent-button type="submit">${trUi('m287')}</fluent-button></form>
         </details>
         <div id="assetMsg"></div>
-        ${assets.map(a => `
+        ${assets.length > 1 ? `<p class="caption">${trUi('pip.help')}</p>` : ''}
+        ${assets.map((a, ai) => `
           <div class="asset">
             <div>
-              <b>${esc(a.path.split(/[\\/]/).pop())}</b>
+              ${assets.length > 1 ? assetChip(ai) : ''}<b>${esc(a.path.split(/[\\/]/).pop())}</b>
               <div class="caption">${fmt(a.media.duration)} · ${a.media.width}×${a.media.height} · ${a.media.fps.toFixed(2)}fps${a.media.vfr ? '（VFR）' : ''} · ${a.media.audio_channels ? trUi('m165') : trUi('m166')} · ${esc(a.media.video_codec)}</div>
               ${a.warnings.map(w => `<div class="caption warn">${esc(serverText(w))}</div>`).join('')}
               ${assets.length > 1 ? `<div class="row" style="margin:8px 0"><label class="caption">${trUi('m167')} <select class="native role" data-asset="${esc(a.id)}">${Object.entries(roleLabel).map(([k, v]) => `<option value="${k}" ${a.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
                 <label class="caption">${trUi('m168')} <input class="native spk" type="number" min="1" max="8" style="width:64px" data-asset="${esc(a.id)}" value="${a.speaker ?? ''}" placeholder="${trUi('m169')}"></label>
                 <label class="caption">${trUi('m170')} <input class="native off" type="number" step="0.001" style="width:96px" data-asset="${esc(a.id)}" value="${a.sync_offset ?? 0}"></label>
                 <span class="caption">${esc(syncText(a))}</span></div>` : ''}
+              ${a.role === 'screen' ? `<div class="stack"><span class="caption">${trUi('pip.count', [a.pip_scenes?.length ?? 0])}</span>
+                <div class="stack deck-box" data-asset="${esc(a.id)}">
+                  ${a.deck ? `<span class="caption">${trUi('deck.status', [new Set(a.deck.slides.map(s => s.number)).size, a.slide_spans?.length ?? 0])}${a.deck.slides.some(s => s.step > 0) ? ` · ${trUi('deck.steps', [a.deck.slides.filter(s => s.step > 0).length])}` : ''}${a.deck.source === 'libreoffice' ? ` · ${trUi('deck.libreoffice')}` : ''}</span>
+                    <fluent-button class="deck-del" data-asset="${esc(a.id)}">${trUi('deck.remove')}</fluent-button>`
+                  : `<label class="caption">${trUi('deck.add')} <input type="file" class="deck-file" data-asset="${esc(a.id)}" accept=".pptx,.ppsx,.ppt,.pps,.zip"></label>`}
+                  <span class="caption">${trUi('deck.help')}</span>
+                  <div class="deck-msg" role="status" aria-live="polite"></div>
+                </div>
+                <fluent-button class="pip-scenes" data-asset="${esc(a.id)}">${trUi('pip.scenes')}</fluent-button>
+                <div class="pip-scene-list stack" data-asset="${esc(a.id)}" aria-live="polite"></div></div>` : ''}
               <div style="margin-top:8px">${field(esc(getLanguage() === 'ja' ? d.rights_statement : trUi('rights.statement')), `<fluent-checkbox slot="input" class="rights" data-asset="${esc(a.id)}" ${rights.has(a.id) ? 'checked disabled' : ''}></fluent-checkbox>`)}</div>
             </div>
             <fluent-badge appearance="tint" color="${rights.has(a.id) ? 'success' : 'warning'}">${rights.has(a.id) ? trUi('m171') : trUi('m172')}</fluent-badge>
           </div>`).join('')}
+        ${assets.length > 1 ? '<div id="layoutPreview" aria-live="polite"></div>' : ''}
         </div>
       </section>
       <section class="card step-col" aria-labelledby="h-pat">
@@ -481,7 +507,7 @@ async function project(id, showSettings = false) {
               <div class="preset-radio" role="radio" aria-checked="${p.id === selected}" aria-disabled="${!p.available}" tabindex="-1" data-id="${esc(p.id)}">
               <div class="card-head"><span><span class="pid">${esc(p.id)}</span> <b>${esc(p.name)}</b></span>
                 <span class="badges"><fluent-badge appearance="tint" color="informative">${esc(p.genre)}</fluent-badge>${p.available ? `<fluent-badge appearance="tint" color="brand">${trUi('m173', [p.target.duration_sec[0], p.target.duration_sec[1]])}</fluent-badge>` : `<fluent-badge appearance="tint" color="subtle">${trUi('m174')}</fluent-badge>`}</span></div>
-              ${p.card ? `<dl class="facts"><dt>${trUi('m175')}</dt><dd>${esc(p.card.opening)}</dd><dt>${trUi('m176')}</dt><dd>${esc(p.card.tempo)}</dd><dt>${trUi('m177')}</dt><dd>${esc(p.card.telop)}</dd><dt>${trUi('m178')}</dt><dd>${esc(p.card.sound)}</dd></dl>` : ''}
+              ${p.card || layoutIcon(p) ? `<div class="lp-card-row">${layoutIcon(p)}${p.card ? `<dl class="facts"><dt>${trUi('m175')}</dt><dd>${esc(p.card.opening)}</dd><dt>${trUi('m176')}</dt><dd>${esc(p.card.tempo)}</dd><dt>${trUi('m177')}</dt><dd>${esc(p.card.telop)}</dd><dt>${trUi('m178')}</dt><dd>${esc(p.card.sound)}</dd></dl>` : ''}</div>` : ''}
               ${p.available ? '' : `<div class="caption">${esc(p.unavailable_reason)}</div>`}
               </div>
               <div class="caption">${trUi('m179', [p.examples.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>`).join(' / ')])}</div>
@@ -514,8 +540,8 @@ async function project(id, showSettings = false) {
         ${group('sound', trUi('m178'), `
           <label class="caption">BGM <select class="native" id="bgm">
             <option value="auto" ${opts.bgm === 'auto' ? 'selected' : ''}>${trUi('m215')}</option><option value="none" ${opts.bgm === 'none' ? 'selected' : ''}>${trUi('m041')}</option>
-            <option value="scene" ${opts.bgm === 'scene' ? 'selected' : ''}>${trUi('m216', [userBgm.length ? trUi('m198', [userBgm.length]) : trUi('m199')])}</option>
-            ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>${trUi('m201', [esc(b.name), b.source === 'user' ? trUi('m200') : '', b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''])}</option>`).join('')}
+            <option value="scene" ${opts.bgm === 'scene' ? 'selected' : ''}>${trUi('m216', [registeredBgm.length ? trUi('m198', [registeredBgm.length]) : trUi('m199')])}</option>
+            ${bgmList.map(b => `<option value="${esc(b.id)}" ${opts.bgm === b.id ? 'selected' : ''}>${trUi('m201', [esc(b.name), b.source === 'user' ? trUi('m200') : b.source === 'shared' ? trUi('bgm.sharedTag') : '', b.bpm ? ` ${Math.round(b.bpm)}BPM` : ''])}</option>`).join('')}
           </select></label>
           <p class="caption">${trUi('m217')}</p>
           ${field(trUi('m202'), `<fluent-switch slot="input" id="sfx" ${opts.sfx ? 'checked' : ''}></fluent-switch>`)}
@@ -530,7 +556,8 @@ async function project(id, showSettings = false) {
           </div>
           <label class="caption">${trUi('m219')}<input type="text" class="native" id="maskWords" maxlength="400" style="display:block;width:100%;margin-top:4px" value="${esc(opts.mask_words.join('、'))}" placeholder="${trUi('m220')}"></label>
           <details ${userBgm.length ? 'open' : ''}><summary class="caption">${trUi('m221', [userBgm.length ? trUi('m207', [userBgm.length]) : trUi('m208')])}</summary>
-            ${userBgm.length ? `<ul class="notes bgm-list">${userBgm.map(b => `<li><b>${esc(b.name)}</b> <span class="caption">${b.analysis ? trUi('m210', [Number(b.analysis.lufs).toFixed(1), b.analysis.bpm ? trUi('m209', [Math.round(b.analysis.bpm)]) : '', energyWord(b.analysis.energy), Number(b.analysis.energy).toFixed(2), fmt(b.analysis.start), fmt(b.analysis.end)]) : trUi('m211')}</span>
+            ${userBgm.length ? `<ul class="notes bgm-list">${userBgm.map(b => `<li>${bgmItem(b)}
+              <fluent-button size="small" appearance="subtle" data-share-bgm="${esc(b.id)}" aria-label="${trUi('bgm.shareLabel', [esc(b.name)])}">${trUi('bgm.share')}</fluent-button>
               <fluent-button size="small" appearance="subtle" data-del-bgm="${esc(b.id)}" aria-label="${trUi('m212', [esc(b.name)])}">${trUi('m213')}</fluent-button></li>`).join('')}</ul>` : ''}
             <form id="bgmForm" class="stack" style="margin-top:8px">
               <input type="file" id="bgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" class="native" multiple aria-label="${trUi('m222')}">
@@ -538,6 +565,17 @@ async function project(id, showSettings = false) {
               <div><fluent-button type="submit" size="small">${trUi('m223')}</fluent-button></div>
               <p class="caption">${trUi('m224')}</p>
               <div id="bgmMsg" aria-live="polite"></div>
+            </form></details>
+          ${field(trUi('bgm.useShared', [sharedBgm.length]), `<fluent-switch slot="input" id="useSharedBgm" ${opts.use_shared_bgm ? 'checked' : ''}></fluent-switch>`)}
+          <details ${sharedBgm.length && opts.use_shared_bgm ? 'open' : ''}><summary class="caption">${trUi('bgm.sharedTitle', [sharedBgm.length ? trUi('m207', [sharedBgm.length]) : trUi('m208')])}</summary>
+            <p class="caption">${trUi('bgm.sharedHelp')}</p>
+            ${sharedBgm.length ? `<ul class="notes bgm-list">${sharedBgm.map(b => `<li>${bgmItem(b)}
+              <fluent-button size="small" appearance="subtle" data-del-shared="${esc(b.id)}" aria-label="${trUi('bgm.sharedRemoveLabel', [esc(b.name)])}">${trUi('bgm.sharedRemove')}</fluent-button></li>`).join('')}</ul>` : ''}
+            <form id="sharedBgmForm" class="stack" style="margin-top:8px">
+              <input type="file" id="sharedBgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" class="native" multiple aria-label="${trUi('bgm.sharedFile')}">
+              ${field(trUi('m214'), '<fluent-checkbox slot="input" id="sharedBgmRights"></fluent-checkbox>')}
+              <div><fluent-button type="submit" size="small">${trUi('bgm.sharedAdd')}</fluent-button></div>
+              <div id="sharedBgmMsg" aria-live="polite"></div>
             </form></details>`)}
         ${group('pack', trUi('m225'), `
           ${(() => {
@@ -916,33 +954,116 @@ async function project(id, showSettings = false) {
     }, 2000);
     const prev = cleanup; cleanup = () => { clearInterval(t); prev?.(); };
   }
-  $('#bgmForm').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const files = [...$('#bgmFile').files];
-    if (!files.length) { $('#bgmMsg').innerHTML = info(trUi('m372'), 'warning'); return; }
-    const fd = new FormData(); files.forEach(f => fd.append('file', f)); fd.append('rights_confirmed', $('#bgmRights').checked ? 'true' : 'false');
-    $('#bgmMsg').innerHTML = info(trUi('m373', [files.length]));
+  const uploadBgm = async (url, fileInput, rightsInput, msg, flashKey) => {
+    const files = [...fileInput.files];
+    if (!files.length) { msg.innerHTML = info(trUi('m372'), 'warning'); return; }
+    const fd = new FormData(); files.forEach(f => fd.append('file', f)); fd.append('rights_confirmed', rightsInput.checked ? 'true' : 'false');
+    msg.innerHTML = info(trUi('m373', [files.length]));
     try {
-      const r = await fetch(`/api/projects/${id}/bgm`, { method: 'POST', body: fd, headers: { 'X-VideoCreator': '1' } });
+      const r = await fetch(url, { method: 'POST', body: fd, headers: { 'X-VideoCreator': '1' } });
       const data = await r.json(); if (!r.ok) throw Object.assign(new Error(data?.error?.message ?? r.statusText), { code: data?.error?.code });
-      // registering tracks means choosing per scene from them
-      opts.bgm = 'scene'; await saveOpts();
-      sessionStorage.setItem('vc.bgmFlash', trUi('m375', [data.tracks.length, data.skipped.length ? trUi('m374', [data.skipped.map(s => `${s.name}（${s.reason}）`).join('、')]) : '']));
+      const skipped = data.skipped.length ? trUi('m374', [data.skipped.map(s => `${s.name}（${s.reason}）`).join('、')]) : '';
+      // registering tracks this project chooses from means choosing per scene from them
+      if (flashKey === 'm375') { opts.bgm = 'scene'; await saveOpts(); }
+      sessionStorage.setItem(flashKey === 'm375' ? 'vc.bgmFlash' : 'vc.sharedBgmFlash', trUi(flashKey, [data.tracks.length, skipped]));
       router();
-    } catch (e) { $('#bgmMsg').innerHTML = errorBar(e); }
+    } catch (e) { msg.innerHTML = errorBar(e); }
+  };
+  $('#bgmForm').addEventListener('submit', (ev) => { ev.preventDefault(); uploadBgm(`/api/projects/${id}/bgm`, $('#bgmFile'), $('#bgmRights'), $('#bgmMsg'), 'm375'); });
+  $('#sharedBgmForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    uploadBgm('/api/bgm/shared', $('#sharedBgmFile'), $('#sharedBgmRights'), $('#sharedBgmMsg'), opts.use_shared_bgm ? 'm375' : 'bgm.sharedAddedOff');
+  });
+  $('#useSharedBgm').addEventListener('change', async (e) => {
+    opts.use_shared_bgm = e.target.checked;
+    // a specific app-wide track can no longer be chosen by this project
+    if (!opts.use_shared_bgm && sharedBgm.some(b => b.id === opts.bgm)) opts.bgm = userBgm.length ? 'scene' : 'auto';
+    if (await saveOpts()) router();
   });
   $$('[data-del-bgm]').forEach(b => b.addEventListener('click', async () => {
     try {
       await api(`/api/projects/${id}/bgm/${encodeURIComponent(b.dataset.delBgm)}`, { method: 'DELETE' });
-      if (opts.bgm === b.dataset.delBgm) { opts.bgm = userBgm.length > 1 ? 'scene' : 'auto'; await saveOpts(); }
+      if (opts.bgm === b.dataset.delBgm) { opts.bgm = registeredBgm.length > 1 ? 'scene' : 'auto'; await saveOpts(); }
       router();
     } catch (e) { $('#bgmMsg').innerHTML = errorBar(e); }
   }));
+  $$('[data-share-bgm]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      const t = await api(`/api/projects/${id}/bgm/${encodeURIComponent(b.dataset.shareBgm)}/share`, { method: 'POST' });
+      sessionStorage.setItem('vc.sharedBgmFlash', trUi(opts.use_shared_bgm ? 'bgm.shared' : 'bgm.sharedOff', [t.name]));
+      router();
+    } catch (e) { $('#bgmMsg').innerHTML = errorBar(e); }
+  }));
+  $$('[data-del-shared]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api(`/api/bgm/shared/${encodeURIComponent(b.dataset.delShared)}`, { method: 'DELETE' });
+      if (opts.bgm === b.dataset.delShared) { opts.bgm = registeredBgm.length > 1 ? 'scene' : 'auto'; await saveOpts(); }
+      router();
+    } catch (e) { $('#sharedBgmMsg').innerHTML = errorBar(e); }
+  }));
   { const flash = sessionStorage.getItem('vc.bgmFlash'); if (flash) { sessionStorage.removeItem('vc.bgmFlash'); $('#bgmMsg').innerHTML = info(flash, 'success'); } }
+  { const flash = sessionStorage.getItem('vc.sharedBgmFlash'); if (flash) { sessionStorage.removeItem('vc.sharedBgmFlash'); $('#sharedBgmMsg').innerHTML = info(flash, 'success'); $('#sharedBgmForm').closest('details').open = true; } }
   const patchAsset = async (aid, body) => { try { await api(`/api/assets/${aid}`, { method: 'PATCH', body }); router(); } catch (e) { $('#assetMsg').innerHTML = errorBar(e); } };
   $$('select.role').forEach(s => s.addEventListener('change', () => patchAsset(s.dataset.asset, { role: s.value })));
   $$('input.spk').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, i.value ? { speaker: Number(i.value) } : { clear_speaker: true })));
   $$('input.off').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { sync_offset: Number(i.value) })));
+  $$('.pip-scenes').forEach(button => button.addEventListener('click', async () => {
+    const aid = button.dataset.asset, asset = assets.find(a => a.id === aid);
+    const box = $$('.pip-scene-list').find(el => el.dataset.asset === aid);
+    button.disabled = true;
+    box.textContent = trUi('pip.scan');
+    try {
+      const candidates = await api(`/api/assets/${aid}/pip-scenes`, { method: 'POST' });
+      if (gone()) return;
+      const savedScenes = asset.pip_scenes ?? [];
+      const scenes = [...savedScenes, ...candidates.filter(s => !savedScenes.some(w => s.t0 < w.t1 && s.t1 > w.t0))].sort((a, b) => a.t0 - b.t0);
+      // with nothing saved yet, the suggested scenes (deck slides, or a full-screen app) start checked; the editor confirms by saving
+      const checked = s => savedScenes.length ? savedScenes.includes(s) : !!s.suggested;
+      const kindLabel = { slide: trUi('pip.kind.slide'), fullscreen: trUi('pip.kind.fullscreen'), screen: trUi('pip.kind.screen') };
+      const kind = s => s.kind ? `<fluent-badge appearance="tint" color="${s.suggested ? 'brand' : 'subtle'}">${kindLabel[s.kind] ?? kindLabel.screen}</fluent-badge>` : '';
+      const slides = s => s.slides?.length ? `<span class="caption">${trUi('pip.slides', [s.slides.join(', ')])}</span>
+          <div class="row" style="flex-wrap:wrap">${s.slides.slice(0, 6).map(n => `<img loading="lazy" src="/api/assets/${encodeURIComponent(aid)}/slides/${n}" alt="${esc(trUi('pip.slide', [n]))}" style="width:120px">`).join('')}</div>` : '';
+      box.innerHTML = `<p class="caption">${trUi('pip.sceneHelp')}</p>${scenes.map((s, i) => `
+        <div class="pip-scene stack">
+          <img loading="lazy" src="/api/assets/${encodeURIComponent(aid)}/frame?t=${(s.t0 + s.t1) / 2}" alt="${esc(trUi('pip.use', [i + 1]))}" style="width:100%;max-width:480px">
+          <div class="row"><label><input type="checkbox" class="pip-use" ${checked(s) ? 'checked' : ''}> ${trUi('pip.use', [i + 1])}</label>${kind(s)}</div>
+          ${slides(s)}
+          <div class="row"><label>${trUi('pip.start')} <input class="native pip-start" type="number" step="0.01" min="0" max="${asset.media.duration}" value="${s.t0}"></label>
+          <label>${trUi('pip.end')} <input class="native pip-end" type="number" step="0.01" min="0" max="${asset.media.duration}" value="${s.t1}"></label></div>
+        </div>`).join('')}<fluent-button class="pip-save">${trUi('pip.save')}</fluent-button><div class="pip-message" role="status"></div>`;
+      $('.pip-save', box).addEventListener('click', async () => {
+        const message = $('.pip-message', box);
+        const selectedScenes = $$('.pip-scene', box).filter(row => $('.pip-use', row).checked)
+          .map(row => ({ t0: Number($('.pip-start', row).value), t1: Number($('.pip-end', row).value) }));
+        try {
+          await api(`/api/assets/${aid}`, { method: 'PATCH', body: { pip_scenes: selectedScenes } });
+          if (gone()) return;
+          asset.pip_scenes = selectedScenes;
+          message.innerHTML = info(trUi('pip.saved'), 'success');
+        } catch (e) { if (!gone()) message.innerHTML = errorBar(e); }
+      });
+    } catch (e) { if (!gone()) box.innerHTML = errorBar(e); }
+    finally { if (!gone()) button.disabled = false; }
+  }));
+  // optional presentation file: its slides are rendered to sharp images that replace the recorded slide wherever they match
+  $$('input.deck-file').forEach(input => input.addEventListener('change', async () => {
+    const file = input.files?.[0]; if (!file) return;
+    const message = $('.deck-msg', input.closest('.deck-box'));
+    input.disabled = true;
+    message.innerHTML = `<span class="caption">${trUi('deck.rendering', [esc(file.name)])}</span><fluent-progress-bar></fluent-progress-bar>`;
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await fetch(`/api/assets/${encodeURIComponent(input.dataset.asset)}/deck`, { method: 'POST', headers: { 'X-VideoCreator': '1' }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(data?.error?.message ?? res.statusText), { code: data?.error?.code });
+      if (gone()) return;
+      router();
+    } catch (e) { if (!gone()) { message.innerHTML = errorBar(e); input.disabled = false; } }
+  }));
+  $$('.deck-del').forEach(b => b.addEventListener('click', async () => {
+    try { await api(`/api/assets/${encodeURIComponent(b.dataset.asset)}/deck`, { method: 'DELETE' }); if (!gone()) router(); }
+    catch (e) { if (!gone()) $('.deck-msg', b.closest('.deck-box')).innerHTML = errorBar(e); }
+  }));
 
   // file input / drag & drop upload with progress (streams into the project folder)
   const upload = (file) => new Promise((resolve, reject) => {
@@ -973,8 +1094,13 @@ async function project(id, showSettings = false) {
     catch (e) { $('#assetMsg').innerHTML = errorBar(e); }
   }));
   const presetRadios = $$('#presets [role=radio]');
+  const showLayout = () => {
+    const el = $('#layoutPreview'), lp = layouts.find(l => l.preset_id === selected), p = presets.find(x => x.id === selected);
+    if (el) el.innerHTML = lp && p ? layoutPanel(lp, p, assets, roleLabel) : '';
+  };
+  showLayout();
   const choose = (el) => {
-    selected = el.dataset.id; saveOpts();
+    selected = el.dataset.id; saveOpts(); showLayout();
     presetRadios.forEach(c => { c.closest('.preset').classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); });
     // the pattern's pause threshold changes the length after jump cuts, so refresh the series preview
     if (assets.length) api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`).then(e => { if (!gone()) { estimate = e; showSeries(); } }).catch(() => { });

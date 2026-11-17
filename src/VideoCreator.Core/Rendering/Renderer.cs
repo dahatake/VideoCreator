@@ -91,12 +91,38 @@ public sealed partial class Renderer(FFmpeg ff)
             var a = Asset(id);
             idx[id] = args.Count; args.Add(["-i", a.Path]); media[id] = a.Media;
         }
+        // A slide image (P11 with a deck) replaces the recording's picture: a still stream of the clip's length, timed so the clip's trim starts at 0.
+        // A deleted image falls back to the recording.
+        (int, double)? Still(string? path, double t0, double len)
+        {
+            if (path == null || !File.Exists(path)) return null;
+            args.Add(["-loop", "1", "-framerate", plan.Canvas.Fps.ToString(IC), "-t", F(len + 2), "-i", path]);
+            return (args.Count - 1, t0);
+        }
+        bool VideoStill(Clip c) => c.Reframe.Image != null && File.Exists(c.Reframe.Image);
+        bool PipStill(Clip c) => c.Pip?.Image != null && File.Exists(c.Pip.Image);
+        // A pre-cropped, super-resolved piece (final render, see ScreenEnhancer) replaces the recording; its time 0 is the clip's SrcIn.
+        (int, double)? Piece(string? path, double t0)
+        {
+            if (path == null || !File.Exists(path)) return null;
+            args.Add(["-i", path]);
+            return (args.Count - 1, t0);
+        }
+        (int, double)? Own(Clip c) => Still(c.Reframe.Image, c.SrcIn, c.SrcOut - c.SrcIn) ?? Piece(c.Reframe.Video, c.SrcIn);
+        (int, double)? Inset(PipSpec p, Clip c) => Still(p.Image, p.SrcIn, c.SrcOut - c.SrcIn) ?? Piece(p.Video, p.SrcIn);
+        bool OwnFile(Clip c) => VideoStill(c) || c.Reframe.Video != null && File.Exists(c.Reframe.Video);
+        bool InsetFile(Clip c) => PipStill(c) || c.Pip?.Video != null && File.Exists(c.Pip.Video);
         if (plan.Series == null)
         {
-            foreach (var id in plan.Timeline.Select(c => c.AssetId).Distinct()) AddAsset(id);
+            foreach (var id in plan.Timeline.Where(c => !OwnFile(c)).Select(c => c.AssetId).Distinct()) AddAsset(id);
             AddAsset(plan.Audio.Master);
-            foreach (var id in plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId).Distinct()) AddAsset(id);
-            foreach (var c in plan.Timeline) { video.Add((idx[c.AssetId], 0)); audio.Add((idx[plan.Audio.Master], 0)); pip.Add(c.Pip != null ? (idx[c.Pip.AssetId], 0) : (-1, 0)); }
+            foreach (var id in plan.Timeline.Where(c => c.Pip != null && !InsetFile(c)).Select(c => c.Pip!.AssetId).Distinct()) AddAsset(id);
+            foreach (var c in plan.Timeline)
+            {
+                video.Add(Own(c) ?? (idx[c.AssetId], 0));
+                audio.Add((idx[plan.Audio.Master], 0));
+                pip.Add(c.Pip is not { } p ? (-1, 0) : Inset(p, c) ?? (idx[p.AssetId], 0));
+            }
         }
         else
         {
@@ -114,11 +140,12 @@ public sealed partial class Renderer(FFmpeg ff)
             }
             foreach (var c in plan.Timeline)
             {
-                var v = Block(c.AssetId, c.SrcIn, c.SrcOut);
+                var still = Own(c);
+                var v = still ?? Block(c.AssetId, c.SrcIn, c.SrcOut);
                 video.Add(v);
                 // single-source clips read their audio from the same input; other cameras take it from the master's own blocks
-                audio.Add(c.AssetId == plan.Audio.Master && c.AudioIn == null ? v : Block("audio:" + plan.Audio.Master, c.MasterIn, c.MasterOut));
-                pip.Add(c.Pip is { } p ? Block("pip:" + p.AssetId, p.SrcIn, p.SrcIn + (c.SrcOut - c.SrcIn)) : (-1, 0));
+                audio.Add(c.AssetId == plan.Audio.Master && c.AudioIn == null && still == null ? v : Block("audio:" + plan.Audio.Master, c.MasterIn, c.MasterOut));
+                pip.Add(c.Pip is { } p ? Inset(p, c) ?? Block("pip:" + p.AssetId, p.SrcIn, p.SrcIn + (c.SrcOut - c.SrcIn)) : (-1, 0));
             }
             media[plan.Audio.Master] = Asset(plan.Audio.Master).Media;
         }
@@ -319,6 +346,15 @@ public sealed partial class Renderer(FFmpeg ff)
     /// <paramref name="pipHead"/>: the PiP asset's trimmed stream for <see cref="Clip.Pip"/> (null = no inset, e.g. a freeze frame).</summary>
     static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "", string? pipHead = null)
     {
+        if (c.Pip is { Shape: "rectangle" } inset && pipHead != null)
+        {
+            int S(int v) => half ? (v / 2) & ~1 : v;
+            AppendVideo(g, head, c with { Pip = null }, W, H, half, id, $"pb{id}");
+            string crop = inset.CropW > 0 && inset.CropH > 0 ? $",crop={inset.CropW}:{inset.CropH}:{inset.CropX}:{inset.CropY}" : "";
+            g.Append($"{pipHead}{crop},scale={S(inset.Width)}:{S(inset.Height)}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,setsar=1[pi{id}];");
+            g.Append($"[pb{id}][pi{id}]overlay={S(inset.X)}+({S(inset.Width)}-w)/2:{S(inset.Y)}+({S(inset.Height)}-h)/2:shortest=1,setsar=1{post}[{label}];");
+            return;
+        }
         g.Append(head);
         bool zoom = c.Zoom > 1.001;
         if (c.Reframe.Mode == "screen")
@@ -337,6 +373,9 @@ public sealed partial class Renderer(FFmpeg ff)
             if (zoom) g.Append($",scale=iw*{F(c.Zoom)}:ih*{F(c.Zoom)},crop=iw/{F(c.Zoom)}:ih/{F(c.Zoom)}");
             if (c.Reframe.Mode == "fit")
                 g.Append($",scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1{post}[{label}];");
+            else if (c.Reframe.FgScale is > 0 and < 0.999)
+                g.Append($",split[f{id}][b{id}];[b{id}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{id}];" +
+                         $"[f{id}]scale={(int)(W * c.Reframe.FgScale) & ~1}:-2:flags=lanczos[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:{Math.Max(0, half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");
             else
                 g.Append($",split[f{id}][b{id}];[b{id}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{id}];" +
                          $"[f{id}]scale={W}:-2[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");

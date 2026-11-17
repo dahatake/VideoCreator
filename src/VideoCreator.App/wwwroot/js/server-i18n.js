@@ -87,6 +87,7 @@ export function errorMessage(error) {
     'E-ASR-PROVIDER': 'm018', 'E-SOL-INFEASIBLE': 'm019', 'E-QA-HARDFAIL': 'm020',
     'E-PRESET-UNAVAILABLE': 'm021', 'E-RND-FFMPEG': 'm022', 'E-PROJECT-BUSY': 'server.busy',
     'E-FILE-IN-USE': 'm024', 'E-PLAN-STALE': 'm719', CANCELLED: 'm380',
+    'E-BGM-IN-USE': 'bgm.errInUse', 'E-BGM-EXISTS': 'bgm.errExists',
   };
   return serverText(error.message, keys[error.code] ? trUi(keys[error.code]) : trUi('server.error')) || trUi('server.error');
 }
