@@ -10,6 +10,16 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 // same wording as Planning.BgmPlanner.SceneWord / TrackWord
 const energyWord = (e) => e < 0.35 ? trUi('m001') : e < 0.6 ? trUi('m002') : trUi('m003');
 const main = $('#main');
+// Native file-input labels follow the browser language, not the selected interface language.
+function filePicker(input) {
+  return `<span class="file-picker"><span class="file-picker-button" aria-hidden="true">${trUi('m284')}</span><span class="file-picker-name" aria-hidden="true">${trUi('file.none')}</span>${input}</span>`;
+}
+main.addEventListener('change', event => {
+  const input = event.target;
+  if (input instanceof HTMLInputElement && input.type === 'file' && input.closest('.file-picker')) {
+    $('.file-picker-name', input.closest('.file-picker')).textContent = [...input.files].map(file => file.name).join(', ') || trUi('file.none');
+  }
+});
 function videoLanguageOptions(selected) {
   return VIDEO_LANGUAGES.map(value => `<option value="${value}" ${value === selected ? 'selected' : ''}>${trUi(`video.${value}`)}</option>`).join('');
 }
@@ -65,7 +75,8 @@ function field(label, control) { return `<fluent-field label-position="after"><l
 function radioGroup(radios, pick) {
   const enabled = () => radios.filter(r => r.getAttribute('aria-disabled') !== 'true');
   const sync = () => { const en = enabled(); const cur = en.find(r => r.getAttribute('aria-checked') === 'true') ?? en[0]; radios.forEach(r => { r.tabIndex = r === cur ? 0 : -1; }); };
-  const select = (r) => { if (r.getAttribute('aria-disabled') === 'true') return; pick(r); sync(); };
+  // pick(radio, browsing): browsing = reached with an arrow key, so the user may still be moving on
+  const select = (r, browsing = false) => { if (r.getAttribute('aria-disabled') === 'true') return; pick(r, browsing); sync(); };
   radios.forEach(r => {
     r.addEventListener('click', () => select(r));
     r.addEventListener('keydown', (e) => {
@@ -75,12 +86,26 @@ function radioGroup(radios, pick) {
       e.preventDefault();
       const en = enabled(); if (!en.length) return;
       const next = en[(en.indexOf(r) + d + en.length) % en.length];
-      select(next); next.focus();
+      select(next, true); next.focus();
     });
   });
   sync();
   return sync;
 }
+// Role buttons on multi-video asset cards: each icon acts out its role (app.css .role-*), moving only on hover, focus or right after a pick.
+const ROLE_CAM = '<rect x="2" y="10" width="19" height="14" rx="3"/><path d="M21 15l7-4v12l-7-4z"/>';
+const ROLE_ICON = {
+  main: '<rect x="2" y="10" width="17" height="14" rx="3"/><circle cx="10.5" cy="17" r="3"/><path class="role-wave" d="M23 13.5a5 5 0 0 1 0 7"/><path class="role-wave" style="--d:150ms" d="M26.5 10.5a9.5 9.5 0 0 1 0 13"/>',
+  cam_a: `${ROLE_CAM}<circle class="role-rec" cx="6.5" cy="14.5" r="1.8"/><text x="13" y="22" text-anchor="middle">A</text>`,
+  cam_b: `${ROLE_CAM}<circle class="role-rec" cx="6.5" cy="14.5" r="1.8"/><text x="13" y="22" text-anchor="middle">B</text>`,
+  wide: '<g class="role-who"><circle cx="16" cy="13.5" r="3"/><path d="M10.5 22.5a5.5 5.5 0 0 1 11 0"/></g>' +
+    [['M3 9V4h5', -1, -1], ['M24 4h5v5', 1, -1], ['M3 23v5h5', -1, 1], ['M24 28h5v-5', 1, 1]].map(([d, x, y]) => `<path class="role-corner" style="--dx:${x * 2}px;--dy:${y * 2}px" d="${d}"/>`).join(''),
+  audio_master: [[4, 12], [10, 6], [16, 16], [22, 9], [28, 13]].map(([x, h], i) => `<path class="role-bar" style="--d:${i * 110}ms" d="M${x} ${16 - h / 2}v${h}"/>`).join(''),
+  screen: '<rect x="2" y="4" width="28" height="18" rx="2"/><path d="M11 28h10M16 22v6"/>' +
+    [[8, 14], [8, 10], [8, 12]].map(([x, w], i) => `<path class="role-line" style="--d:${i * 180}ms" d="M${x} ${9 + i * 4}h${w}"/>`).join(''),
+};
+let rolePicked = null, roleFocus = null;
+const roleIcon = (k) => `<svg class="role-ico role-ico-${k}" viewBox="0 0 32 32" aria-hidden="true" focusable="false">${ROLE_ICON[k]}</svg>`;
 function safeToggle() { return field(trUi('m026'), '<fluent-switch slot="input" class="safe-toggle"></fluent-switch>'); }
 function wireSafeToggle(root = main) {
   $$('.safe-toggle', root).forEach(sw => sw.addEventListener('change', () => root.classList.toggle('show-safe', sw.checked)));
@@ -475,10 +500,15 @@ async function project(id, showSettings = false) {
         ${assets.map((a, ai) => `
           <div class="asset">
             <div>
-              ${assets.length > 1 ? assetChip(ai) : ''}<b>${esc(a.path.split(/[\\/]/).pop())}</b>
+              ${assets.length > 1 ? assetChip(ai) : ''}<b id="asset-name-${esc(a.id)}">${esc(a.path.split(/[\\/]/).pop())}</b>
               <div class="caption">${fmt(a.media.duration)} · ${a.media.width}×${a.media.height} · ${a.media.fps.toFixed(2)}fps${a.media.vfr ? '（VFR）' : ''} · ${a.media.audio_channels ? trUi('m165') : trUi('m166')} · ${esc(a.media.video_codec)}</div>
               ${a.warnings.map(w => `<div class="caption warn">${esc(serverText(w))}</div>`).join('')}
-              ${assets.length > 1 ? `<div class="row" style="margin:8px 0"><label class="caption">${trUi('m167')} <select class="native role" data-asset="${esc(a.id)}">${Object.entries(roleLabel).map(([k, v]) => `<option value="${k}" ${a.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+              ${assets.length > 1 ? `<div class="role-field"><span class="caption" id="role-label-${esc(a.id)}">${trUi('m167')}</span>
+                <div class="role-pick" role="radiogroup" aria-labelledby="role-label-${esc(a.id)} asset-name-${esc(a.id)}" data-asset="${esc(a.id)}">${Object.entries(roleLabel).map(([k, v]) => {
+                  const since = a.role === k && rolePicked?.asset === a.id && rolePicked.role === k ? performance.now() - rolePicked.t : Infinity;
+                  return `<div class="role-opt${since < 2400 ? ' picked' : ''}" role="radio" aria-checked="${a.role === k}" tabindex="-1" data-role="${k}"${since < 2400 ? ` style="--since:${since.toFixed(0)}ms"` : ''}>${roleIcon(k)}<span>${v}</span></div>`;
+                }).join('')}</div></div>
+                <div class="row" style="margin:8px 0">
                 <label class="caption">${trUi('m168')} <input class="native spk" type="number" min="1" max="8" style="width:64px" data-asset="${esc(a.id)}" value="${a.speaker ?? ''}" placeholder="${trUi('m169')}"></label>
                 <label class="caption">${trUi('m170')} <input class="native off" type="number" step="0.001" style="width:96px" data-asset="${esc(a.id)}" value="${a.sync_offset ?? 0}"></label>
                 <span class="caption">${esc(syncText(a))}</span></div>` : ''}
@@ -486,7 +516,7 @@ async function project(id, showSettings = false) {
                 <div class="stack deck-box" data-asset="${esc(a.id)}">
                   ${a.deck ? `<span class="caption">${trUi('deck.status', [new Set(a.deck.slides.map(s => s.number)).size, a.slide_spans?.length ?? 0])}${a.deck.slides.some(s => s.step > 0) ? ` · ${trUi('deck.steps', [a.deck.slides.filter(s => s.step > 0).length])}` : ''}${a.deck.source === 'libreoffice' ? ` · ${trUi('deck.libreoffice')}` : ''}</span>
                     <fluent-button class="deck-del" data-asset="${esc(a.id)}">${trUi('deck.remove')}</fluent-button>`
-                  : `<label class="caption">${trUi('deck.add')} <input type="file" class="deck-file" data-asset="${esc(a.id)}" accept=".pptx,.ppsx,.ppt,.pps,.zip"></label>`}
+                  : `<label class="caption">${trUi('deck.add')} ${filePicker(`<input type="file" class="deck-file" data-asset="${esc(a.id)}" accept=".pptx,.ppsx,.ppt,.pps,.zip" aria-label="${trUi('deck.add')}">`)}</label>`}
                   <span class="caption">${trUi('deck.help')}</span>
                   <div class="deck-msg" role="status" aria-live="polite"></div>
                 </div>
@@ -560,7 +590,7 @@ async function project(id, showSettings = false) {
               <fluent-button size="small" appearance="subtle" data-share-bgm="${esc(b.id)}" aria-label="${trUi('bgm.shareLabel', [esc(b.name)])}">${trUi('bgm.share')}</fluent-button>
               <fluent-button size="small" appearance="subtle" data-del-bgm="${esc(b.id)}" aria-label="${trUi('m212', [esc(b.name)])}">${trUi('m213')}</fluent-button></li>`).join('')}</ul>` : ''}
             <form id="bgmForm" class="stack" style="margin-top:8px">
-              <input type="file" id="bgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" class="native" multiple aria-label="${trUi('m222')}">
+              ${filePicker(`<input type="file" id="bgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" multiple aria-label="${trUi('m222')}">`)}
               ${field(trUi('m214'), '<fluent-checkbox slot="input" id="bgmRights"></fluent-checkbox>')}
               <div><fluent-button type="submit" size="small">${trUi('m223')}</fluent-button></div>
               <p class="caption">${trUi('m224')}</p>
@@ -572,7 +602,7 @@ async function project(id, showSettings = false) {
             ${sharedBgm.length ? `<ul class="notes bgm-list">${sharedBgm.map(b => `<li>${bgmItem(b)}
               <fluent-button size="small" appearance="subtle" data-del-shared="${esc(b.id)}" aria-label="${trUi('bgm.sharedRemoveLabel', [esc(b.name)])}">${trUi('bgm.sharedRemove')}</fluent-button></li>`).join('')}</ul>` : ''}
             <form id="sharedBgmForm" class="stack" style="margin-top:8px">
-              <input type="file" id="sharedBgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" class="native" multiple aria-label="${trUi('bgm.sharedFile')}">
+              ${filePicker(`<input type="file" id="sharedBgmFile" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" multiple aria-label="${trUi('bgm.sharedFile')}">`)}
               ${field(trUi('m214'), '<fluent-checkbox slot="input" id="sharedBgmRights"></fluent-checkbox>')}
               <div><fluent-button type="submit" size="small">${trUi('bgm.sharedAdd')}</fluent-button></div>
               <div id="sharedBgmMsg" aria-live="polite"></div>
@@ -1004,7 +1034,23 @@ async function project(id, showSettings = false) {
   { const flash = sessionStorage.getItem('vc.bgmFlash'); if (flash) { sessionStorage.removeItem('vc.bgmFlash'); $('#bgmMsg').innerHTML = info(flash, 'success'); } }
   { const flash = sessionStorage.getItem('vc.sharedBgmFlash'); if (flash) { sessionStorage.removeItem('vc.sharedBgmFlash'); $('#sharedBgmMsg').innerHTML = info(flash, 'success'); $('#sharedBgmForm').closest('details').open = true; } }
   const patchAsset = async (aid, body) => { try { await api(`/api/assets/${aid}`, { method: 'PATCH', body }); router(); } catch (e) { $('#assetMsg').innerHTML = errorBar(e); } };
-  $$('select.role').forEach(s => s.addEventListener('change', () => patchAsset(s.dataset.asset, { role: s.value })));
+  $$('.role-pick').forEach(group => {
+    const aid = group.dataset.asset, saved = assets.find(a => a.id === aid)?.role;
+    const radios = $$('[role=radio]', group);
+    let timer = 0;
+    radioGroup(radios, (el, browsing) => {
+      radios.forEach(r => { r.setAttribute('aria-checked', String(r === el)); if (r !== el) r.classList.remove('picked'); });
+      // replay the pick feedback right away; after the save re-renders the card it resumes from the same point (--since)
+      el.classList.remove('picked'); el.style.removeProperty('--since'); void el.offsetWidth; el.classList.add('picked');
+      rolePicked = { asset: aid, role: el.dataset.role, t: performance.now() };
+      clearTimeout(timer);
+      const save = () => { if (el.dataset.role === saved) return; roleFocus = group.contains(document.activeElement) ? aid : null; patchAsset(aid, { role: el.dataset.role }); };
+      // arrow keys select as they move, so only the role the user stops on is saved
+      if (browsing) timer = setTimeout(save, 450); else save();
+    });
+    // router() focuses main once this route returns, so give focus back to the role buttons after that
+    if (roleFocus === aid) { roleFocus = null; setTimeout(() => { if (!gone()) group.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true }); }); }
+  });
   $$('input.spk').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, i.value ? { speaker: Number(i.value) } : { clear_speaker: true })));
   $$('input.off').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { sync_offset: Number(i.value) })));
   $$('.pip-scenes').forEach(button => button.addEventListener('click', async () => {

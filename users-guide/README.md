@@ -1,6 +1,12 @@
 # VideoCreator 利用者ガイド
 
-[English](../locales/en/users-guide/README.md) | [简体中文](../locales/zh-CN/users-guide/README.md) | [한국어](../locales/ko/users-guide/README.md)
+<!-- language-nav -->
+[日本語](README.md) | [English](en/README.md) | [한국어](ko/README.md) | [简体中文](zh-CN/README.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
+[English](en/README.md) | [简体中文](zh-CN/README.md) | [한국어](ko/README.md)
 
 [アプリREADME](../README.md)
 

@@ -1,5 +1,11 @@
 # 困ったとき：エラー、QA、保存
 
+<!-- language-nav -->
+[日本語](troubleshooting.md) | [English](en/troubleshooting.md) | [한국어](ko/troubleshooting.md) | [简体中文](zh-CN/troubleshooting.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [クイックスタート](quickstart.md) / [画面説明](screens.md) / [設定とAPI](configuration-api.md) / [検証と保守](verification.md)
 
 ## 最初に切り分ける

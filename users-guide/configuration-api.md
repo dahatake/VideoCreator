@@ -1,5 +1,11 @@
 # 設定・APIリファレンス
 
+<!-- language-nav -->
+[日本語](configuration-api.md) | [English](en/configuration-api.md) | [한국어](ko/configuration-api.md) | [简体中文](zh-CN/configuration-api.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [クイックスタート](quickstart.md) / [画面](screens.md) / [困ったとき](troubleshooting.md) / [構成・拡張](technical-reference.md) / [検証と保守](verification.md)
 
 ## 起動設定
@@ -101,7 +107,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | QA承認 | PUT `/editplans/{id}/qa/approval` | `plan_hash`、`checks:[{check_id,result_hash}]`、`approved`。結果の確認記録。falseで取り消し |
 | Preview | POST `/editplans/{id}/preview` | その計画のプレビュー再作成 |
 | Preview | GET `/editplans/{id}/preview/progress` | running、progress、step |
-| 直接出力 | POST `/editplans/{id}/render` | 計画QAを確認して単独書き出し受付 |
+| 直接出力 | POST `/editplans/{id}/render` | 候補承認→承認PlanHash一致→計画ハードQA→処理中の順に検証し、単独書き出し受付 |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled等。`notes` は書き出し時の補足（拡大表示する画面録画の高画質化の採否と実測値など） |
 | Render | POST `/renders/{id}/cancel` | queuedのみ取り消し |
 | Artifacts | GET `/renders/{id}/artifacts` | 完了した書き出しの `path`（絶対パス）、`available`、`files:[{key,path,available,preview_type}]`。種類は `video` / `image` / `text`（非対応は省略）。記録済み成果物のみで、投稿文を生成しない |

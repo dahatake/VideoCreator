@@ -5,15 +5,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { catalogs } from '../src/VideoCreator.App/wwwroot/js/i18n.js';
+import { presetDisplays } from '../src/VideoCreator.App/wwwroot/js/server-resources.js';
 
 const root = fileURLToPath(new URL('../src/VideoCreator.App/wwwroot/', import.meta.url));
 const output = fileURLToPath(new URL('./localization-artifacts/', import.meta.url));
 await fs.mkdir(output, { recursive: true });
-const presets = await Promise.all(Array.from({ length: 10 }, (_, i) => fs.readFile(new URL(`../presets/P${i + 1}.json`, import.meta.url), 'utf8').then(text => ({ examples: [], ...JSON.parse(text) }))));
+const presets = await Promise.all(Array.from({ length: 11 }, (_, i) => fs.readFile(new URL(`../presets/P${i + 1}.json`, import.meta.url), 'utf8').then(text => ({ examples: [], ...JSON.parse(text) }))));
 const writes = [];
 let busyLanguageChange = false;
 let delayProjectRead = false;
 const project = { id: 'p1', name: 'USER 日本語 <name>', directory: 'C:\\Videos\\fixture', language: 'ja-JP', proper_nouns: [], created_at: '2026-11-11T00:00:00Z' };
+const assets = [{ id: 'a1', path: 'C:\\Media\\USER 日本語.mp4', media: { duration: 300, width: 1920, height: 1080, fps: 30, audio_channels: 2, video_codec: 'h264' }, role: 'main', warnings: [] }];
+const sharedBgm = [];
 const qa = [
   { check_id: 'H-07', status: 'fail', message: 'テロップの未出現語（内容の忠実性は別途確認）', measured: '1', threshold: '0 ungrounded claims', stage: 'plan', items: [{ target: 't1', kind: 'telop', detail: '「MEDIA 日本語」が発話にありません', start: 0, end: 2 }], advice: { repair: 'ai', fixable: 1, recommendation: '発話に出てこない数字・固有名詞をテロップから外し、発話どおりの表現にします。' } },
   { check_id: 'S-01', status: 'pass', message: '字幕速度', measured: 'ok', threshold: '≤6 文字/秒', stage: 'plan', items: [] },
@@ -56,14 +60,17 @@ const server = createServer(async (request, response) => {
       await new Promise(resolve => setTimeout(resolve, 200));
     }
     const fixtures = {
-      '/api/health': { version: 'test', informational_version: 'fixture', ffmpeg: 'available', missing_filters: [], presets: 10, llm_provider: 'none', asr: 'none', local_only: true },
+      '/api/health': { version: 'test', informational_version: 'fixture', ffmpeg: 'available', missing_filters: [], presets: presets.length, llm_provider: 'none', asr: 'none', local_only: true },
       '/api/settings': settings,
       '/api/settings/projects-dir': { source: 'default', path: 'C:\\Videos', projects: 1 },
       '/api/projects': [{ ...project, assets: 0, last_job: job }],
-      '/api/projects/p1': { project, assets: [{ id: 'a1', path: 'C:\\Media\\USER 日本語.mp4', media: { duration: 300, width: 1920, height: 1080, fps: 30, audio_channels: 2, video_codec: 'h264' }, role: 'main', warnings: [] }], rights: [], rights_statement: 'この素材の著作権・肖像権などの権利を自分が持っている、または権利者から利用の許諾を得ています。', jobs: [job], resume_state: { step: 'project' } },
+      '/api/projects/p1': { project, assets, rights: [], rights_statement: 'この素材の著作権・肖像権などの権利を自分が持っている、または権利者から利用の許諾を得ています。', jobs: [job], resume_state: { step: 'project' } },
       '/api/projects/p1/estimate': { duration: 300, scopes: ['economy', 'balanced', 'full'].map(scope => ({ scope, share: 1, cost: { estimated_jpy: 2.5, asr_minutes: 5, llm_input_tokens: 1200, basis: 'Azure Retail Prices API (JPY, japaneast, 2026:11-07)' } })) },
       '/api/presets': presets,
       '/api/bgm': [{ id: 'upbeat', name: 'アップテンポ（120 BPM）', source: 'library', bpm: 120 }],
+      '/api/bgm/shared': sharedBgm,
+      '/api/projects/p1/layouts': [],
+      '/api/assets/a2/pip-scenes': [{ t0: 2, t1: 8, kind: 'slide', suggested: true }],
       '/api/brandkit': { registered: false, opening: null, closing: null, card_images: 0 },
       '/api/projects/p1/patterns': [{ job, preset_names: ['切り抜き（長尺→30秒）'], candidates: 1, approved: 0, exported: 0 }],
       '/api/jobs/j1': job,
@@ -139,8 +146,10 @@ try {
     await screenshot(`${locale}-project`);
     assert.ok((await page.locator('.asset').textContent()).includes('USER 日本語.mp4'), 'uploaded filename preserved');
     if (locale !== 'ja') assert.ok(!(await page.locator('.asset').textContent()).includes('肖像権'), 'rights statement translated');
-    const presetName = await page.locator('[data-id="P4"] b').textContent();
-    assert.equal(presetName.includes('切り抜き'), locale === 'ja', `${locale}: stable preset metadata`);
+    for (const preset of presets) {
+      const expected = locale === 'ja' ? preset.name : presetDisplays[preset.id][locale][0];
+      assert.equal(await page.locator(`[data-id="${preset.id}"] b`).textContent(), expected, `${locale}: ${preset.id} display name`);
+    }
     await page.reload(); await page.locator('#gen').waitFor();
     assert.equal(await page.locator('html').getAttribute('lang'), locale, 'persisted UI language');
     await page.locator('#settings-btn').click();
@@ -209,9 +218,50 @@ try {
   await restricted.waitForFunction(() => document.documentElement.lang === 'en' && !document.querySelector('#ui-language').disabled);
   assert.equal(await restricted.locator('#gen').count(), 1, 'language switching works when storage is denied');
   await restricted.close();
+  assets.push({ ...assets[0], id: 'a2', path: 'C:\\Media\\資料 USER.mp4', role: 'screen', sync_method: 'audio-map', sync_map: [{ d: 0.1 }, { d: 0.2 }] });
+  sharedBgm.push({ id: 'shared1', name: 'USER 共通曲.mp3', source: 'shared' });
+  for (const locale of ['ja', 'en', 'zh-CN', 'ko']) {
+    await route('#/p/p1/settings', '#project-video-language');
+    await switchLocale(locale);
+    await page.locator('[data-id="P11"]').click();
+    assert.equal(await page.locator('[data-id="P11"]').getAttribute('aria-checked'), 'true');
+    assert.equal(await page.locator('.pip-scenes').textContent(), catalogs[locale]['pip.scenes']);
+    assert.ok((await page.locator('.deck-box').textContent()).includes(catalogs[locale]['deck.help']), `${locale}: presentation guidance`);
+    const sound = page.locator('[data-group="sound"]');
+    assert.ok((await sound.textContent()).includes(catalogs[locale]['bgm.sharedHelp']), `${locale}: app-wide BGM guidance`);
+    assert.ok((await sound.textContent()).includes('USER 共通曲.mp3'), 'shared filenames are preserved');
+    for (const selector of ['#bgmFile', '#sharedBgmFile', '.deck-file']) {
+      const input = page.locator(selector);
+      const picker = input.locator('..');
+      assert.equal(await picker.locator('.file-picker-button').textContent(), catalogs[locale].m284);
+      assert.equal(await picker.locator('.file-picker-name').textContent(), catalogs[locale]['file.none']);
+      assert.equal(await input.evaluate(el => getComputedStyle(el).opacity), '0', 'native browser-language text is not visible');
+      assert.ok(await input.getAttribute('aria-label'), 'file picker has an accessible name');
+    }
+    const bgmFiles = page.locator('#bgmFile');
+    await bgmFiles.evaluate(el => { el.closest('details').open = true; });
+    await bgmFiles.focus();
+    assert.equal(await bgmFiles.evaluate(el => document.activeElement === el), true, 'file picker is keyboard focusable');
+    const chooserOpened = page.waitForEvent('filechooser');
+    await bgmFiles.press('Space');
+    const chooser = await chooserOpened;
+    assert.equal(chooser.isMultiple(), true, 'keyboard activation retains multiple-file selection');
+    await chooser.setFiles([
+      { name: 'USER 日本語 <one>.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('fixture') },
+      { name: 'USER 두번째.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('fixture') },
+    ]);
+    assert.equal(await bgmFiles.locator('..').locator('.file-picker-name').textContent(), 'USER 日本語 <one>.mp3, USER 두번째.mp3', 'selected filenames remain verbatim');
+    await bgmFiles.setInputFiles([]);
+    assert.equal(await bgmFiles.locator('..').locator('.file-picker-name').textContent(), catalogs[locale]['file.none'], 'cleared selection is localized');
+    await page.locator('.pip-scenes').click();
+    await page.locator('.pip-save').waitFor();
+    assert.equal(await page.locator('.pip-save').textContent(), catalogs[locale]['pip.save']);
+    assert.ok((await page.locator('.pip-scene-list').textContent()).includes(catalogs[locale]['pip.kind.slide']));
+    await screenshot(`${locale}-pip-scenes`);
+  }
   assert.equal(writes.filter(w => w.path === '/api/projects/p1' && w.body.language).length, languageWriteCount, 'UI switching never writes video language');
   assert.deepEqual(errors, [], 'browser JS errors');
-  console.log(`PASS: 4 languages × home, project, settings, progress, candidates, review, exports, artifacts, delete; language contract/rollback, persistence, draft/media preservation, in-flight saves, stale routes and blocked storage. Screenshots: ${output}`);
+  console.log(`PASS: 4 languages × home, project, settings, progress, candidates, review, exports, artifacts, delete, P11 scenes and shared BGM; all 11 presets, language contract/rollback, persistence, draft/media preservation, in-flight saves, stale routes and blocked storage. Screenshots: ${output}`);
 } catch (error) {
   console.error('Browser errors:', errors, '\nPage:', await page.locator('body').innerText());
   await screenshot('failure');

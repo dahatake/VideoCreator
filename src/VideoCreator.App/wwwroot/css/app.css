@@ -26,6 +26,12 @@ p { margin: 0 0 var(--s12); }
 .caption { font-size: 12px; line-height: 16px; color: var(--colorNeutralForeground3, #616161); }
 select.native, input.native { font: inherit; font-size: 14px; min-height: 32px; padding: 4px 8px; color: var(--colorNeutralForeground1); background: var(--colorNeutralBackground1); border: 1px solid var(--colorNeutralStroke1, #d1d1d1); border-bottom-color: var(--colorNeutralStrokeAccessible, #616161); border-radius: var(--borderRadiusMedium, 4px); }
 select.native:focus-visible, input.native:focus-visible { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 1px; }
+.file-picker { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s8); min-width: 0; padding: var(--s4); border-radius: var(--borderRadiusMedium, 4px); }
+.file-picker-button { padding: var(--s4) var(--s8); background: var(--colorNeutralBackground1, #fff); border: 1px solid var(--colorNeutralStroke1, #d1d1d1); border-radius: var(--borderRadiusMedium, 4px); }
+.file-picker-name { overflow-wrap: anywhere; min-width: 0; }
+.file-picker input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.file-picker:has(input:focus-visible) { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 1px; }
+.file-picker:has(input:disabled) { opacity: .5; }
 .muted { color: var(--colorNeutralForeground3, #616161); }
 .muted-box { opacity: .45; }
 .skip { position: absolute; left: -999px; } .skip:focus { left: var(--s8); top: var(--s8); z-index: 10; background: var(--colorNeutralBackground1); padding: var(--s8); }
@@ -321,3 +327,41 @@ details.help p { margin: var(--s4) 0 0; }
 .lp-notes { margin: var(--s8) 0 0; padding-left: 1.2em; }
 .lp-notes li.warn { color: var(--colorPaletteDarkOrangeForeground1, #bc4b09); }
 @media (prefers-reduced-motion: reduce) { .lp-beat, .lp-now { animation: none !important; } }
+
+/* role buttons on multi-video asset cards (app.js ROLE_ICON): each icon acts out its role on hover / focus / right after a pick */
+.role-field { display: grid; gap: var(--s4); margin: var(--s8) 0 0; }
+.role-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--s4); }
+.role-opt { --role-fg: var(--colorNeutralForeground2, #424242); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; min-height: 64px; box-sizing: border-box; cursor: pointer; text-align: center; font-size: 12px; line-height: 16px; color: var(--colorNeutralForeground1, #242424); border: 1px solid var(--colorNeutralStroke1, #d1d1d1); border-radius: var(--borderRadiusMedium, 4px); background: var(--colorNeutralBackground1, #fff); user-select: none; transition: background-color var(--durationFaster, 100ms) var(--curveEasyEase, ease), border-color var(--durationFaster, 100ms), box-shadow var(--durationFaster, 100ms); }
+.role-opt:hover { background: var(--colorNeutralBackground1Hover, #f5f5f5); border-color: var(--colorNeutralStroke1Hover, #c7c7c7); }
+.role-opt:active { background: var(--colorNeutralBackground1Pressed, #e0e0e0); }
+.role-opt:focus-visible { outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: 1px; }
+.role-opt[aria-checked="true"] { --role-fg: var(--colorBrandForeground1, #0f6cbd); background: var(--colorBrandBackground2, #ebf3fc); border-color: var(--colorBrandStroke1, #0f6cbd); box-shadow: inset 0 0 0 1px var(--colorBrandStroke1, #0f6cbd); font-weight: 600; }
+.role-ico { width: 28px; height: 28px; flex: none; color: var(--role-fg); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.role-ico text { font: 700 9px system-ui, sans-serif; fill: currentColor; stroke: none; }
+.role-ico .role-rec { fill: var(--colorPaletteRedForeground1, #c4314b); stroke: none; opacity: .35; }
+.role-ico .role-wave, .role-ico .role-bar, .role-ico .role-line, .role-ico .role-who, .role-ico .role-corner { transform-box: fill-box; transform-origin: center; }
+.role-ico .role-line { transform-origin: left center; }
+.role-opt[aria-checked="true"] .role-rec { opacity: 1; }
+/* the motion: looping while pointed at or focused; two rounds right after a pick (--since resumes it after the card re-renders) */
+.role-opt:is(:hover, :focus-visible) .role-wave { animation: role-wave 1.2s var(--d, 0ms) ease-out infinite; }
+.role-opt:is(:hover, :focus-visible) .role-rec { animation: role-rec 1s steps(1) infinite; }
+.role-opt:is(:hover, :focus-visible) .role-who { animation: role-who 1.6s ease-in-out infinite; }
+.role-opt:is(:hover, :focus-visible) .role-corner { animation: role-corner 1.6s ease-in-out infinite; }
+.role-opt:is(:hover, :focus-visible) .role-bar { animation: role-bar .9s var(--d, 0ms) ease-in-out infinite; }
+.role-opt:is(:hover, :focus-visible) .role-line { animation: role-line 1.6s var(--d, 0ms) ease-out infinite; }
+.role-opt.picked { animation: role-pop 320ms calc(-1 * var(--since, 0ms)) var(--curveDecelerateMid, cubic-bezier(0, 0, 0, 1)); }
+.role-opt.picked .role-wave { animation: role-wave 1.2s calc(var(--d, 0ms) - var(--since, 0ms)) ease-out 2; }
+.role-opt.picked .role-rec { animation: role-rec 1s calc(-1 * var(--since, 0ms)) steps(1) 2; }
+.role-opt.picked .role-who { animation: role-who 1.6s calc(-1 * var(--since, 0ms)) ease-in-out 1; }
+.role-opt.picked .role-corner { animation: role-corner 1.6s calc(-1 * var(--since, 0ms)) ease-in-out 1; }
+.role-opt.picked .role-bar { animation: role-bar .9s calc(var(--d, 0ms) - var(--since, 0ms)) ease-in-out 2; }
+.role-opt.picked .role-line { animation: role-line 1.6s calc(var(--d, 0ms) - var(--since, 0ms)) ease-out 1; }
+@keyframes role-pop { 0% { transform: scale(.94); } 60% { transform: scale(1.04); } 100% { transform: scale(1); } }
+@keyframes role-wave { 0% { opacity: 0; transform: translateX(-3px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(2px); } }
+@keyframes role-rec { 0% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes role-who { 50% { transform: scale(.72); } }
+@keyframes role-corner { 50% { translate: var(--dx) var(--dy); } }
+@keyframes role-bar { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.35); } }
+@keyframes role-line { 0% { transform: scaleX(0); } 45%, 100% { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .role-opt, .role-opt * { animation: none !important; transition: none !important; } }
+@media (forced-colors: active) { .role-opt[aria-checked="true"] { outline: 2px solid Highlight; outline-offset: -2px; } .role-ico .role-rec { fill: CanvasText; } }

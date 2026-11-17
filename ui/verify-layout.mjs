@@ -46,9 +46,9 @@ try {
   if (shotDir) await panel.screenshot({ path: `${shotDir}/layout-unset.png` });
 
   // choose roles in the UI → the page reloads the sketch with the new assignment
-  await page.locator(`select.role[data-asset="${cam.id}"]`).selectOption('main');
+  await page.locator(`.role-pick[data-asset="${cam.id}"] [data-role="main"]`).click();
   await panel.locator('svg.lp-large').waitFor();
-  await page.locator(`select.role[data-asset="${screen.id}"]`).selectOption('screen');
+  await page.locator(`.role-pick[data-asset="${screen.id}"] [data-role="screen"]`).click();
   await page.waitForFunction(() => !document.querySelector('#layoutPreview')?.textContent.includes('役割が「画面」'), null, { timeout: 10000 }).catch(() => { });
   await request(`/assets/${screen.id}`, 'PATCH', { pip_scenes: [{ t0: 2, t1: 8 }] });
   await page.reload();
@@ -74,6 +74,31 @@ try {
   await page.waitForTimeout(300);
   const still = await visibleBeat();
   check(still.length === 1 && still[0] === 'pip', `reduced motion shows the PiP layout still: ${still}`);
+  const camRoles = page.locator(`.role-pick[data-asset="${cam.id}"]`);
+  const anim = (role, part) => camRoles.locator(`[data-role="${role}"] .${part}`).first().evaluate(e => getComputedStyle(e).animationName);
+  await camRoles.locator('[data-role="wide"]').hover();
+  check(await anim('wide', 'role-corner') === 'none', 'reduced motion: role icons stay still on hover');
+
+  // role buttons: a labelled radio group per video whose icon acts out the role, saved once when arrow keys stop
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  check(await page.getByRole('radiogroup', { name: /役割/ }).count() === 2, 'each video has a labelled role radio group');
+  check(await camRoles.getByRole('radio').count() === 6 && await camRoles.locator('[aria-checked="true"]').getAttribute('data-role') === 'main', 'six role options, the saved role is checked');
+  await camRoles.locator('[data-role="wide"]').hover();
+  check(await anim('wide', 'role-corner') === 'role-corner' && await anim('screen', 'role-line') === 'none', 'only the pointed role animates');
+  const patches = [];
+  page.on('request', r => { if (r.method() === 'PATCH' && r.url().endsWith(`/assets/${cam.id}`)) patches.push(r.postDataJSON()); });
+  await camRoles.locator('[aria-checked="true"]').focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowRight');
+  check(await camRoles.locator('[aria-checked="true"]').getAttribute('data-role') === 'wide', 'arrow keys move the selection immediately');
+  await page.waitForTimeout(1500);
+  check(patches.length === 1 && patches[0].role === 'wide', `one save for the role the keys stopped on: ${JSON.stringify(patches)}`);
+  check((await request(`/projects/${project.id}`)).assets.find(a => a.id === cam.id).role === 'wide', 'the server has the new role');
+  check(await page.evaluate(id => document.activeElement?.matches(`.role-pick[data-asset="${id}"] [data-role="wide"][aria-checked="true"]`), cam.id), 'focus stays on the picked role after the card re-renders');
+  if (shotDir) await page.locator('.asset').first().screenshot({ path: `${shotDir}/role-buttons.png` });
+  const saved = page.waitForResponse(r => r.request().method() === 'PATCH' && r.url().endsWith(`/assets/${cam.id}`));
+  await camRoles.locator('[data-role="main"]').click();
+  await saved;
+  check((await request(`/projects/${project.id}`)).assets.find(a => a.id === cam.id).role === 'main', 'a click saves right away');
   check(errors.length === 0, `no page errors ${errors.join(' | ')}`);
   console.log(`${count} checks passed`);
 } finally {

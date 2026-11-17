@@ -5,6 +5,12 @@ description: 動画ファイル1本から、VideoCreator の編集パターン�
 
 # VideoCreator for Microsoft 365 Copilot Cowork
 
+<!-- language-nav -->
+[日本語](VideoCreator-Prompt.md) | [English](../users-guide/en/work/VideoCreator-Prompt.md) | [한국어](../users-guide/ko/work/VideoCreator-Prompt.md) | [简体中文](../users-guide/zh-CN/work/VideoCreator-Prompt.md)
+<!-- /language-nav -->
+
+[利用者ガイド](../users-guide/README.md)
+
 このファイルは、ローカルアプリ「VideoCreator」が行っている編集（書き起こし → 見どころ選び → 無音カット → 縦型化 → 字幕・見出し → 音量調整 → 自動チェック）を、Copilot Cowork で再現するためのプロンプトです。前半は**あなた（人）が読む使い方**、後半は **Cowork が読む指示**です。
 
 ---

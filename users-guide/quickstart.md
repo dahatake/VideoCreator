@@ -1,8 +1,26 @@
 # クイックスタート：最初の1本を作る
 
+<!-- language-nav -->
+[日本語](quickstart.md) | [English](en/quickstart.md) | [한국어](ko/quickstart.md) | [简体中文](zh-CN/quickstart.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [画面説明](screens.md) / [困ったとき](troubleshooting.md) / [設定・API](configuration-api.md)
 
 **ゴール**：発話のある動画1本からP4の候補を作り、内容を確認して1080×1920のMP4と字幕などを保存します。処理時間は素材・PC・サービスの状況で変わるため、一定時間での完了は保証しません。
+
+## 始める前に：管理者と分担する
+
+一般の利用者がクラウドのリソースを作ったり、アクセス権を自分で広げたりする必要はありません。次の引き継ぎが済んでから進めてください。
+
+| 担当 | 確認すること |
+|---|---|
+| 利用者 | 使ってよい動画、出演者・資料・音楽の許諾、音声・書き起こしの社外送信可否、投稿前の確認担当 |
+| 管理者・社内IT | 会社で認めた配布物、ツールの導入可否、利用アカウントと接続先、必要な権限、設定ファイル、費用負担先と利用上限の運用、問い合わせ先 |
+| 一緒に確認 | サインインするアカウントと設定先が一致すること。画面が開くだけでなく、許可された短い動画で字幕生成から保存まで試せること |
+
+会社で設定済みの実行ファイルを配布している場合は、[詳細概要の配布版手順](overview.md#単一実行ファイルwindows--macos)を使って起動し、下の「4. 素材を追加し、P4を選ぶ」へ進みます。ソース版の準備と起動は1〜3です。どちらか片方だけで構いません。管理者向けの設定詳細は[設定・API](configuration-api.md)、変更作業は[テクニカルリファレンス](technical-reference.md)を参照してください。
 
 ## 1. PCと動画を用意する
 
@@ -41,7 +59,7 @@ Azureサービスは従量課金です。モデル名ではなく、**自分が�
 
 最初は `Llm.Provider=none` でも構いません。字幕はSpeechで作り、候補は音量の盛り上がりから選びます。話の内容に基づく選定を望む場合はMicrosoft FoundryかCopilotを設定してください。
 
-**注意**：配布時の設定ファイルには例のエンドポイントが入っています。そのリソースを使えるとは限りません。キーやトークンは設定ファイルに書かないでください。組織の送信・データ利用方針を確認してください。
+**注意**：ソース版の設定例には配布者のエンドポイントが入る場合があり、配布用の設定は空の場合があります。どちらも自分の組織の接続先を管理者に設定してもらってください。キーやトークンは設定ファイルに書かないでください。組織の送信・データ利用方針を確認してください。
 
 公式資料：[Fast Transcription](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/fast-transcription-create) / [SpeechのEntra ID認証](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-configure-azure-ad-auth) / [対応リージョン](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions)。
 
@@ -89,6 +107,8 @@ Azureサービスは従量課金です。モデル名ではなく、**自分が�
 ![確認・修正の実画面](images/screen-review.svg)
 
 ## 6. 書き出して保存する
+
+**最初の成功の目印**：候補が見えただけでは完了ではありません。書き出し後に保存先を開き、完成MP4を最後まで再生し、字幕ファイルも存在することを確認してください。
 
 次のどちらかを選びます。
 

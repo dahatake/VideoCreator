@@ -1,5 +1,11 @@
 # VideoCreator 調査レポート：人気SNS動画の編集スタイル分析と「パターン選択型・自動編集」機能の設計
 
+<!-- language-nav -->
+[日本語](VideoCreator-AnalyticsReport.md) | [English](../users-guide/en/docs/VideoCreator-AnalyticsReport.md) | [한국어](../users-guide/ko/docs/VideoCreator-AnalyticsReport.md) | [简体中文](../users-guide/zh-CN/docs/VideoCreator-AnalyticsReport.md)
+<!-- /language-nav -->
+
+[利用者ガイド](../users-guide/README.md)
+
 - 作成日: 2026-11-07
 - 対象: YouTube（長尺 / Shorts）・TikTok を中心としたソーシャル動画
 - 重視する観点: **エンターテインメント性（見ていて楽しいこと）**

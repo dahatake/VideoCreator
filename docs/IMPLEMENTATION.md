@@ -1,5 +1,11 @@
 # VideoCreator 実装・検証レポート
 
+<!-- language-nav -->
+[日本語](IMPLEMENTATION.md) | [English](../users-guide/en/docs/IMPLEMENTATION.md) | [한국어](../users-guide/ko/docs/IMPLEMENTATION.md) | [简体中文](../users-guide/zh-CN/docs/IMPLEMENTATION.md)
+<!-- /language-nav -->
+
+[利用者ガイド](../users-guide/README.md)
+
 - 対象: [PRD.md](PRD.md)（VC-PRD-001 v1.2.3。従来の結果と今回の再検証は分けて記載）
 - 日付: 2026-11-07（再検証: 2026-11-08、AT-13〜AT-15: 2026-11-09）
 - 実装: C# / .NET 10（ASP.NET Core Minimal API、ローカル Web アプリ）＋ Fluent 2 Web Components v3
@@ -507,17 +513,19 @@ P3のAIツッコミの見せ方は、生成時に `tsukkomi_style` で選びま�
 
 ## 13. 動画分析サービス（Video Indexer / Content Understanding）の検証
 
+> この節は過去の比較・試作の記録です。記載する検証スクリプト、VI統合コード、IaC、専用テストは現在のリポジトリには含まれず、この手順の再実行や `VideoIndexer.Enabled` の設定による利用はできません。現行のカスタマイズ対象は[テクニカルリファレンス](../users-guide/technical-reference.md)を参照してください。
+
 **問い**: 動画の分析に Azure AI Video Indexer（VI）か Azure Content Understanding（CU, GA `2025-11-01`）を使うと精度が上がるか。**答え**: 上がるのは**笑い・拍手の検出だけ**で、そこだけを VI で実装しました（既定はオフ）。書き起こし・ショット・映像の意味記述は、現行より良くならないか、良くなったことを示せませんでした。
 
 ### 方法（正解は分析サービスと無関係に作る）
 
 | 評価セット | 正解の作り方 | 測った項目 |
 |---|---|---|
-| `bench.mp4`（515 秒、[spikes/15a](../spikes/15a-make-ai-bench.cs)） | 実収録（Hub ラジオ、固定カメラ 1 台）を引き・左寄り・右寄りに切り出し、**既知の時刻**でつないだ（境界 44：ハードカット 41〔同じ構図のジャンプカット 11〕、ディゾルブ 2、暗転 1）。画面文字 8 つを既知の時刻に焼き込み。音声は **Google FLEURS ja_jp test の実録音声 34 文と人手の書き起こし**、間に **ESC-50 の実録音**（笑い 5・拍手 4・紛らわしい音 6）を挿入 | 書き起こし CER、発話の開始時刻、ショット境界 F1（±0.5 秒）、笑い・拍手、画面文字 |
-| `events.mp4`（1,475 秒、[spikes/15b](../spikes/15b-make-event-bench.cs)） | ESC-50 の**笑い 40・拍手 40 をすべて**と、咳・ノック・犬・赤ちゃん・タイピング・足音 40 を、FLEURS の発話 120 文の合間に挿入 | 笑い・拍手（件数を増やして偶然でないか確かめる） |
+| `bench.mp4`（515 秒、`spikes/15a-make-ai-bench.cs`〔現リポジトリに未収録〕） | 実収録（Hub ラジオ、固定カメラ 1 台）を引き・左寄り・右寄りに切り出し、**既知の時刻**でつないだ（境界 44：ハードカット 41〔同じ構図のジャンプカット 11〕、ディゾルブ 2、暗転 1）。画面文字 8 つを既知の時刻に焼き込み。音声は **Google FLEURS ja_jp test の実録音声 34 文と人手の書き起こし**、間に **ESC-50 の実録音**（笑い 5・拍手 4・紛らわしい音 6）を挿入 | 書き起こし CER、発話の開始時刻、ショット境界 F1（±0.5 秒）、笑い・拍手、画面文字 |
+| `events.mp4`（1,475 秒、`spikes/15b-make-event-bench.cs`〔現リポジトリに未収録〕） | ESC-50 の**笑い 40・拍手 40 をすべて**と、咳・ノック・犬・赤ちゃん・タイピング・足音 40 を、FLEURS の発話 120 文の合間に挿入 | 笑い・拍手（件数を増やして偶然でないか確かめる） |
 | 実収録（18 分、Hub ラジオ） | 正解なし | 3 方式の一致度・CU の記述の中身・処理時間・費用 |
 
-3 方式に**同じファイル**を入れ、生の応答（VI の Index JSON、CU の `result.contents`、現行の transcript/signals）を保存して [spikes/15-video-analysis.cs](../spikes/15-video-analysis.cs) で採点しました。CER は NFKC・記号除去・漢数字→算用数字（「一万」「1万」→10000）でそろえてから計算します。VI は Advanced（音声＋映像、ja-JP）、CU は `prebuilt-video` を基にした区間分割アナライザー（gpt-4.1、日本語の要約・画面文字・発話以外の音・見どころ点のフィールド付き）です。
+3 方式に**同じファイル**を入れ、生の応答（VI の Index JSON、CU の `result.contents`、現行の transcript/signals）を保存して `spikes/15-video-analysis.cs`（現リポジトリに未収録）で採点しました。CER は NFKC・記号除去・漢数字→算用数字（「一万」「1万」→10000）でそろえてから計算します。VI は Advanced（音声＋映像、ja-JP）、CU は `prebuilt-video` を基にした区間分割アナライザー（gpt-4.1、日本語の要約・画面文字・発話以外の音・見どころ点のフィールド付き）です。
 
 正解自体の誤りも 1 件見つけて直しました：FLEURS の録音は無音部にも −45 dB 程度の雑音があり、「ピークから 30 dB 以内」で発話区間を決めると開始が最大 2.5 秒早くなっていました（全方式の開始誤差の中央値が 1.4 秒と出て発覚）。雑音床 +12 dB 以上を条件に変えて正解だけを作り直し（音声ファイルのハッシュが同一＝素材は不変であることを確認）、開始誤差の中央値は 0.08〜0.13 秒になりました。
 
@@ -574,7 +582,7 @@ CU は gpt-4.1 のデプロイが 50K TPM だと 8 分の動画でも 429 で**�
 | 画面文字（OCR） | 採用しない | 精度は良い（7/8）が、今のアプリには使い道がない |
 | 映像の意味記述（CU） | 採用しない | 対談では書き起こし以上の情報がなく、見どころ点も平坦。費用 約 10 倍・時間 約 40 倍。正解（人の見どころ評価）がないため改善を主張できない |
 
-実装: [VideoIndexerAudioEvents.cs](../src/VideoCreator.Core/Audio/VideoIndexerAudioEvents.cs)（ARM の `generateAccessToken` でキーレス、AdvancedAudio、ja-JP、非公開でアップロード → 完了待ち → `audioEffects` を読む → **アップロードを削除**）。`VideoIndexer.Enabled=true` のとき、[PipelineRunner](../src/VideoCreator.Core/Pipeline/PipelineRunner.cs) は信号解析の直後に検出を始め、AI 選定と並行して待ち、編集計画の直前に結果を使います。結果は素材ごとに `audio_events_video-indexer.json` にキャッシュ。失敗したら警告を出して現行の検出に戻ります（生成は止めない）。送信先と費用（推定・実績）は画面に表示されます。リソースは [infra/video-analysis.bicep](../infra/video-analysis.bicep)（VI アカウント・ストレージ〔共有キー無効、既定拒否＋信頼された Azure サービスのみ〕・ユーザー割り当てマネージド ID、CU 検証用のモデルデプロイ）。テスト: [AudioEventTests.cs](../tests/VideoCreator.Tests/AudioEventTests.cs)。
+試作時の実装: `src/VideoCreator.Core/Audio/VideoIndexerAudioEvents.cs`（現リポジトリに未収録。ARM の `generateAccessToken` でキーレス、AdvancedAudio、ja-JP、非公開でアップロード → 完了待ち → `audioEffects` を読む → **アップロードを削除**）。`VideoIndexer.Enabled=true` のとき、[PipelineRunner](../src/VideoCreator.Core/Pipeline/PipelineRunner.cs) は信号解析の直後に検出を始め、AI 選定と並行して待ち、編集計画の直前に結果を使う構成でした。結果は素材ごとに `audio_events_video-indexer.json` にキャッシュ。失敗したら警告を出して現行の検出に戻る設計です（生成は止めない）。送信先と費用（推定・実績）は画面に表示するものでした。リソースは `infra/video-analysis.bicep`（現リポジトリに未収録。VI アカウント・ストレージ〔共有キー無効、既定拒否＋信頼された Azure サービスのみ〕・ユーザー割り当てマネージド ID、CU 検証用のモデルデプロイ）。専用テスト `tests/VideoCreator.Tests/AudioEventTests.cs` も現リポジトリには含まれません。
 
 ### 残る検証・制約
 
@@ -793,7 +801,7 @@ AI の章分けのプロンプトにも、「分けやすさを高くしてよ�
 
 ## 20. UI・文書・動画の多言語対応
 
-- UI は日本語・英語・中国語（簡体字）・韓国語。表示言語と動画言語を分離する。原文と同じ構成の翻訳文書を `locales/en` / `locales/zh-CN` / `locales/ko` に置く。過去の日本語スクリーンショットは撮影当時の実画面であり、翻訳UIの証拠ではない。
+- UI は日本語・英語・中国語（簡体字）・韓国語。表示言語と動画言語を分離する。翻訳文書は [English](../users-guide/en/README.md) / [简体中文](../users-guide/zh-CN/README.md) / [한국어](../users-guide/ko/README.md) に集約し、[日本語ガイド](../users-guide/README.md)を含めて同じ文書へ切り替えられる。過去の日本語スクリーンショットは撮影当時の実画面であり、翻訳UIの証拠ではない。
 - プロジェクトの `language` は `ja-JP`（既定）/ `en-US` / `zh-CN` / `ko-KR`。作成・変更APIで検証し、生成・書き出し中の変更は拒否する。`Runtime.AsrForLanguage` から Speech の `locales` に伝播する。書き起こしと笑い検出のキャッシュを言語ごとに分け、過去の計画のQA・再編集・投稿文は計画の言語の書き起こしを読む。
 - 字幕は逐語のまま。英語・韓国語はASR単語間の空白を復元し、日本語・中国語は文字を連結する。`CaptionText` は言語別に分割・改行・正規化する。QA修復も同じ連結を使い、単語・ID・タイミングの対応を保持する。複数単語にまたがる伏せ字も空白を含めて検査する。
 - 選定・シリーズ章立て・演出テロップ・カード・QAのAI修復・投稿文章のプロンプトに動画言語を指定する。定型カード・効果文字・シリーズの振り返りと予告・投稿テンプレートも動画言語で出す。演出のAI変更は従来どおり未承認で作り、人の確認を要求する。

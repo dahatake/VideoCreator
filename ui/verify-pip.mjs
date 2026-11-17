@@ -21,7 +21,7 @@ const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 try {
   await page.goto(`${base}/#/p/${project.id}`);
-  await page.locator(`select.role[data-asset="${screen.id}"]`).selectOption('screen');
+  await page.locator(`.role-pick[data-asset="${screen.id}"] [data-role="screen"]`).click();
   await page.locator(`.pip-scenes[data-asset="${screen.id}"]`).click();
   const list = page.locator(`.pip-scene-list[data-asset="${screen.id}"]`);
   await list.locator('.pip-scene').first().waitFor();
@@ -43,8 +43,8 @@ try {
   await page.locator('.preset-radio[data-id="P11"]').click();
   assert.equal(await page.locator('.preset-radio[data-id="P11"]').getAttribute('aria-checked'), 'true');
   await request(`/assets/${screen.id}`, 'PATCH', { sync_offset: 2 });
-  await page.locator(`select.role[data-asset="${screen.id}"]`).selectOption('main');
-  await page.waitForFunction(id => document.querySelector(`select.role[data-asset="${id}"]`)?.value !== 'main', main.id);
+  await page.locator(`.role-pick[data-asset="${screen.id}"] [data-role="main"]`).click();
+  await page.waitForFunction(id => document.querySelector(`.role-pick[data-asset="${id}"] [aria-checked="true"]`)?.dataset.role !== 'main', main.id);
   saved = await request(`/projects/${project.id}`);
   assert.equal(saved.assets.find(a => a.id === screen.id).sync_offset, 0);
   assert.equal(saved.assets.find(a => a.id === main.id).role, 'cam_b');

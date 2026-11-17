@@ -1,4 +1,5 @@
 export const additional = {
+  'file.none': ['ファイルが選択されていません', 'No file selected', '未选择文件', '선택한 파일 없음'],
   'bgm.errInUse': ['この曲は動画の編集計画で使われています。確認画面で別の曲に変えるか、その動画を削除してから外してください', 'This track is used by a video\'s edit plan. Change it on the review screen or delete that video first.', '此曲目正被视频的编辑计划使用。请先在确认界面更换曲目或删除该视频。', '이 곡은 동영상 편집 계획에서 사용 중입니다. 확인 화면에서 다른 곡으로 바꾸거나 해당 동영상을 삭제한 후 제거하세요.'],
   'bgm.errExists': ['同じ名前の曲がすでにアプリ共通の BGM にあります', 'A track with the same name is already in the app-wide BGM.', '应用通用 BGM 中已有同名曲目。', '같은 이름의 곡이 이미 앱 공통 BGM에 있습니다.'],
   'bgm.sharedTag': ['（アプリ共通）', ' (app-wide)', '（应用通用）', ' (앱 공통)'],

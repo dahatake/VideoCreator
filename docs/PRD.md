@@ -1,5 +1,11 @@
 # VideoCreator — Product Requirements Definition (PRD)
 
+<!-- language-nav -->
+[日本語](PRD.md) | [English](../users-guide/en/docs/PRD.md) | [한국어](../users-guide/ko/docs/PRD.md) | [简体中文](../users-guide/zh-CN/docs/PRD.md)
+<!-- /language-nav -->
+
+[利用者ガイド](../users-guide/README.md)
+
 | 項目 | 内容 |
 |---|---|
 | 文書ID | VC-PRD-001 |

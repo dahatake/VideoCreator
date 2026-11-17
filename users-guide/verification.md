@@ -1,6 +1,25 @@
 # 資料の検証と保守
 
+<!-- language-nav -->
+[日本語](verification.md) | [English](en/verification.md) | [한국어](ko/verification.md) | [简体中文](zh-CN/verification.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [技術リファレンス](technical-reference.md) / [制作方針](documentation-brief.md)
+
+## 4言語文書の再配置検証（2026-11-17）
+
+利用者向けの入口を簡潔にし、元READMEの詳細を[詳細概要](overview.md)へ保存しました。翻訳文書・図は `users-guide/en`・`users-guide/ko`・`users-guide/zh-CN` に集約しています。下記はリポジトリ直下で実行します。
+
+```powershell
+node scripts\verify-localized-docs.mjs
+node users-guide\tools\validate.mjs
+```
+
+今回の文書検証は **14原文×4言語＝56 Markdown、35 SVG** が対象です。未追跡の新規文書も含むファイル一覧、翻訳の構造・要件ID、ローカルリンク・アンカー、同一文書への4言語切り替え、SVGのXML・PNG・文字領域・Edge描画を検証します。後述の9文書・211リンク・20図は旧構成での過去の結果であり、現在の検証件数ではありません。
+
+同時に行ったUI側の別検証では、835翻訳資源×4言語、LocalizationTests 29件、4言語の実ブラウザー操作（P1〜P11、P11シーン、共有BGM、ファイル選択とキーボード操作）が合格しました。アプリ内表示とOS・ブラウザー標準の選択画面の言語は別です。新しいクラウド要求は行っていません。文書検証だけでSpeech認識精度や最終動画品質を再実測したという意味ではありません。
 
 ## 一次資料と検証範囲
 

@@ -22,8 +22,8 @@ const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 try {
   await page.goto(`${base}/#/p/${project.id}`);
-  await page.locator(`select.role[data-asset="${main.id}"]`).selectOption('main');
-  await page.locator(`select.role[data-asset="${screen.id}"]`).selectOption('screen');
+  await page.locator(`.role-pick[data-asset="${main.id}"] [data-role="main"]`).click();
+  await page.locator(`.role-pick[data-asset="${screen.id}"] [data-role="screen"]`).click();
   const deckInput = page.locator(`input.deck-file[data-asset="${screen.id}"]`);
   await deckInput.waitFor();
   await deckInput.setInputFiles(deckPath);

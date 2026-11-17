@@ -131,7 +131,7 @@ try {
     await api(`/api/assets/${byName('camA.mp4').id}`, 'PATCH', { role: 'main' });
     await api(`/api/assets/${byName('camB.mp4').id}`, 'PATCH', { role: 'cam_b' });
     await api(`/api/assets/${byName('wide.mp4').id}`, 'PATCH', { role: 'wide' });
-    await page.goto(base + `/#/p/${p.id}`); await page.waitForSelector('select.role'); await page.waitForTimeout(800);
+    await page.goto(base + `/#/p/${p.id}`); await page.waitForSelector('.role-pick'); await page.waitForTimeout(800);
     await page.screenshot({ path: join(shots, 'v11-multicam-assets.png'), fullPage: true });
     const { job, seconds } = await generate(p.id, 'P7');
     const after = (await api(`/api/projects/${p.id}`)).body.assets;

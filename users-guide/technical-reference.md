@@ -1,5 +1,11 @@
 # Software Engineer向けテクニカルリファレンス
 
+<!-- language-nav -->
+[日本語](technical-reference.md) | [English](en/technical-reference.md) | [한국어](ko/technical-reference.md) | [简体中文](zh-CN/technical-reference.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [クイックスタート](quickstart.md) / [画面説明](screens.md) / [困ったとき](troubleshooting.md) / [設定・API](configuration-api.md) / [検証と保守](verification.md)
 
 対象は現在のC#/.NET 10実装です。これは汎用動画編集ライブラリやマルチユーザーサービスではなく、Windows上の単一ユーザー用ローカルWebアプリです。設計上の要求は[PRD](../docs/PRD.md)、過去の実測は[実装レポート](../docs/IMPLEMENTATION.md)にあります。過去の検証結果を最新条件の合格証拠として流用しないでください。
@@ -57,7 +63,7 @@ AppとTestsは `net10.0-windows`、Coreは `net10.0`。[Appのcsproj](../src/Vid
 
 StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document storeです。JSONは共有の `Json.Options` によるsnake_caseと文字列enumです。フォルダーのファイルとDBは別であり、出力JSONだけでプロジェクト全体をインポートするAPIはありません。
 
-キャッシュはDataDirの `cache\<素材SHA-256の先頭16文字>`。書き起こしキーはASRのNameと辞書、信号は `signals.v2.json`（ショット境界・暗転・音量など）、ほかに顔・画面解析等があります。**ASRのエンドポイント・localeを変えるだけで必ず書き起こしキャッシュが無効になるとは限りません。** 新プロバイダーや解析アルゴリズムを追加する際は、既存キーとの衝突・互換性・無効化方針をテストしてください。
+キャッシュはDataDirの `cache\<素材SHA-256の先頭16文字>`。[PipelineRunner.TranscriptFile](../src/VideoCreator.Core/Pipeline/PipelineRunner.cs)はASRのName・プロジェクトの動画言語・辞書をキーへ含め、言語別に書き起こしを分離します（`ja-JP` は既存キーとの互換のため言語接頭辞なし）。AzureFastTranscriber.Nameは一定であり、言語を含むNameではありません。[Runtime.AsrForLanguage](../src/VideoCreator.App/Runtime.cs)が実際の認識言語をプロバイダーへ渡します。**エンドポイントだけの変更ではキャッシュが無効になるとは限りません。** 信号は `signals.v2.json`（ショット境界・暗転・音量など）で、ほかに顔・画面解析等があります。新プロバイダーや解析アルゴリズムでは、キーの衝突・互換性・無効化方針をテストしてください。
 
 素材の絶対パス変更は[StorePaths](../src/VideoCreator.Core/Storage/StorePaths.cs)による再ルート処理を使います。移動は同一ドライブでrename、別ドライブでcopy・ファイル数/サイズ照合を行い、JSON参照をトランザクションで更新します。これは全ファイル内容の暗号学的照合と同義ではありません。
 
@@ -65,7 +71,7 @@ StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document sto
 
 ![元動画・本編・完成ファイルの時間軸](images/timelines.svg)
 
-1. **素材／master時間**：単語時刻と元動画の位置。他カメラの時刻は `SourceAsset.CameraTime(masterT, masterId)` により `masterT + offset + driftPpm × 10^-6 × masterT`。
+1. **素材／master時間**：単語時刻と元動画の位置。他カメラへの変換は必ず [SourceAsset.CameraTime(masterT, masterId)](../src/VideoCreator.Core/Models/Models.cs)を使います。基準自身は恒等、SyncMapがなければ `masterT + offset + driftPpm × 10^-6 × masterT`、あれば区間ごとの遅れ表を使います。`audio-map` の1/30秒を超える段差は中点で切り替え、小さい変化は補間します。逆変換は [PipPlanner.MasterTime](../src/VideoCreator.Core/Planning/PipPlanner.cs)、一定ずれの区間分割は `SyncJumps` を使い、アフィン式だけを独自実装しないでください。
 2. **編集した本編時間**：Timelineの各クリップの長さ `(src_out-src_in)/speed` を積算。Telops、SFX、シリーズチャプターはここで計画。
 3. **完成ファイル時間**：本編にOpening／Card／Closingを挿入した後。[InsertMap](../src/VideoCreator.Core/Planning/Packaging.cs)で変換。開始が挿入位置と同時なら挿入の後、終了なら挿入の前。
 
@@ -75,13 +81,23 @@ StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document sto
 
 - `CandidateApproval` は承認者・日時・ `EditPlanFingerprint.Of(plan)` のSHA-256を記録。署名や利用者認証ではありません。
 - 一括受付は全候補の所属・承認・指紋・処理中・計画QAを先に検証。どれか不可なら開始しません。受付後のキューでは承認済みスナップショットを使います。
-- 確認画面の直接render APIは候補承認を要求しません。AIテロップ等の承認と計画QAは要求します。両入口を同じ承認条件と思い込まないでください。
+- 確認画面の直接render APIも候補承認が必須です。[Api.cs](../src/VideoCreator.App/Api.cs)は未承認（409 `E-NOT-APPROVED`）、承認時のPlanHash不一致（`E-PLAN-STALE`）、計画ハードQA不合格（422 `E-QA-HARDFAIL`）、処理中（409 `E-EXPORT-BUSY`）の順で検証します。一括も同じ順です。QA結果の確認記録は候補やAIテロップの承認の代わりにはなりません。
 - 一括の「事前受付が全件かゼロ」と、実行開始後に「全ファイルが一括成功・失敗する」は別です。実行中の個別失敗は各候補に表示します。
 - QAの `Stage`、`PlanHash`、`not_run` を保持し、古い結果やプレビューを最終合格として再利用しません。
 - `Render.Reproducibility` は計画・FFmpeg・buildconf・フォント・プリセット・素材のハッシュ、テキストライブラリ情報、encoder threads等。比較対象は**デコード済みフレーム**で、コンテナーのバイト一致だけではありません。
 - 再現性の前提は素材・計画・ツール・フォント・環境をそろえること。LLMをもう一度呼んで同じ候補になる保証ではありません。
 
 ## 6. カスタマイズの入口と検証
+
+### 安全な変更の進め方
+
+1. 利用者は日常の編集を[画面の設定](screens.md)で行い、ソースやプリセットの変更は担当エンジニアへ依頼します。変更する目的と受け入れ条件（字幕の読みやすさ、許される尺など）を先に決めます。
+2. エンジニアは作業ブランチを作り、アプリ停止後にDB・設定・プロジェクトを[バックアップ](troubleshooting.md#保存とバックアップ)します。本番の保存先では試さず、権利を確認した短い検証動画と別のDataDir／ProjectsDirを使います。
+3. まず[設定・API](configuration-api.md)の起動設定やプリセットで対応できるか確認します。下表の入口で小さく変更し、変更前の値とファイルを残します。キー・トークン・社内動画・書き起こしをGitへ入れません。
+4. 下表の対応テストを実行し、同じ素材の変更前後でプレビューと最終MP4、SRTの時刻、音量・QA・承認の再要求を確認します。UIならキーボード操作と4言語も確認します。クラウドを使うテストは送信先・費用を別途承認してから実施します。
+5. 担当者のレビュー後、設定の差分・アプリのバージョン・再起動要否を利用者へ引き継ぎます。戻すときはアプリを停止し、以前のコード／設定へ戻します。保存形式を変えた場合は旧版が新データを読めると仮定せず、検証済みバックアップから復元します。
+
+ビルド・テストは次節、配布物の作成・バージョン管理・リリース・セキュリティの詳細は[詳細概要](overview.md)へ。利用者向けの手順へ戻る場合は[クイックスタート](quickstart.md)を使ってください。
 
 | 変更したいもの | 変更箇所・守る条件 | 対応テスト |
 |---|---|---|
@@ -95,7 +111,7 @@ StoreはSQLiteの `docs(kind,id,parent,json,updated)` を使うJSON document sto
 | UIの入力部品 | app.js、app.css、Fluent v3。checkbox/switchはfieldのlabel/input slot。esc()とイベント後の状態再描画、キーボード操作を維持 | [E2E](../ui/e2e.mjs)、[v1.1 E2E](../ui/e2e-v11.mjs)、実Edge |
 | API・承認・保存 | Api、Models、Store、JobQueue、ProjectsLocation。snake_case、コード付きエラー、編集後の再承認、パス境界 | [ApprovalExportTests](../tests/VideoCreator.Tests/ApprovalExportTests.cs)、[ProjectsLocationTests](../tests/VideoCreator.Tests/ProjectsLocationTests.cs)、[RenderRecordTests](../tests/VideoCreator.Tests/RenderRecordTests.cs) |
 
-プリセットを増やす最小の方法は既存JSONをコピーし、ID・version・nameと必要項目を変更して再起動することです。ただし新plannerを追加する場合はPlanBuilderやPresetStoreの許可リストまで変更します。JSONに名前を足すだけでは処理は増えません。
+プリセットを増やす場合は既存JSONをコピーし、ID・version・nameと必要項目を変更します。同時に [server-resources.js](../src/VideoCreator.App/wwwroot/js/server-resources.js)の `presetDisplays` に4言語の表示メタデータを追加し、追加するボタン・説明の翻訳資源もそろえます。[verify-localization.mjs](../ui/verify-localization.mjs)と[ブラウザー検証](../ui/verify-localization-browser.mjs)で4言語・キーボード操作を確認してから再起動・再生成します。日本語だけの名前・説明で配布しないでください。新plannerを追加する場合はPlanBuilderやPresetStoreの許可リストまで変更します。JSONに名前を足すだけでは処理は増えません。
 
 現在のCanvasと書き出しUI、QAには縦型1080×1920の前提があります。横型化はその一貫した変更と検証が必要です。公開ネットワーク化も、単にListenを変えるのではなく認証、権限、CSRF、ファイルアクセス、ジョブ分離の設計を別途行ってください。
 

@@ -1,5 +1,11 @@
 # 制作方針：「より深く」したドキュメント依頼と、その実行結果
 
+<!-- language-nav -->
+[日本語](documentation-brief.md) | [English](en/documentation-brief.md) | [한국어](ko/documentation-brief.md) | [简体中文](zh-CN/documentation-brief.md)
+<!-- /language-nav -->
+
+[はじめに](../README.md) / [ガイド目次](README.md) / [詳細概要](overview.md) / [エンジニア向け](technical-reference.md)
+
 [アプリREADME](../README.md) / [ガイド目次](README.md) / [検証と保守](verification.md)
 
 このページは、本ガイド一式を作るときの依頼を「より大きく」ではなく「より深く」するために整理した記録です。最初の依頼に対して、(1)専門家が追加で行うこと、(2)出発点にする生の素材、(3)手法とツール、(4)第三者による検証手段を示し、依頼を書き直したうえで実行しました。最後に、書き直した要件ごとに成果物と証拠を対応づけています。
@@ -81,7 +87,7 @@
 
 | 書き直した要件 | 成果物 | 正しさの証拠 |
 |---|---|---|
-| 1. README：準備→操作→成果物 | [README](../README.md#初めて使う方へ準備--操作--成果物)、[全体像の図](images/overview.svg) | 成果物の8キーを実際に書き出し、ffprobeで形式を確認（[検証記録](verification.md#今回の実行確認)） |
+| 1. README：準備→操作→成果物 | [README](../README.md#最初の1本)、[詳細概要](overview.md)、[全体像の図](images/overview.svg) | 成果物の8キーを実際に書き出し、ffprobeで形式を確認（[検証記録](verification.md#今回の実行確認)） |
 | 2. クイックスタート | [quickstart.md](quickstart.md) | 合成素材で同じ手順（権利確認→P4生成→確認→書き出し）を実UIで実行 |
 | 3. 画面説明＋スクリーンショット | [screens.md](screens.md)、実画面SVG 15点（[images](images)） | [capture.mjs](tools/capture.mjs)で実アプリから自動取得。検証スクリプトで埋め込みPNGと描画を確認 |
 | 4. 困ったとき | [troubleshooting.md](troubleshooting.md)、[QA図](images/qa-gates.svg) | QA条件は[QaEngine.cs](../src/VideoCreator.Core/Qa/QaEngine.cs)と照合。実行したQAはすべてpass |
