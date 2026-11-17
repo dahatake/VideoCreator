@@ -64,7 +64,7 @@ a.step:hover, a.step:focus-visible { background: var(--colorNeutralBackground1Ho
 .pattern { display: grid; grid-template-columns: 1fr auto; gap: var(--s8) var(--s16); align-items: center; padding: var(--s12) 0; border-top: 1px solid var(--colorNeutralStroke2); }
 .pattern:first-child { border-top: 0; }
 
-main { padding: var(--s24); max-width: 1440px; width: 100%; margin: 0 auto; outline: none; }
+main { padding: var(--s24); width: 100%; margin: 0 auto; outline: none; }
 .grid { display: grid; gap: var(--s16); }
 .cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .cols-review { grid-template-columns: 340px minmax(0, 1fr); }
