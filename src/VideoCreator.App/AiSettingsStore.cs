@@ -66,11 +66,11 @@ public sealed class NoSecretStorage : ISecretProtector
     public string Unprotect(string blob) => throw new NotSupportedException("secrets cannot be stored on this OS");
 }
 
-public sealed record SavedFoundry(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt, string? ImageDeployment = null);
+public sealed record SavedFoundry(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt, string? ImageDeployment = null, bool SpeechVerified = false);
 public sealed record SavedSpeech(string Endpoint, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt);
 public sealed record SavedCopilot(string Auth, string? TokenProtected, string? Model, string? ReasoningEffort, string? ContextTier, string? Login, DateTimeOffset TestedAt);
 /// <summary>Connections chosen in the settings screen; they override appsettings.json. Secrets are stored only in protected form.</summary>
-public sealed record SavedAi(string? Provider = null, SavedFoundry? Foundry = null, SavedCopilot? Copilot = null, string? Protection = null, SavedSpeech? Speech = null);
+public sealed record SavedAi(string? Provider = null, SavedFoundry? Foundry = null, SavedCopilot? Copilot = null, string? Protection = null, SavedSpeech? Speech = null, bool? UseFoundrySpeech = null);
 
 public sealed class AiSettingsStore(string path, ISecretProtector protector)
 {
@@ -90,17 +90,21 @@ public sealed class AiSettingsStore(string path, ISecretProtector protector)
         }
     }
 
-    public void Update(Func<SavedAi, SavedAi> change)
+    public void Update(Func<SavedAi, SavedAi> change) => TryUpdate(change);
+
+    internal bool TryUpdate(Func<SavedAi, SavedAi?> change)
     {
         lock (_gate)
         {
-            var next = change(Load()) with { Protection = protector.Kind };
+            if (change(Load()) is not { } next) return false;
+            next = next with { Protection = protector.Kind };
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
             var tmp = path + ".tmp";
             if (!OperatingSystem.IsWindows())
                 using (File.Create(tmp)) File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             File.WriteAllText(tmp, JsonSerializer.Serialize(next, Json.Indented));
             File.Move(tmp, path, overwrite: true);
+            return true;
         }
     }
 

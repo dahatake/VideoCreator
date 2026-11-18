@@ -347,6 +347,7 @@ const aiStamp = (t) => t ? formatDate(t, { dateStyle: 'medium', timeStyle: 'shor
 const aiTokens = (n) => n == null ? '' : n >= 1e6 ? `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : `${Math.round(n / 1000)}K`;
 const aiCredits = (v) => v == null ? '—' : String(+v.toFixed(2));
 function aiSource(v) {
+  if (v.source === 'foundry') return trUi('ai.sourceFoundry');
   return v.source === 'app' ? trUi('ai.sourceApp', [aiStamp(v.tested_at)]) : v.source === 'config' ? trUi('ai.sourceConfig') : trUi('ai.sourceNone');
 }
 function aiEffortName(e) {
@@ -400,8 +401,9 @@ function azPicker(p, disabled) {
 function aiConnectionsSection(s, flash, dr = {}) {
   const f = s.foundry ?? { source: 'none', auth: 'entra' }, c = s.copilot ?? { source: 'config', auth: 'user' };
   const speech = s.speech ?? { source: 'none', auth: 'entra' };
+  const separate = speech.separate ?? speech;
   // A restored draft replaces the shown values (not the saved connection); secrets still come only from what is saved.
-  const sv = dr.speech ? { endpoint: dr.speech.endpoint ?? '', auth: dr.speech.auth, tenant_id: dr.speech.tenant_id ?? '' } : speech;
+  const sv = dr.speech ? { endpoint: dr.speech.endpoint ?? '', auth: dr.speech.auth, tenant_id: dr.speech.tenant_id ?? '' } : separate;
   const fv = dr.foundry ? { endpoint: dr.foundry.endpoint ?? '', deployment: dr.foundry.deployment ?? '', embedding_deployment: dr.foundry.embedding_deployment ?? '', image_deployment: dr.foundry.image_deployment ?? '', auth: dr.foundry.auth, tenant_id: dr.foundry.tenant_id ?? '' } : f;
   const cAuthValue = (dr.copilot?.auth ?? c.auth) === 'token' ? 'token' : 'user';
   const blocked = s.local_only ? info(trUi('ai.d.local_only'), 'warning') : '';
@@ -419,6 +421,17 @@ function aiConnectionsSection(s, flash, dr = {}) {
       <summary><h3>Azure Speech</h3><span class="caption group-sum">${esc(aiSource(speech))}</span></summary>
       <div class="stack setgroup-body">
         <p class="caption">${trUi('ai.s.intro')}</p>
+        ${speech.endpoint ? `<p class="caption">${trUi('ai.s.destination', [esc(speech.endpoint)])}</p>` : ''}
+        ${speech.foundry_available || speech.use_foundry ? `<div class="stack">
+          ${speech.foundry_available ? `<p class="caption">${trUi('ai.s.sourceHelp')}</p>` : info(trUi('ai.s.sourceUnavailable'), 'warning')}
+          <label class="caption">${trUi('ai.s.sourceLabel')} <select class="native" id="sSource">
+            <option value="foundry" ${speech.use_foundry ? 'selected' : ''} ${speech.foundry_available ? '' : 'disabled'}>${trUi('ai.s.sourceFoundry')}</option>
+            <option value="separate" ${speech.use_foundry ? '' : 'selected'}>${trUi('ai.s.sourceSeparate')}</option>
+          </select></label>
+          <div class="row"><fluent-button id="sSourceSave" type="button" disabled>${trUi('ai.s.sourceSave')}</fluent-button></div>
+          <div id="sSourceResult" aria-live="polite"></div>
+        </div>` : ''}
+        <div class="stack" id="sSeparate" ${speech.use_foundry ? 'hidden' : ''}>
         <div id="sDraft" aria-live="polite">${dr.speech ? draftNote('speech', dr.speech.updated_at) : ''}</div>
         ${azPicker('s', false)}
         ${aiInput('sEndpoint', trUi('ai.s.endpoint'), sv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
@@ -431,9 +444,10 @@ function aiConnectionsSection(s, flash, dr = {}) {
           ${aiInput('sTenant', trUi('ai.f.tenant'), sv.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}
           <p class="caption">${esc(trUi('ai.s.accessHelp'))}</p>
         </div>
-        <div id="sKeyBox" class="stack">${aiInput('sKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${speech.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
-          speech.api_key_unreadable ? trUi('ai.secretUnreadable') : speech.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
-        ${buttons('s', speech.source === 'app', false)}
+        <div id="sKeyBox" class="stack">${aiInput('sKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${separate.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
+          separate.api_key_unreadable ? trUi('ai.secretUnreadable') : separate.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
+        ${buttons('s', separate.source === 'app', false)}
+        </div>
       </div>
     </details>
     <details class="setgroup" id="aiFoundry" ${s.llm_provider === 'azure-openai' || f.source === 'none' ? 'open' : ''}>
@@ -443,9 +457,10 @@ function aiConnectionsSection(s, flash, dr = {}) {
         <div id="fDraft" aria-live="polite">${dr.foundry ? draftNote('foundry', dr.foundry.updated_at) : ''}</div>
         ${azPicker('f', s.local_only)}
         ${aiInput('fEndpoint', trUi('ai.f.endpoint'), fv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
-        ${aiInput('fDeployment', trUi('ai.f.deployment'), fv.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}
-        ${aiInput('fEmbedding', trUi('ai.f.embedding'), fv.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}
-        ${aiInput('fImage', trUi('engageImage.deployment'), fv.image_deployment, 'autocomplete="off" spellcheck="false" placeholder="FLUX-1.1-pro"', trUi('engageImage.help'))}
+        <div id="fDeploymentManual" class="stack">${aiInput('fDeployment', trUi('ai.f.deployment'), fv.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}</div>
+        <div id="fEmbeddingManual" class="stack">${aiInput('fEmbedding', trUi('ai.f.embedding'), fv.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}</div>
+        <div id="fImageManual" class="stack">${aiInput('fImage', trUi('engageImage.deployment'), fv.image_deployment, 'autocomplete="off" spellcheck="false" placeholder="FLUX-1.1-pro"', trUi('engageImage.help'))}</div>
+        <p class="caption">${trUi('ai.f.sharedSpeechProbe')}</p>
         <p class="caption" id="fAuthLabel">${trUi('ai.f.auth')}</p>
         <fluent-radio-group id="fAuth" orientation="vertical" aria-labelledby="fAuthLabel" value="${fv.auth === 'key' ? 'key' : 'entra'}">
           ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
@@ -479,12 +494,33 @@ function aiConnectionsSection(s, flash, dr = {}) {
 }
 function wireAiConnections(s, flash, dr = {}) {
   if (!$('#aiFoundry')) return;
-  const f = s.foundry ?? {}, c = s.copilot ?? {}, sp = s.speech ?? {};
+  const f = s.foundry ?? {}, c = s.copilot ?? {}, sp = s.speech?.separate ?? s.speech ?? {};
   // Before fluent-radio-group upgrades, no radio is checked yet: fall back to the server-rendered value.
   const radio = (id) => $$(`#${id} fluent-radio`).find(r => r.checked)?.value ?? $(`#${id}`).getAttribute('value');
   const busy = (prefix, on) => [`#${prefix}Test`, `#${prefix}Save`, `#${prefix}Forget`, '#cLoad', '#settings-close'].map(x => $(x)).filter(Boolean)
     .forEach(b => { b.disabled = on || (s.local_only && prefix !== 's' && b.id !== 'settings-close' && !b.id.endsWith('Forget')) || (b.id === 'cLoad' && (!s.copilot_cli || s.local_only)); });
   if (flash) setTimeout(() => $('#aiFlash')?.focus(), 0);
+
+  const source = $('#sSource'), sourceSave = $('#sSourceSave');
+  if (source && sourceSave) {
+    const savedSource = source.value;
+    source.addEventListener('change', () => { sourceSave.disabled = source.value === savedSource; });
+    sourceSave.addEventListener('click', async () => {
+      if (sourceSave.disabled || source.value === savedSource) return;
+      const notice = $('#sSourceResult');
+      source.disabled = sourceSave.disabled = true;
+      try {
+        await flushDrafts();
+        const r = await api('/api/settings/ai/speech/source', { method: 'PUT', body: { use_foundry: source.value === 'foundry' }, accept: [409] });
+        if (r?.status === 409) {
+          await aiAfterSave(info(trUi('ai.s.sourceUnavailable'), 'warning'));
+          return;
+        }
+        await aiAfterSave(info(trUi('ai.s.sourceSaved'), 'success'));
+      } catch (e) { notice.innerHTML = errorBar(e); }
+      finally { source.disabled = false; sourceSave.disabled = source.value === savedSource; }
+    });
+  }
 
   const sAuthSync = () => { const key = radio('sAuth') === 'key'; $('#sKeyBox').hidden = !key; $('#sEntraBox').hidden = key; };
   $('#sAuth').addEventListener('change', sAuthSync); sAuthSync();
@@ -515,7 +551,27 @@ function wireAiConnections(s, flash, dr = {}) {
   });
 
   // ----- Foundry -----
-  const fAuthSync = () => { const key = radio('fAuth') === 'key'; $('#fKeyBox').hidden = !key; $('#fEntraBox').hidden = key; };
+  const modelFields = [['fDeployment', 'fChatDep'], ['fEmbedding', 'fEmbDep'], ['fImage', 'fImageDep']];
+  let deploymentChoices = null, deploymentRequest = 0;
+  const syncModelFields = () => {
+    let hasChoices = false;
+    for (const [fieldId, selectId] of modelFields) {
+      const { options, empty } = deploymentChoices?.[fieldId] ?? { options: [] };
+      const select = $(`#${selectId}`), input = $(`#${fieldId}`);
+      const value = input.value.trim();
+      const listed = options.some(o => o.name === value);
+      select.parentElement.hidden = !options.length;
+      $(`#${fieldId}Manual`).hidden = options.length > 0 && radio('fAuth') === 'entra';
+      if (!options.length) continue;
+      hasChoices = true;
+      select.innerHTML = (empty == null ? '' : `<option value="">${empty}</option>`) + options.map(o => o.html).join('');
+      if (value && !listed)
+        select.add(new Option(`${value} ${trUi('ai.c.unavailable')}`, value));
+      select.value = value;
+    }
+    $('#fDepBox').hidden = !hasChoices;
+  };
+  const fAuthSync = () => { const key = radio('fAuth') === 'key'; $('#fKeyBox').hidden = !key; $('#fEntraBox').hidden = key; syncModelFields(); };
   $('#fAuth').addEventListener('change', fAuthSync); fAuthSync();
   const fDraft = () => queueDraft('foundry', { endpoint: $('#fEndpoint').value, deployment: $('#fDeployment').value, embedding_deployment: $('#fEmbedding').value, image_deployment: $('#fImage').value, auth: radio('fAuth') ?? 'entra', tenant_id: $('#fTenant').value },
     { endpoint: f.endpoint, deployment: f.deployment, embedding_deployment: f.embedding_deployment, image_deployment: f.image_deployment, auth: f.auth === 'key' ? 'key' : 'entra', tenant_id: f.tenant_id }, draftState('#fDraft', 'foundry'));
@@ -523,17 +579,26 @@ function wireAiConnections(s, flash, dr = {}) {
   $('#fAuth').addEventListener('change', fDraft);
   const fBody = () => ({ endpoint: $('#fEndpoint').value, deployment: $('#fDeployment').value, embedding_deployment: $('#fEmbedding').value, image_deployment: $('#fImage').value,
     auth: radio('fAuth') ?? 'entra', tenant_id: $('#fTenant').value, api_key: $('#fKey').value });
-  const fNames = { chat: trUi('ai.step.chat'), embedding: trUi('ai.step.embedding') };
+  const fNames = { chat: trUi('ai.step.chat'), embedding: trUi('ai.step.embedding'), speech: trUi('ai.step.speech') };
   const fRun = async (save) => {
     const body = fBody();
-    busy('f', true); $('#fResult').innerHTML = info(trUi('ai.testing'));
+    busy('f', true); $('#fResult').innerHTML = info(trUi('ai.f.testing'));
     try {
       if (save) await flushDraft('foundry');
       const r = await api(save ? '/api/settings/ai/foundry' : '/api/settings/ai/foundry/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
       const result = r.test ?? r;
-      if (save && result.ok) { $('#fKey').value = ''; await aiAfterSave(info(trUi('ai.savedFoundry', [result.endpoint ?? '']), 'success')); return; }
+      const speechPassed = result.steps.some(st => st.id === 'speech' && st.ok);
+      const speechUnavailable = result.ok && !speechPassed
+        ? info(trUi('ai.f.sharedSpeechUnavailable'), 'warning') : '';
+      if (save && result.ok) {
+        $('#fKey').value = '';
+        await aiAfterSave(info(trUi('ai.savedFoundry', [result.endpoint ?? '']), 'success') + speechUnavailable
+          + (speechPassed ? info(trUi('ai.s.sourceHelp'), 'success') : '')
+          + (result.steps.some(st => st.id === 'speech' && !st.ok) ? aiResultBar(result, fNames) : ''));
+        return;
+      }
       $('#fResult').innerHTML = aiResultBar(result, fNames, { chat: body.deployment, embedding: body.embedding_deployment })
-        + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
+        + speechUnavailable + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
     } catch (e) { $('#fResult').innerHTML = errorBar(e); }
     finally { busy('f', false); }
   };
@@ -555,9 +620,10 @@ function wireAiConnections(s, flash, dr = {}) {
     if (r && !r.checked) { r.checked = true; $(`#${p}Auth`).value = 'entra'; (p === 's' ? sAuthSync : fAuthSync)(); }
   };
   const azOption = (a, can) => `<option value="${esc(a.id)}" ${a.provisioning_state === 'Succeeded' ? '' : 'disabled'}>${esc(a.name)} · ${esc(a.subscription_name)} / ${esc(a.resource_group)} · ${esc(a.location)}${can === false ? ` — ${trUi('ai.az.noRole')}` : ''}${a.provisioning_state === 'Succeeded' ? '' : ` — ${trUi('ai.az.notReady')}`}</option>`;
-  const fillDeployments = async (a) => {
-    const box = $('#fDepBox'); box.hidden = true;
+  const resetDeployments = () => { deploymentRequest++; deploymentChoices = null; syncModelFields(); };
+  const fillDeployments = async (a, current, sameResource) => {
     const r = await api('/api/settings/ai/azure/deployments', { method: 'POST', body: { tenant_id: $('#fTenant').value, account_id: a.id }, accept: [422] });
+    if (!current()) return;
     if (r.diagnosis) { $('#fPickNote').insertAdjacentHTML('beforeend', azFail(r.diagnosis)); return; }
     const ready = r.deployments.filter(d => d.provisioning_state === 'Succeeded');
     const label = (d) => `${esc(d.name)}${d.model ? ` (${esc(d.model)}${d.model_version ? ` ${esc(d.model_version)}` : ''}${d.sku ? ` · ${esc(d.sku)}` : ''})` : ''}`;
@@ -565,23 +631,25 @@ function wireAiConnections(s, flash, dr = {}) {
     const images = ready.filter(d => /gpt[-_]?image|flux|dall[-_]?e|image/i.test(`${d.model ?? ''} ${d.name}`));
     if (!chats.length) $('#fPickNote').insertAdjacentHTML('beforeend', info(trUi('ai.az.noChat'), 'warning'));
     if (!images.length) $('#fPickNote').insertAdjacentHTML('beforeend', info(trUi('ai.az.noImage'), 'warning'));
-    const curChat = $('#fDeployment').value.trim(), curEmb = $('#fEmbedding').value.trim(), curImage = $('#fImage').value.trim();
-    const chat = chats.find(d => d.name === curChat) ?? chats[0];
-    const emb = embeds.find(d => d.name === curEmb) ?? (curEmb ? null : embeds[0]);
-    const image = images.find(d => d.name === curImage) ?? (curImage ? null : images[0]);
-    $('#fChatDep').innerHTML = chats.map(d => `<option value="${esc(d.name)}">${label(d)}</option>`).join('');
-    $('#fEmbDep').innerHTML = `<option value="">${trUi('ai.az.noEmbedding')}</option>` + embeds.map(d => `<option value="${esc(d.name)}">${label(d)}</option>`).join('');
-    $('#fImageDep').innerHTML = `<option value="">${trUi('ai.az.noImageDeployment')}</option>` + images.map(d => `<option value="${esc(d.name)}">${label(d)}</option>`).join('');
-    $('#fChatDep').value = chat?.name ?? ''; $('#fEmbDep').value = emb?.name ?? ''; $('#fImageDep').value = image?.name ?? '';
-    $('#fDeployment').value = chat?.name ?? ''; $('#fEmbedding').value = emb?.name ?? ''; $('#fImage').value = image?.name ?? '';
-    box.hidden = false;
+    const choices = (list, empty) => ({ empty, options: list.map(d => ({ name: d.name, html: `<option value="${esc(d.name)}">${label(d)}</option>` })) });
+    deploymentChoices = {
+      fDeployment: choices(chats), fEmbedding: choices(embeds, trUi('ai.az.noEmbedding')), fImage: choices(images, trUi('ai.az.noImageDeployment')),
+    };
+    for (const [fieldId] of modelFields) {
+      const input = $(`#${fieldId}`), { options } = deploymentChoices[fieldId];
+      const value = input.value.trim();
+      if (options.length && !options.some(o => o.name === value) && (!sameResource || !value))
+        input.value = fieldId === 'fDeployment' ? options[0].name : '';
+    }
+    syncModelFields();
   };
   const onResource = async (p) => {
     const a = picked[p].find(x => x.id === $(`#${p}Resource`).value);
     const note = $(`#${p}PickNote`); note.innerHTML = '';
-    if (p === 'f') $('#fDepBox').hidden = true;
+    if (p === 'f') resetDeployments();
     if (!a) return;
-    $(`#${p}Endpoint`).value = a.endpoint;
+    const endpoint = $(`#${p}Endpoint`), sameResource = hostOf(endpoint.value) === hostOf(a.endpoint);
+    endpoint.value = a.endpoint;
     const can = p === 's' ? a.can_transcribe : a.can_chat;
     const notes = [];
     if (can === true) notes.push(info(trUi('ai.az.canUse'), 'success'));
@@ -592,14 +660,25 @@ function wireAiConnections(s, flash, dr = {}) {
     if (!a.custom_domain) notes.push(info(trUi('ai.az.noDomain'), 'warning'));
     notes.push(`<p class="caption">${trUi('ai.az.picked')}</p>`);
     note.innerHTML = notes.join('');
-    if (p === 'f') { try { await fillDeployments(a); } catch (e) { note.insertAdjacentHTML('beforeend', errorBar(e)); } }
+    if (p === 'f') {
+      const request = deploymentRequest;
+      const current = () => note.isConnected && request === deploymentRequest;
+      try { await fillDeployments(a, current, sameResource); }
+      catch (e) { if (current()) note.insertAdjacentHTML('beforeend', errorBar(e)); }
+      if (!current()) return;
+    }
     (p === 's' ? sDraft : fDraft)();
   };
   const azPick = async (p) => {
     const tenant = $(`#${p}Tenant`).value.trim(), btn = $(`#${p}Pick`), status = $(`#${p}PickStatus`), note = $(`#${p}PickNote`);
+    if (p === 'f') resetDeployments();
+    const request = deploymentRequest;
     btn.disabled = true; status.textContent = trUi('ai.az.loading'); note.innerHTML = '';
     try {
       const r = catalogs[tenant] ?? await api('/api/settings/ai/azure/resources', { method: 'POST', body: { tenant_id: tenant }, accept: [422] });
+      if (!note.isConnected || tenant !== $(`#${p}Tenant`).value.trim() || (p === 'f' && request !== deploymentRequest)) {
+        status.textContent = ''; return;
+      }
       if (r.diagnosis) { status.textContent = ''; note.innerHTML = azFail(r.diagnosis); return; }
       catalogs[tenant] = r;
       const list = r.accounts.filter(a => p === 's' ? a.speech : a.foundry);
@@ -623,9 +702,16 @@ function wireAiConnections(s, flash, dr = {}) {
     $(`#${p}Pick`).addEventListener('click', () => azPick(p));
     $(`#${p}Resource`).addEventListener('change', () => onResource(p));
   }
-  $('#fChatDep').addEventListener('change', () => { $('#fDeployment').value = $('#fChatDep').value; fDraft(); });
-  $('#fEmbDep').addEventListener('change', () => { $('#fEmbedding').value = $('#fEmbDep').value; fDraft(); });
-  $('#fImageDep').addEventListener('change', () => { $('#fImage').value = $('#fImageDep').value; fDraft(); });
+  for (const [fieldId, selectId] of modelFields) {
+    $(`#${fieldId}`).addEventListener('input', syncModelFields);
+    $(`#${selectId}`).addEventListener('change', () => { $(`#${fieldId}`).value = $(`#${selectId}`).value; fDraft(); });
+  }
+  for (const id of ['fEndpoint', 'fTenant']) $(`#${id}`).addEventListener('input', () => {
+    resetDeployments();
+    $('#fResource').value = '';
+    $('#fPickNote').replaceChildren();
+    if (id === 'fTenant') { $('#fResBox').hidden = true; $('#fPickStatus').textContent = ''; }
+  });
 
   // ----- GitHub Copilot -----
   let models = null;

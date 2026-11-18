@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.AspNetCore.Http.HttpResults;
 using VideoCreator.Asr;
 using VideoCreator.Selection;
 
@@ -13,6 +14,8 @@ public static class AiConnectionApi
     /// <summary>Empty <c>api_key</c> = keep the saved key (only for the same endpoint host).</summary>
     public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, string? ApiKey);
     public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey);
+    /// <summary>Choose the verified Foundry connection or the separate Speech settings for captions.</summary>
+    public sealed record SpeechSourceRequest(bool? UseFoundry);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
     public sealed record CopilotRequest(string? Auth, [property: System.Text.Json.Serialization.JsonPropertyName("github_token")] string? GitHubToken, string? Model = null, string? ReasoningEffort = null, string? ContextTier = null);
     public sealed record Step(string Id, bool Ok, long Ms, AiDiagnosis? Diagnosis = null);
@@ -38,17 +41,26 @@ public static class AiConnectionApi
 
     public static object SpeechView(Runtime rt)
     {
-        var saved = rt.AiSettings.Load().Speech;
-        if (saved != null)
-            return new
+        var saved = rt.AiSettings.Load();
+        var (active, source) = rt.EffectiveSpeech(saved);
+        var (separate, separateSource) = rt.SeparateSpeech(saved);
+        string? SafeEndpoint(SpeechConnection? s) => s == null ? null
+            : new UriBuilder(s.Endpoint) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.ToString();
+        return new
+        {
+            Source = source, Endpoint = SafeEndpoint(active), Auth = active?.Auth ?? "entra", active?.TenantId,
+            TestedAt = source == "app" ? saved.Speech?.TestedAt : null,
+            HasApiKey = source == "app" && saved.Speech?.ApiKeyProtected != null,
+            ApiKeyUnreadable = source == "app" && saved.Speech?.ApiKeyProtected != null && active?.ApiKey == null,
+            FoundryAvailable = rt.VerifiedFoundrySpeech(saved) != null,
+            UseFoundry = saved.UseFoundrySpeech ?? (source == "foundry"),
+            Separate = new
             {
-                Source = "app", saved.Endpoint, saved.Auth, saved.TenantId, saved.TestedAt,
-                HasApiKey = saved.ApiKeyProtected != null,
-                ApiKeyUnreadable = saved.ApiKeyProtected != null && rt.AiSettings.Reveal(saved.ApiKeyProtected) == null,
-            };
-        if (rt.Speech is not { } s) return new { Source = "none", Auth = "entra" };
-        var endpoint = new UriBuilder(s.Endpoint) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.ToString();
-        return new { Source = "config", Endpoint = endpoint, s.Auth, s.TenantId };
+                Source = separateSource, Endpoint = SafeEndpoint(separate), Auth = separate?.Auth ?? "entra", separate?.TenantId,
+                HasApiKey = saved.Speech?.ApiKeyProtected != null,
+                ApiKeyUnreadable = saved.Speech?.ApiKeyProtected != null && separate?.ApiKey == null,
+            },
+        };
     }
 
     public static object CopilotView(Runtime rt)
@@ -97,6 +109,14 @@ public static class AiConnectionApi
         api.MapPost("/settings/ai/speech/test", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
             Results.Json((await RunSpeechAsync(rt, req, ct)).Result, Json.Options))
             .WithSummary("Test Speech fast transcription using one second of synthetic silence; saves nothing");
+        api.MapPut("/settings/ai/speech/source", Results<NoContent, ProblemHttpResult> (Runtime rt, SpeechSourceRequest req, CancellationToken ct) =>
+        {
+            ct.ThrowIfCancellationRequested();
+            if (req.UseFoundry is not { } useFoundry) return TypedResults.Problem(statusCode: 400, title: "Specify use_foundry.");
+            if (!rt.SetSpeechConnectionSource(useFoundry)) return TypedResults.Problem(statusCode: 409, title: "Foundry Speech is not verified.");
+            return TypedResults.NoContent();
+        }).WithSummary("Choose the caption Speech connection without editing either saved connection")
+            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status409Conflict);
         api.MapPut("/settings/ai/speech", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
         {
             if (req.Auth == "key" && !rt.AiSettings.Protector.StoresSecrets) return Results.Json(Fail(NoSecretStorageCode, NoSecretStorageMessage), Json.Options, statusCode: 422);
@@ -111,17 +131,17 @@ public static class AiConnectionApi
             rt.AiSettings.Update(s => s with { Speech = null });
             SettingsDrafts.Clear(rt.Store, SettingsDrafts.Speech);
             return Results.Json(new { speech = SpeechView(rt) }, Json.Options);
-        }).WithSummary("Forget the saved Speech connection and key; appsettings.json applies again");
+        }).WithSummary("Forget the separate Speech connection and key without changing the source preference");
 
         api.MapPost("/settings/ai/foundry/test", async (Runtime rt, FoundryRequest req, CancellationToken ct) =>
             Results.Json(await TestFoundryAsync(rt, req, ct), Json.Options))
-            .WithSummary("Test a Microsoft Foundry connection (chat with the strict JSON schema, and the embedding deployment if given); saves nothing");
+            .WithSummary("Test Foundry chat, optional embeddings, and optional shared Speech with synthetic silence; saves nothing");
         api.MapPut("/settings/ai/foundry", async (Runtime rt, FoundryRequest req, CancellationToken ct) =>
         {
             if (req.Auth == "key" && !rt.AiSettings.Protector.StoresSecrets) return Results.Json(Fail(NoSecretStorageCode, NoSecretStorageMessage), Json.Options, statusCode: 422);
             var (result, conn) = await RunFoundryAsync(rt, req, ct);
             if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
-            rt.SaveFoundry(conn with { Endpoint = result.Endpoint! }, DateTimeOffset.Now);
+            rt.SaveFoundry(conn, DateTimeOffset.Now, speechVerified: result.Steps.Any(s => s.Id == "speech" && s.Ok));
             SettingsDrafts.Clear(rt.Store, SettingsDrafts.Foundry);
             return Results.Json(new { test = result, foundry = FoundryView(rt) }, Json.Options);
         }).WithSummary("Test, then save the Microsoft Foundry connection (only when the test passes)");
@@ -295,14 +315,16 @@ public static class AiConnectionApi
             }
             catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
             {
-                steps.Add(new(id, false, sw.ElapsedMilliseconds, Scrub(AiDiagnostics.Classify(e, "foundry", c.Auth, deployment), c.ApiKey)));
+                steps.Add(new(id, false, sw.ElapsedMilliseconds, Scrub(AiDiagnostics.Classify(e, id == "speech" ? "speech" : "foundry", c.Auth, deployment), c.ApiKey)));
                 return false;
             }
         }
         var ok = await Run("chat", c.Deployment, t => ConnectionProbe.ChatAsync(rt.FoundrySelector(c, FoundryTimeout), t));
         if (ok && c.EmbeddingDeployment != null)
             ok = await Run("embedding", c.EmbeddingDeployment, t => rt.FoundryEmbedder(c, FoundryTimeout).EmbedAsync(["接続テスト"], t));
-        return (new TestResult(ok, steps, steps.FirstOrDefault(s => !s.Ok)?.Diagnosis, c.Endpoint), ok ? c : null);
+        if (ok && Runtime.SharedSpeech(c) is { } shared)
+            await Run("speech", null, t => rt.SpeechTranscriber(shared, rt.Options.Asr.Locale).ProbeAsync(t));
+        return (new TestResult(ok, steps, ok ? null : steps.FirstOrDefault(s => !s.Ok)?.Diagnosis, c.Endpoint), ok ? c : null);
     }
 
     static async Task<(TestResult Result, CopilotConnection? Conn)> RunCopilotAsync(Runtime rt, CopilotRequest req, CancellationToken ct)

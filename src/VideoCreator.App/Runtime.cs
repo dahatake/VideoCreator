@@ -37,8 +37,43 @@ public sealed class Runtime
     /// <summary>The Foundry connection in use: the one saved in the settings screen, else appsettings.json (Entra ID). Null = not configured.</summary>
     public FoundryConnection? Foundry => AiSettings.Load().Foundry is { } f ? f.ToConnection(AiSettings)
         : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment, TenantId: _o.Llm.TenantId, ImageDeployment: _o.Llm.ImageDeployment);
-    public SpeechConnection? Speech => AiSettings.Load().Speech is { } speech ? speech.ToConnection(AiSettings)
-        : _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint) ? null : new SpeechConnection(_o.Asr.Endpoint, TenantId: _o.Asr.TenantId);
+    public SpeechConnection? Speech => EffectiveSpeech().Connection;
+
+    internal (SpeechConnection? Connection, string Source) EffectiveSpeech() => EffectiveSpeech(AiSettings.Load());
+
+    internal (SpeechConnection? Connection, string Source) EffectiveSpeech(SavedAi saved)
+    {
+        if (saved.UseFoundrySpeech == true)
+            return VerifiedFoundrySpeech(saved) is { } selected ? (selected, "foundry") : (null, "none");
+        if (saved.UseFoundrySpeech == null && saved.Speech == null && VerifiedFoundrySpeech(saved) is { } shared)
+            return (shared, "foundry");
+        return SeparateSpeech(saved);
+    }
+
+    internal (SpeechConnection? Connection, string Source) SeparateSpeech(SavedAi saved)
+    {
+        if (saved.Speech is { } speech) return (speech.ToConnection(AiSettings), "app");
+        return _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
+            ? (null, "none") : (new SpeechConnection(_o.Asr.Endpoint, TenantId: _o.Asr.TenantId), "config");
+    }
+
+    internal SpeechConnection? VerifiedFoundrySpeech(SavedAi saved) =>
+        saved.Foundry is { SpeechVerified: true } foundry
+        && SharedSpeech(foundry.ToConnection(AiSettings)) is { } shared
+        && (!shared.UsesKey || !string.IsNullOrWhiteSpace(shared.ApiKey)) ? shared : null;
+
+    internal bool SetSpeechConnectionSource(bool useFoundry) =>
+        AiSettings.TryUpdate(s => useFoundry && VerifiedFoundrySpeech(s) == null
+            ? null : s with { UseFoundrySpeech = useFoundry });
+
+    // Use the same Azure account origin; never forward credentials to a guessed sibling host or gateway.
+    internal static SpeechConnection? SharedSpeech(FoundryConnection c) =>
+        Uri.TryCreate(c.Endpoint, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0
+        && uri.AbsolutePath == "/openai/v1/"
+        && System.Text.RegularExpressions.Regex.IsMatch(uri.Host, @"^[a-z0-9-]+\.cognitiveservices\.azure\.com$")
+            ? new SpeechConnection(uri.GetLeftPart(UriPartial.Authority) + "/", c.Auth, c.TenantId, c.ApiKey)
+            : null;
     public CopilotConnection Copilot => AiSettings.Load().Copilot is { } c ? c.ToConnection(AiSettings) : new CopilotConnection(Model: _o.Llm.CopilotModel);
     public string CopilotWorkDir => Path.Combine(_o.ResolvedDataDir, "copilot");
 
@@ -83,12 +118,17 @@ public sealed class Runtime
         AiSettings.Update(s => s with { Provider = provider });
     }
 
-    public void SaveFoundry(FoundryConnection c, DateTimeOffset testedAt)
+    public void SaveFoundry(FoundryConnection c, DateTimeOffset testedAt, bool speechVerified = false)
     {
         var keep = AiSettings.Load().Foundry;
         // switching to Entra ID deletes the stored key; an empty key field keeps the stored one
         var key = c.UsesKey ? (string.IsNullOrWhiteSpace(c.ApiKey) ? keep?.ApiKeyProtected : AiSettings.Protect(c.ApiKey)) : null;
-        AiSettings.Update(s => s with { Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt, c.ImageDeployment) });
+        AiSettings.Update(s => s with
+        {
+            Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt, c.ImageDeployment, speechVerified),
+            // A newly available connection must not change the existing destination until selected.
+            UseFoundrySpeech = s.UseFoundrySpeech ?? (speechVerified && VerifiedFoundrySpeech(s) == null ? false : null),
+        });
     }
 
     public void SaveCopilot(CopilotConnection c, string? login, DateTimeOffset testedAt)
@@ -130,15 +170,20 @@ public sealed class Runtime
     static string Origin(Uri endpoint) => new UriBuilder(endpoint) { UserName = "", Password = "", Path = "", Query = "", Fragment = "" }
         .Uri.GetLeftPart(UriPartial.Authority);
 
-    public object Transmission => new
+    public object Transmission
     {
-        llm_disabled = LlmProvider == "none",
-        asr_endpoint = Speech is { } speech && Uri.TryCreate(speech.Endpoint, UriKind.Absolute, out var endpoint)
-            ? Origin(endpoint) : null,
-        authentication = Speech is { } connection
-            ? connection.UsesKey ? "API key" : "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）" : null,
-        llm_destination = LlmDestination,
-    };
+        get
+        {
+            var speech = Speech;
+            return new
+            {
+                llm_disabled = LlmProvider == "none",
+                asr_endpoint = speech != null && Uri.TryCreate(speech.Endpoint, UriKind.Absolute, out var endpoint) ? Origin(endpoint) : null,
+                authentication = speech == null ? null : speech.UsesKey ? "API key" : "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）",
+                llm_destination = LlmDestination,
+            };
+        }
+    }
 
     public string? LlmDestination => LlmProvider switch
     {
