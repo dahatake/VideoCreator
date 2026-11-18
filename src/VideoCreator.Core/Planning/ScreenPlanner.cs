@@ -46,13 +46,15 @@ public sealed record ScreenLayout(int W, int H, int BoxY, int BoxH, int D, int B
     /// </summary>
     public static ScreenLayout For(Canvas c, Preset p)
     {
-        var cap = p.Telop.Caption;
-        int top = p.HasTelop("headline") ? Rendering.AssWriter.HeadlineMarginV + 60 + 2 * 14 + 24 : (int)Math.Round(c.Height * 0.0833);
+        var cap = p.Telop.Caption; var geo = Rendering.AssWriter.Geo(p, c);
+        int top = p.HasTelop("headline") ? geo.HeadlineMarginV + 60 + 2 * 14 + 24 : (int)Math.Round(c.Height * 0.0833);
         int textTop = p.HasTelop("emphasis")
-            ? c.Height - (cap.MarginV + Rendering.AssWriter.EmphLift) - (int)(cap.FontPx * 1.25) - 9
-            : c.Height - cap.MarginV - cap.FontPx * cap.MaxLines - 7;
+            ? c.Height - (geo.CaptionMarginV + Rendering.AssWriter.EmphLift) - (int)(cap.FontPx * 1.25) - 9
+            : c.Height - geo.CaptionMarginV - cap.FontPx * cap.MaxLines - 7;
         int boxY = top & ~1;
         int boxH = Math.Max((int)Math.Round(c.Width * 9.0 / 16), textTop - 16 - boxY) & ~1;
+        // a 16:9 band is the whole landscape canvas: the screen fills it and the telops sit over its lower edge
+        if (c.IsLandscape) { boxY = 0; boxH = c.Height & ~1; }
         int d = (int)Math.Min((p.Screen ?? new PresetScreen()).PipDiameter, boxH * 0.42) & ~1;
         return new ScreenLayout(c.Width, c.Height, boxY, boxH, d, Math.Max(4, d / 45) & ~1, Math.Max(16, c.Width / 45));
     }
@@ -187,7 +189,7 @@ public static class ScreenPlanner
                 res.Add((sc with
                 {
                     AssetId = asset.Id, SrcIn = Math.Round(s0, 3), SrcOut = Math.Round(s0 + (m1 - m0), 3), AudioIn = Math.Round(m0, 3),
-                    Reframe = scr ? new ReframeSpec { Mode = "screen", BoxY = lay.BoxY, BoxH = lay.BoxH } : new ReframeSpec { Mode = asset.Media.Aspect < 0.9 ? "fit" : "blur_bg" },
+                    Reframe = scr ? new ReframeSpec { Mode = "screen", BoxY = lay.BoxY, BoxH = lay.BoxH } : ReframeSpec.Default(asset.Media, canvas),
                     Pip = null,
                 }, scr && presenter != null && list[i].PresIn));
                 i = j;

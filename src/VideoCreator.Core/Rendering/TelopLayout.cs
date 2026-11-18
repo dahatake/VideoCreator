@@ -20,16 +20,17 @@ public static class TelopLayout
         var result = new Dictionary<string, Placement>();
         var occupied = new List<(Telop Telop, Rect Bounds)>();
         int w = plan.Canvas.Width, h = plan.Canvas.Height;
-        var captionBand = AssWriter.Band(TelopType.Caption, p, h)!.Value;
+        var geo = AssWriter.Geo(p, plan.Canvas);
+        var captionBand = AssWriter.Band(TelopType.Caption, p, plan.Canvas)!.Value;
         var captionBounds = new Rect(0, captionBand.Top - 32, w, captionBand.Bottom + 32);
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Type == TelopType.Caption ? 0 : 1).ThenBy(t => t.Start).ThenBy(t => t.Type))
         {
             var (size, outline, scaleX) = AssWriter.Metrics(t.Style, p);
-            int fit = AssWriter.FitFontSize(t.Text, size, outline, w, p.Telop.Caption.MarginR, scaleX, plan.Language);
-            var band = AssWriter.Band(t.Type, p, h);
+            int fit = AssWriter.FitFontSize(t.Text, size, outline, w, geo.MarginR, scaleX, plan.Language, geo.MarginL);
+            var band = AssWriter.Band(t.Type, p, plan.Canvas);
             double height = fit * 1.5 + 2 * outline + 12;
-            double top = band?.Top ?? (t.Type == TelopType.Sfx ? AssWriter.SfxY - height / 2 : AssWriter.HeadlineMarginV);
-            var original = new Rect(AssWriter.MarginL, top, w - p.Telop.Caption.MarginR, band?.Bottom ?? top + height);
+            double top = band?.Top ?? (t.Type == TelopType.Sfx ? geo.SfxY - height / 2 : geo.HeadlineMarginV);
+            var original = new Rect(geo.MarginL, top, w - geo.MarginR, band?.Bottom ?? top + height);
             if (t.Type == TelopType.Caption && p.Telop.Caption.AvoidFaces && plan.TelopFaces != null)
             {
                 result[t.Id] = CaptionSlot(plan, p, t, original, fit);
@@ -48,7 +49,7 @@ public static class TelopLayout
                 continue;
             }
             // Reserve animation overshoot on all sides instead of shrinking the face-protection margin.
-            fit = AssWriter.FitFontSize(t.Text, size, outline + 6, w, p.Telop.Caption.MarginR, (int)Math.Ceiling(scaleX * PopScale), plan.Language);
+            fit = AssWriter.FitFontSize(t.Text, size, outline + 6, w, geo.MarginR, (int)Math.Ceiling(scaleX * PopScale), plan.Language, geo.MarginL);
             height = fit * 1.5 * PopScale + 2 * outline + 16;
             var blocked = faces.Concat(occupied.Where(x => x.Telop.Start < t.End && x.Telop.End > t.Start).Select(x => x.Bounds)).ToList();
             if (plan.Telops.Any(c => c.Enabled && c.Type == TelopType.Caption && c.Start < t.End && c.End > t.Start)) blocked.Add(captionBounds);
@@ -59,11 +60,11 @@ public static class TelopLayout
                     blocked.Add(new(0, clip.Reframe.BoxY, w, clip.Reframe.BoxY + clip.Reframe.BoxH));
                 screenOffset += clip.Length;
             }
-            double min = Qa.QaEngine.SafeZone.Top, max = h - Qa.QaEngine.SafeZone.Bottom - height;
+            double min = geo.Safe.Top, max = h - geo.Safe.Bottom - height;
             var candidates = new[] { Math.Clamp(top, min, Math.Max(min, max)), min, max }
                 .Concat(blocked.SelectMany(b => new[] { b.Bottom + 8, b.Top - height - 8 }))
                 .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - top));
-            var bounds = candidates.Select(y => new Rect(AssWriter.MarginL, y, w - p.Telop.Caption.MarginR, y + height))
+            var bounds = candidates.Select(y => new Rect(geo.MarginL, y, w - geo.MarginR, y + height))
                 .FirstOrDefault(b => blocked.All(o => !b.Intersects(o)));
             result[t.Id] = new(bounds, fit, true, bounds == null ? "顔・字幕と重ならない表示場所がないため表示しません" : null);
             if (bounds != null) occupied.Add((t, bounds));
@@ -86,7 +87,8 @@ public static class TelopLayout
             .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - band.Top))
             .Select(y => new Rect(band.Left, y, band.Right, y + height))
             .FirstOrDefault(r => faces.All(o => !r.Intersects(o)));
-        var slot = Search(Qa.QaEngine.SafeZone.Top, h - Qa.QaEngine.SafeZone.Bottom - height)
+        var safe = AssWriter.Geo(p, plan.Canvas).Safe;
+        var slot = Search(safe.Top, h - safe.Bottom - height)
                    ?? (p.Telop.Caption.AllowOutsideSafe ? Search(24, h - 24 - height) : null);
         return slot == null ? new(band, fit, false) : new(slot, fit, true);
     }
@@ -159,7 +161,7 @@ public static class TelopLayout
         }
         else
         {
-            sx = sy = r.Mode is "fit" or "screen" ? Math.Min(w / media.Width, (r.Mode == "screen" ? r.BoxH : h) / media.Height) : w / media.Width;
+            sx = sy = Math.Min(w / media.Width, (r.Mode == "screen" ? r.BoxH : h) / media.Height);
             dx = (w - media.Width * sx) / 2;
             dy = r.Mode == "screen" ? r.BoxY + (r.BoxH - media.Height * sy) / 2 : (h - media.Height * sy) / 2 + (r.Mode == "fit" ? 0 : r.FgOffsetY);
         }

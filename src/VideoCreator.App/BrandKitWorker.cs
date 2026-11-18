@@ -8,7 +8,7 @@ namespace VideoCreator.App;
 
 /// <summary>
 /// Upscales the registered opening / closing in the background after registration (about 1–2 minutes per 12 s video on a GPU,
-/// much longer on CPU), so the registration request returns at once. Only the variants a 1080x1920 output will actually use are processed.
+/// much longer on CPU), so the registration request returns at once. Only the variants a portrait (1080x1920) or landscape (1920x1080) output will actually use are processed, each against the canvas of its own shape.
 /// Generation can run meanwhile: until a file is done, renders use the registered file (scaled with lanczos as before).
 /// </summary>
 public sealed class BrandKitWorker(Runtime rt, ILogger<BrandKitWorker> log)
@@ -21,9 +21,16 @@ public sealed class BrandKitWorker(Runtime rt, ILogger<BrandKitWorker> log)
     public Status Current => _status;
     public string CacheDir => Path.Combine(rt.Options.ResolvedDataDir, "brandkit");
 
-    /// <summary>Files of the kit that a 1080x1920 output uses and that are smaller than it.</summary>
-    public static List<BrandFile> Targets(BrandKit kit, Canvas canvas) =>
-        new[] { "opening", "closing" }.Select(k => BrandKitService.Pick(kit.Files, k, canvas)).OfType<BrandFile>().Where(f => BrandKitEnhancer.Needs(f, canvas)).ToList();
+    /// <summary>
+    /// Files of the kit that a portrait or landscape output uses and that are smaller than the canvas of their own shape
+    /// (a 1280x720 opening against 1920x1080). A portrait file shown on a landscape canvas is pillarboxed at that height, so it is judged as portrait.
+    /// </summary>
+    public static List<(BrandFile File, Canvas Canvas)> Targets(BrandKit kit) =>
+        new[] { new Canvas(), Canvas.Landscape() }
+            .SelectMany(c => new[] { "opening", "closing" }.Select(k => BrandKitService.Pick(kit.Files, k, c)))
+            .OfType<BrandFile>().DistinctBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(f => (File: f, Canvas: Canvas.For(f.Width, f.Height)))
+            .Where(x => BrandKitEnhancer.Needs(x.File, x.Canvas)).ToList();
 
     public void Start()
     {
@@ -40,12 +47,11 @@ public sealed class BrandKitWorker(Runtime rt, ILogger<BrandKitWorker> log)
 
     async Task RunAsync(CancellationToken ct)
     {
-        var canvas = new Canvas();
         try
         {
             var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
             if (kit == null || !kit.Upscale) { _status = new("idle"); return; }
-            var targets = Targets(kit, canvas);
+            var targets = Targets(kit);
             if (targets.Count == 0) { _status = new("done", Message: "高画質化が必要な動画はありません（出力と同じか大きい解像度です）"); return; }
             if (!File.Exists(rt.UpscaleModel)) { _status = new("failed", Message: $"高画質化のモデルがありません（{rt.UpscaleModel}）。scripts/get-tools.ps1 を実行してください。元の動画のまま使います"); return; }
             using var sr = new SuperResolution(rt.UpscaleModel);
@@ -53,7 +59,7 @@ public sealed class BrandKitWorker(Runtime rt, ILogger<BrandKitWorker> log)
             var notes = new List<string>();
             for (int i = 0; i < targets.Count; i++)
             {
-                var f = targets[i]; var name = Path.GetFileName(f.Path); int k = i;
+                var (f, canvas) = targets[i]; var name = Path.GetFileName(f.Path); int k = i;
                 var p = new Progress<(string Stage, double Progress)>(x => _status = new("running", name, x.Stage, (k + x.Progress) / targets.Count, $"{name}: {x.Stage}（{sr.Device}）"));
                 var done = await BrandKitEnhancer.EnhanceAsync(rt.Ff, sr, f, canvas, CacheDir, p, ct);
                 ct.ThrowIfCancellationRequested();

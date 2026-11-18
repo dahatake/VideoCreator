@@ -378,7 +378,7 @@ public sealed partial class Renderer(FFmpeg ff)
                          $"[f{id}]scale={(int)(W * c.Reframe.FgScale) & ~1}:-2:flags=lanczos[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:{Math.Max(0, half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");
             else
                 g.Append($",split[f{id}][b{id}];[b{id}]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2[bb{id}];" +
-                         $"[f{id}]scale={W}:-2[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");
+                         $"[f{id}]scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2[ff{id}];[bb{id}][ff{id}]overlay=(W-w)/2:(H-h)/2{(c.Reframe.FgOffsetY >= 0 ? "+" : "")}{(half ? c.Reframe.FgOffsetY / 2 : c.Reframe.FgOffsetY)},setsar=1{post}[{label}];");
         }
     }
 

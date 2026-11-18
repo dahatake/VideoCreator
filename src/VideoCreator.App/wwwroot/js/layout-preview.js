@@ -90,7 +90,7 @@ function beatSvg(lp, beat, assets, large) {
 export function layoutSvg(lp, assets, { size = 'icon', label = '' } = {}) {
   const uid = `lp${++seq}`, large = size === 'large', key = keyBeat(lp);
   const a11y = large ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true" focusable="false"';
-  return `<svg class="lp-svg lp-${size}" viewBox="0 0 ${lp.width} ${lp.height}" ${a11y} data-uid="${uid}">` +
+  return `<svg class="lp-svg lp-${size}${lp.width > lp.height ? ' lp-land' : ''}" viewBox="0 0 ${lp.width} ${lp.height}" ${a11y} data-uid="${uid}">` +
     `<style>${frames(lp, uid)}</style>` +
     `<rect width="${lp.width}" height="${lp.height}" rx="70" fill="#1b1a19"/>` +
     lp.beats.map((b, i) => `<g class="lp-beat${i === key ? ' lp-key' : ''}" data-kind="${esc(b.kind)}"${anim(lp, uid, i)}>${beatSvg(lp, b, assets, large)}</g>`).join('') +

@@ -276,8 +276,9 @@ public class SeriesTests
         Assert.Contains($"[0:v]trim=start={Renderer.SeekMargin}:", graph);              // the cold open is the only clip of its input
         Assert.StartsWith("[1:a]asplit=", graph);                                       // one decoder output per input, split inside the graph
         Assert.DoesNotContain("[1:v]trim", graph);
-        Assert.Contains("scale=540:960:force_original_aspect_ratio=increase", graph);   // previews are composed at half size
-        Assert.DoesNotContain("scale=540:960,format", graph);
+        Assert.Equal((1920, 1080), (plan.Canvas.Width, plan.Canvas.Height));   // a landscape master keeps a landscape canvas
+        Assert.Contains("scale=960:540:force_original_aspect_ratio=decrease,pad=960:540", graph);   // fit at half size, no blurred side bands
+        Assert.DoesNotContain("scale=960:540,format", graph);
     }
 }
 
@@ -330,6 +331,6 @@ public class SeriesRenderTests : IAsyncLifetime
 
         var preview = await new Renderer(Ff).RenderAsync(plan, p, assets, Path.Combine(_dir, "part2_preview.mp4"), preview: true, TestContext.Current.CancellationToken);
         var probe = await Ff.RunProbeAsync(["-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0", preview.Path], TestContext.Current.CancellationToken);
-        Assert.Equal("540,960", probe.StdOut.Trim());
+        Assert.Equal("960,540", probe.StdOut.Trim());   // landscape master → landscape output, previewed at half size
     }
 }

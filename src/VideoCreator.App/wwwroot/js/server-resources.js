@@ -88,7 +88,7 @@ export const qaNames = {
 };
 export const qaRecommendations = {
   'H-01': ['区間を調整するか作り直して、尺を範囲内に収めてください。', 'Adjust segment boundaries or regenerate to fit the preset duration.', '调整区间或重新生成，使时长符合模式范围。', '구간을 조절하거나 다시 생성해 길이 범위에 맞추세요.'],
-  'H-02': ['書き出しをやり直してください。', 'Export again using the edit plan’s 9:16 canvas.', '按编辑计划的 9:16 画布重新导出。', '편집 계획의 9:16 캔버스로 다시 내보내세요.'],
+  'H-02': ['書き出しをやり直してください。', 'Export again using the edit plan’s canvas (portrait 1080×1920 / landscape 1920×1080).', '按编辑计划的画布（竖屏 1080×1920／横屏 1920×1080）重新导出。', '편집 계획의 캔버스(세로 1080×1920 / 가로 1920×1080)로 다시 내보내세요.'],
   'H-03': ['BGM を下げて書き出しをやり直してください。', 'Lower BGM volume and export again to meet target loudness.', '降低 BGM 音量并重新导出，以符合目标响度。', 'BGM을 낮추고 다시 내보내 목표 라우드니스에 맞추세요.'],
   'H-04': ['効果音や BGM を控えめにしてください。', 'Reduce sound effects or BGM to lower peaks, then export again.', '降低音效或 BGM 以减少峰值，然后重新导出。', '효과음·BGM을 줄여 피크를 낮춘 후 다시 내보내세요.'],
   'H-05': ['はみ出したテロップを短くするか無効にしてください。', 'Shorten or disable overlays extending outside safe areas.', '缩短或禁用超出安全区的字幕。', '안전 영역 밖 자막을 줄이거나 끄세요.'],
@@ -108,7 +108,7 @@ export const qaRecommendations = {
   'S-08': ['字幕の区切りを調整して禁則を直します。', 'Move leading particles/auxiliaries to the previous caption. If that does not fit, redistribute word boundaries or merge adjacent captions.', '将开头助词或助动词移至上一字幕末尾。若无法容纳，则重新分配边界或合并相邻字幕。', '첫 조사·조동사를 이전 자막 끝으로 옮깁니다. 맞지 않으면 경계를 재배치하거나 인접 자막을 합칩니다.'],
   'S-09': ['根拠発話の否定を戻します。', 'Restore the negation present in source speech.', '恢复依据发言中的否定词。', '근거 발언의 부정을 복원합니다.'],
   'S-11': ['1本あたりを短くして作り直してください。', 'Regenerate with shorter videos.', '缩短每段时长后重新生成。', '편당 길이를 줄여 다시 만드세요.'],
-  'S-12': ['出力解像度以上の素材を使ってください。', 'Use openings/closings at least as large as the output (1080×1920).', '使用至少与输出相同分辨率（1080×1920）的片头及片尾。', '출력(1080×1920) 이상의 오프닝·클로징을 사용하세요.'],
+  'S-12': ['出力解像度以上の素材を使ってください。', 'Use openings/closings at least as large as the output (portrait 1080×1920 / landscape 1920×1080).', '使用至少与输出相同分辨率（竖屏 1080×1920／横屏 1920×1080）的片头及片尾。', '출력(세로 1080×1920 / 가로 1920×1080) 이상의 오프닝·클로징을 사용하세요.'],
   'S-13': ['素材の話者番号を確認して作り直してください。', 'Check media speaker numbers and camera assignments, then regenerate.', '确认素材说话人编号和机位对应关系后重新生成。', '미디어 화자 번호·카메라 대응을 확인하고 다시 만드세요.'],
   'S-14': ['00:00 から3章以上、各10秒以上になるよう作り直してください。', 'Regenerate to get at least 3 chapters, starting at 00:00, each at least 10 s long.', '重新生成，确保从 00:00 起至少 3 章，每章至少 10 秒。', '00:00부터 3개 이상·각 10초 이상 챕터가 되도록 다시 만드세요.'],
   'S-15': ['BGM と声の差を増やすか曲を下げ、プレビューを更新してください。', 'Increase the voice/BGM difference during speech, or lower that scene’s track, then update preview to remeasure.', '增大讲话时人声与 BGM 差值，或降低该场景曲目音量，再更新预览重新测量。', '발화 중 음성·BGM 차이를 늘리거나 장면 곡을 낮추고 미리 보기를 갱신해 재측정하세요.'],

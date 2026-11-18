@@ -697,7 +697,9 @@ public sealed class PipelineRunner(PipelineServices s)
         string bgmOption = oa.BgmMode == "scene" ? "scene" : oa.Bgm ?? oa.BgmCues.FirstOrDefault(c => c.Track != null)?.Track ?? "none";
         IReadOnlyList<BgmTrack>? pool = bgmOption == "scene" ? await BgmPoolAsync(old.ProjectId, ct) : null;
         BgmTrack? bgm = bgmOption is not ("scene" or "none") && FindBgm(bgmOption) is { } t ? (p.Planner == "beat" ? await AnalyzedBgmAsync(await MeasuredBgmAsync(t, ct), ct) : await MeasuredBgmAsync(t, ct)) : null;
-        return await BuildPlanAsync(c, LoadTranscript(main, old.Language), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = bgmOption } }, faces, bgm, segments, ct, LoadLaughs(main, old.Language),
+        // a replan keeps the plan's canvas shape (plans made before the orientation option were portrait even from landscape footage)
+        var orientation = old.Canvas.IsLandscape ? "landscape" : "portrait";
+        return await BuildPlanAsync(c, LoadTranscript(main, old.Language), LoadSignals(main), p, main, used, old.ProjectId, job with { Options = job.Options with { Bgm = bgmOption, Orientation = orientation } }, faces, bgm, segments, ct, LoadLaughs(main, old.Language),
             screen: p.Planner == "screen" ? LoadScreenContext(used, old) : null, bgmPool: pool);
     }
 

@@ -202,7 +202,7 @@ public sealed class QaEngine(FFmpeg ff)
             res.Add(new("S-14", yt != null ? QaStatus.Pass : QaStatus.Warn, yt != null ? $"{yt.Count} チャプター" : "条件を満たさない", "00:00 から・3つ以上・各10秒以上", "YouTube のチャプター"));
             res.Add(new("S-11", fileDur <= 3600 ? QaStatus.Pass : QaStatus.Warn, $"{fileDur / 60:F1}分", "≤ 60分（TikTok のアップロード上限）", "投稿先の長さの上限"));
         }
-        // S-12: bumpers / card images are scaled to the canvas; upscaling softens them (e.g. a 720x1280 opening in a 1080x1920 output)
+        // S-12: bumpers / card images are scaled to the canvas; upscaling softens them (e.g. a 720x1280 opening in a 1080x1920 output, a 1280x720 one in 1920x1080)
         var soft = plan.Inserts.Where(i => i.Enabled && i.Path != null && i.Width > 0)
             .Select(i => (i, s: BrandKitService.Upscale(i.Width, i.Height, plan.Canvas))).Where(x => x.s > 1.05 && x.i.Kind != "card").ToList();
         if (plan.Inserts.Any(i => i.Enabled && i.Path != null && i.Kind != "card"))
@@ -256,7 +256,7 @@ public sealed class QaEngine(FFmpeg ff)
                     throw new FFmpegException("プレビューの解像度または尺が編集計画と一致しません");
                 foreach (var (id, threshold, message) in new[]
                 {
-                    ("H-02", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率 9:16"),
+                    ("H-02", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率"),
                     ("H-03", "−14 ±1 LUFS", "積分ラウドネス"),
                     ("H-04", "≤ −1.0 dBTP", "True Peak"),
                 })
@@ -265,7 +265,7 @@ public sealed class QaEngine(FFmpeg ff)
             else
             {
                 res.Add(new("H-01", DurationOk(body, dur, minD, maxD, cap, 0.1) && match ? QaStatus.Pass : QaStatus.Fail, DurationText(body, dur, " (ffprobe)") + (match ? "" : $"・計画 {ctx.Plan.TotalDuration:F2}s と不一致"), RangeText(minD, maxD, cap), "尺") { Stage = "final" });
-                res.Add(new("H-02", w == ctx.Plan.Canvas.Width && h == ctx.Plan.Canvas.Height ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率 9:16") { Stage = "final" });
+                res.Add(new("H-02", w == ctx.Plan.Canvas.Width && h == ctx.Plan.Canvas.Height ? QaStatus.Pass : QaStatus.Fail, $"{w}x{h}", $"{ctx.Plan.Canvas.Width}x{ctx.Plan.Canvas.Height}", "解像度・比率") { Stage = "final" });
             }
         }
         if (!preview)
@@ -383,13 +383,15 @@ public sealed class QaEngine(FFmpeg ff)
                 g.Select(t => (t.Id, "telop", InsertMap.ToFinal(ins, t.Start), InsertMap.ToFinal(ins, t.End, true))).ToList()));
         }
         if (cards.Count > 0)
-            groups.Add(("qa_cards", false, ctx.Plan with { Telops = [] },             cards.Select(x => x.Start + Math.Min(0.6, (x.End - x.Start) / 2)).ToList(), ctx.Plan.TotalDuration,
-                            cards.Select(x => (x.Insert.Id, "insert", x.Start, x.End)).ToList()));
-                    foreach (var (name, top, plan, times, total, owners) in groups)
+            groups.Add(("qa_cards", false, ctx.Plan with { Telops = [] }, cards.Select(x => x.Start + Math.Min(0.6, (x.End - x.Start) / 2)).ToList(), ctx.Plan.TotalDuration,
+                cards.Select(x => (x.Insert.Id, "insert", x.Start, x.End)).ToList()));
+        var safe = AssWriter.Geo(ctx.Preset, ctx.Plan.Canvas).Safe;
+        int canvasW = ctx.Plan.Canvas.Width, canvasH = ctx.Plan.Canvas.Height;
+        foreach (var (name, top, plan, times, total, owners) in groups)
         {
             var ass = Path.Combine(workDir, name + ".ass");
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset, layout), new UTF8Encoding(false), ct);
-            const int W = 540, H = 960; const double fps = 10;
+            int W = canvasW / 2, H = canvasH / 2; const double fps = 10;
             var frames = times.Select(t => (int)Math.Round(t * fps)).Distinct().OrderBy(x => x).ToList();
             var select = string.Join("+", frames.Select(f => $"eq(n,{f})"));
             using var ms = new MemoryStream();
@@ -406,10 +408,9 @@ public sealed class QaEngine(FFmpeg ff)
                     for (int x = 0; x < W; x++) if (buf[row + x] > 48) { if (x < x1) x1 = x; if (x > x2) x2 = x; if (y < y1) y1 = y; if (y > y2) y2 = y; }
                 }
                 if (x2 < 0) continue;
-                (x1, x2, y1, y2) = (x1 * 2, x2 * 2 + 1, y1 * 2, y2 * 2 + 1);   // back to 1080x1920 coordinates
-                var canvasH = ctx.Plan.Canvas.Height; var canvasW = ctx.Plan.Canvas.Width;
-                bool ok = top ? y1 >= SafeZone.Top && x1 >= SafeZone.Left && x2 <= canvasW - SafeZone.Right
-                              : y1 >= SafeZone.Top && y2 <= canvasH - SafeZone.Bottom && x1 >= SafeZone.Left && x2 <= canvasW - SafeZone.Right;
+                (x1, x2, y1, y2) = (x1 * 2, x2 * 2 + 1, y1 * 2, y2 * 2 + 1);   // back to canvas coordinates
+                bool ok = top ? y1 >= safe.Top && x1 >= safe.Left && x2 <= canvasW - safe.Right
+                              : y1 >= safe.Top && y2 <= canvasH - safe.Bottom && x1 >= safe.Left && x2 <= canvasW - safe.Right;
                 if (ok) continue;
                 violations.Add($"t≈{frames.ElementAtOrDefault(k) / fps:F1}s bbox x{x1}-{x2} y{y1}-{y2}");
                 for (int o = 0; o < times.Count; o++)
@@ -422,7 +423,7 @@ public sealed class QaEngine(FFmpeg ff)
             ? ctx.Plan.Telops.Where(t => t.Type == TelopType.Caption && layout.TryGetValue(t.Id, out var pl) && pl.Positioned).Select(t => t.Id).ToHashSet() : [];
         bool onlyMoved = violations.Count > 0 && items.Count > 0 && items.All(i => movedCaptions.Contains(i.Target));
         return new("H-05", violations.Count == 0 ? QaStatus.Pass : onlyMoved ? QaStatus.Warn : QaStatus.Fail, violations.Count == 0 ? "all telops inside (measured)" : string.Join("; ", violations.Take(3)),
-            $"x {SafeZone.Left}–{1080 - SafeZone.Right}, y {SafeZone.Top}–{1920 - SafeZone.Bottom}", "テロップの安全領域（実測）") { Items = items };
+            $"x {safe.Left}–{canvasW - safe.Right}, y {safe.Top}–{canvasH - safe.Bottom}", "テロップの安全領域（実測）") { Items = items };
     }
 
     /// <summary>S-06. Inserts are excluded: a scene card is a deliberate 1 s still, and bumpers may hold a title or fade to a solid colour.</summary>

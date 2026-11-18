@@ -251,4 +251,12 @@ export const additional = {
   'ai.d.failed': ["接続テストに失敗しました。","The connection test failed.","连接测试失败。","연결 테스트에 실패했습니다."],
   'ai.d.secret_storage_unavailable': ["この OS では API キーとトークンを暗号化して保存できないため、保存しませんでした。Microsoft Entra ID またはサインイン済みの GitHub ユーザーを選んでください。","This OS cannot store API keys and tokens encrypted, so nothing was saved. Choose Microsoft Entra ID or the signed-in GitHub user.","此操作系统无法加密保存 API 密钥和令牌，因此未保存。请选择 Microsoft Entra ID 或已登录的 GitHub 用户。","이 OS에서는 API 키와 토큰을 암호화해 저장할 수 없어 저장하지 않았습니다. Microsoft Entra ID 또는 로그인된 GitHub 사용자를 선택하세요."],
   'ai.d.http': ["接続テストに失敗しました（HTTP {0}）。","The connection test failed (HTTP {0}).","连接测试失败（HTTP {0}）。","연결 테스트에 실패했습니다(HTTP {0})."],
+  'out.title': ['出力の向き', 'Output orientation', '输出方向', '출력 방향'],
+  'out.auto': ['入力に合わせる（メインの動画は{0}）', 'Match the input (main video is {0})', '与输入一致（主视频为{0}）', '입력에 맞춤(메인 영상은 {0})'],
+  'out.portrait': ['縦 9:16（1080×1920）', 'Portrait 9:16 (1080×1920)', '竖屏 9:16（1080×1920）', '세로 9:16(1080×1920)'],
+  'out.landscape': ['横 16:9（1920×1080）', 'Landscape 16:9 (1920×1080)', '横屏 16:9（1920×1080）', '가로 16:9(1920×1080)'],
+  'out.shapePortrait': ['縦長', 'portrait', '竖屏', '세로'],
+  'out.shapeLandscape': ['横長', 'landscape', '横屏', '가로'],
+  'out.help': ['横長の動画は横長のまま 1920×1080 で書き出し、オープニング／クロージングも横長の素材を使います。ショート向けに縦で作るときは「縦 9:16」を選びます。', 'Landscape video stays landscape at 1920×1080, and the opening/closing use the landscape files. Choose "Portrait 9:16" to make a Short.', '横屏视频保持横屏以 1920×1080 导出，片头／片尾也使用横屏素材。制作短视频时请选择“竖屏 9:16”。', '가로 영상은 가로 그대로 1920×1080으로 내보내며 오프닝/클로징도 가로 소재를 사용합니다. 쇼츠용으로 만들려면 "세로 9:16"을 선택하세요.'],
+  'kit.landscape': ['横長用', 'Landscape', '横屏用', '가로용'],
 };

@@ -99,7 +99,7 @@ public static class PipPlanner
                     var item = clip with
                     {
                         ClipId = $"c{result.Count + 1}", AssetId = main.Id, SrcIn = a, SrcOut = b, AudioIn = a,
-                        Reframe = new ReframeSpec { Mode = main.Media.Aspect < 0.9 ? "fit" : "blur_bg" },
+                        Reframe = ReframeSpec.Default(main.Media, canvas),
                         Zoom = 1, TransitionSec = 0, Pip = null,
                     };
                     if (show)
@@ -144,7 +144,7 @@ public static class PipPlanner
     public static ReframeSpec SwitchFrame(SourceAsset screen, Preset preset, Canvas canvas, SlideImage? slide = null)
     {
         const int top = 24;
-        int bottom = preset.HasTelop("caption") && AssWriter.Band(TelopType.Caption, preset, canvas.Height) is { } band ? (int)band.Top - 24 : canvas.Height - 24;
+        int bottom = preset.HasTelop("caption") && AssWriter.Band(TelopType.Caption, preset, canvas) is { } band ? (int)band.Top - 24 : canvas.Height - 24;
         int avail = (bottom - top) & ~1;
         if (slide != null) return new ReframeSpec { Mode = "screen", BoxY = top, BoxH = avail, Image = slide.Path };
         if (screen.PipContent is not { W: > 0, H: > 0 } box) return new ReframeSpec { Mode = "screen", BoxY = top, BoxH = avail };
@@ -183,14 +183,14 @@ public static class PipPlanner
             || samples.Any(s => s.Boxes.Count == 0) || samples.Zip(samples.Skip(1)).Any(p => p.Second.T - p.First.T > 0.75))
             return null;
         var cfg = preset.Screen ?? new PresetScreen();
-        TelopLayout.Rect? captions = preset.HasTelop("caption") && AssWriter.Band(TelopType.Caption, preset, canvas.Height) is { } band
+        TelopLayout.Rect? captions = preset.HasTelop("caption") && AssWriter.Band(TelopType.Caption, preset, canvas) is { } band
             ? new(0, band.Top - 24, canvas.Width, band.Bottom + 24) : null;
         const int margin = 24;
         var content = slide == null ? screen.PipContent : null;
         double aspect = slide is { Width: > 0, Height: > 0 } ? slide.Width / (double)slide.Height
             : content is { W: > 0, H: > 0 } ? content.W / (double)content.H : screen.Media.Aspect;
         var mains = new List<(double Scale, ReframeSpec Reframe)> { (1, clip.Reframe) };
-        if (main.Media.Aspect < 0.9)
+        if (main.Media.Aspect < 0.9 && !canvas.IsLandscape)
             foreach (double s in new[] { 0.85, cfg.MainMinScale }.Where(s => s >= cfg.MainMinScale && s is > 0 and < 0.999).Distinct().OrderDescending())
                 mains.Add((s, new ReframeSpec { Mode = "blur_bg", FgScale = s, FgOffsetY = 0 }));
         InsetLayout? best = null; double bestValue = double.NegativeInfinity;
@@ -202,7 +202,8 @@ public static class PipPlanner
             var obstacles = new List<TelopLayout.Rect> { face };
             if (captions != null) obstacles.Add(captions);
             // Below 72% of canvas width a whole desktop/slide is too small: prefer a readable full-screen switch.
-            foreach (double scale in new[] { 0.94, 0.88, 0.80, 0.72 })
+            // widths are relative to the short side, so a landscape canvas keeps the same inset size (~1000 px) instead of covering the frame
+            foreach (double scale in new[] { 0.94, 0.88, 0.80, 0.72 }.Select(x => x * Math.Min(canvas.Width, canvas.Height) / canvas.Width))
             {
                 double value = scale - 0.1 * (1 - mainScale) - (captions != null && face.Intersects(captions) ? 0.03 : 0);
                 int w = (int)(canvas.Width * scale) & ~1, h = (int)(w / aspect) & ~1;

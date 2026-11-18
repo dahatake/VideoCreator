@@ -16,6 +16,29 @@ public static class AssWriter
         _ => FontName,
     };
     public const int HeadlineMarginV = 300, EmphLift = 115, MarginL = 60, CounterMarginV = 520, TsukkomiMarginV = 930, SfxY = 820;
+
+    /// <summary>Vertical telop positions and the C-4 safe zone on one canvas (all canvas px; margins from the bottom except Headline/Counter from the top).</summary>
+    public sealed record Geometry(int CaptionMarginV, int HeadlineMarginV, int CounterMarginV, int TsukkomiMarginV, int SfxY, (int Top, int Bottom, int Left, int Right) Safe, int MarginL, int MarginR);
+
+    /// <summary>
+    /// Portrait canvases keep the 1080×1920 values tuned around phone-app UI (the preset's caption.margin_v, safe zone 250/580).
+    /// Landscape canvases have no app UI over a 16:9 player: the same distances are kept from the 5 % (90 %) title-safe frame on every side instead,
+    /// so a preset's extra caption margin (margin_v − 580) carries over and the layout scales with the canvas height.
+    /// </summary>
+    public static Geometry Geo(Preset p, int canvasWidth, int canvasHeight)
+    {
+        var portraitSafe = Qa.QaEngine.SafeZone;
+        int mv = p.Telop.Caption.MarginV;
+        if (canvasWidth <= canvasHeight) return new(mv, HeadlineMarginV, CounterMarginV, TsukkomiMarginV, SfxY, portraitSafe, MarginL, p.Telop.Caption.MarginR);
+        double k = canvasHeight / 1080.0;
+        int safe = (int)Math.Round(canvasHeight * 0.05), side = (int)Math.Round(canvasWidth * 0.05);   // 90 % title-safe (SMPTE ST 2046-1)
+        int caption = safe + (int)Math.Round((mv - portraitSafe.Bottom) * k);
+        int headline = safe + (int)Math.Round((HeadlineMarginV - portraitSafe.Top) * k);
+        return new(caption, headline, headline + (int)Math.Round((CounterMarginV - HeadlineMarginV) * k),
+            caption + (int)Math.Round(310 * k), (int)Math.Round(canvasHeight * 0.4), (safe, safe, side, side), side, side);
+    }
+
+    public static Geometry Geo(Preset p, Canvas c) => Geo(p, c.Width, c.Height);
     /// <summary>Glyph advance / font size for M PLUS 1p ExtraBold. Measured 0.70 (spikes/03: 15 chars @72px = 771px); 0.75 keeps a margin.</summary>
     public const double GlyphRatio = 0.75;
 
@@ -37,9 +60,9 @@ public static class AssWriter
         Planning.CaptionText.WrapLines(text, CaptionLineChars(p, canvasWidth), p.Telop.Caption.MaxLines, language);
 
     /// <summary>Font size that keeps the telop inside the horizontal safe zone (C-4): shrink instead of overflowing. <paramref name="scaleX"/> is the style's ScaleX (%).</summary>
-    public static int FitFontSize(string text, int fontPx, int outline, int canvasWidth, int marginR, int scaleX = 100, string language = "ja-JP")
+    public static int FitFontSize(string text, int fontPx, int outline, int canvasWidth, int marginR, int scaleX = 100, string language = "ja-JP", int marginL = MarginL)
     {
-        double available = canvasWidth - MarginL - marginR - 2 * outline;
+        double available = canvasWidth - marginL - marginR - 2 * outline;
         double width = Planning.JapaneseText.DisplayWidth(text);
         if (language != "ja-JP")
             foreach (char ch in text)
@@ -84,25 +107,30 @@ public static class AssWriter
     }
 
     /// <summary>Vertical band [top, bottom] (canvas px) a body telop can occupy; null for telops positioned elsewhere (top bar, SFX). Used by QA S-05.</summary>
-    public static (double Top, double Bottom)? Band(TelopType type, Preset p, int canvasHeight)
+    public static (double Top, double Bottom)? Band(TelopType type, Preset p, int canvasHeight) => Band(type, p, 0, canvasHeight);
+
+    public static (double Top, double Bottom)? Band(TelopType type, Preset p, Canvas canvas) => Band(type, p, canvas.Width, canvas.Height);
+
+    static (double Top, double Bottom)? Band(TelopType type, Preset p, int canvasWidth, int canvasHeight)
     {
         var c = p.Telop.Caption; int H = canvasHeight;
+        var g = Geo(p, canvasWidth, canvasHeight); int mv = g.CaptionMarginV;
         if (!p.Telop.IsVariety)
             return type switch
             {
-                TelopType.Caption => (H - c.MarginV - c.FontPx * 1.3 * c.MaxLines, H - c.MarginV),
-                TelopType.Emphasis => (H - c.MarginV - EmphLift - c.FontPx * 1.6, H - c.MarginV - EmphLift),
-                TelopType.Tsukkomi => (H - TsukkomiMarginV - 90, H - TsukkomiMarginV),
-                TelopType.Counter => (CounterMarginV, CounterMarginV + 120),
+                TelopType.Caption => (H - mv - c.FontPx * 1.3 * c.MaxLines, H - mv),
+                TelopType.Emphasis => (H - mv - EmphLift - c.FontPx * 1.6, H - mv - EmphLift),
+                TelopType.Tsukkomi => (H - g.TsukkomiMarginV - 90, H - g.TsukkomiMarginV),
+                TelopType.Counter => (g.CounterMarginV, g.CounterMarginV + 120),
                 _ => null,
             };
-        double punchBottom = H - c.MarginV - Variety.PunchLift;
+        double punchBottom = H - mv - Variety.PunchLift;
         return type switch
         {
-            TelopType.Caption => (H - c.MarginV - c.FontPx * 1.3 * c.MaxLines - Variety.CaptionOutline, H - c.MarginV + Variety.CaptionOutline),
+            TelopType.Caption => (H - mv - c.FontPx * 1.3 * c.MaxLines - Variety.CaptionOutline, H - mv + Variety.CaptionOutline),
             TelopType.Emphasis => (punchBottom - Variety.EmphPx * 1.3 - Variety.EmphOutline, punchBottom + Variety.EmphOutline),
             TelopType.Tsukkomi => (punchBottom - Variety.TsukkomiPx * 1.3 - Variety.TsukkomiPad, punchBottom + Variety.TsukkomiPad),
-            TelopType.Counter => (CounterMarginV, CounterMarginV + 120),
+            TelopType.Counter => (g.CounterMarginV, g.CounterMarginV + 120),
             _ => null,
         };
     }
@@ -135,23 +163,23 @@ public static class AssWriter
 
     static string WriteVariety(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
     {
-        var c = p.Telop.Caption; int sx = Variety.CaptionScaleX;
+        var c = p.Telop.Caption; int sx = Variety.CaptionScaleX; var g = Geo(p, plan.Canvas);
         var sb = new StringBuilder();
         Header(sb, plan);
         // captions: white, condensed, black outline + a separate halo event (transparent fill, wide blurred dark border) underneath
-        sb.AppendLine($"Style: Caption,{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.CaptionOutline},0,2,60,{c.MarginR},{c.MarginV},1");
-        sb.AppendLine($"Style: Halo,{FontName},{c.FontPx},&HFF000000,&H0000FFFF,&H30000000,&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.HaloOutline},0,2,60,{c.MarginR},{c.MarginV},1");
+        sb.AppendLine($"Style: Caption,{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.CaptionOutline},0,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
+        sb.AppendLine($"Style: Halo,{FontName},{c.FontPx},&HFF000000,&H0000FFFF,&H30000000,&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.HaloOutline},0,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
         string[] outlines = ["&H00D47800", "&H003C3CD4", "&H0050A030"];
         for (int i = 0; i < outlines.Length; i++)
-            sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.CaptionOutline},0,2,60,{c.MarginR},{c.MarginV},1");
-        int punchV = c.MarginV + Variety.PunchLift;
-        sb.AppendLine($"Style: Emph,{FontName},{Variety.EmphPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{Variety.EmphOutline},4,2,60,{c.MarginR},{punchV},1");
-        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,2,60,{c.MarginR},{punchV},1");
-        sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,60,{c.MarginR},{HeadlineMarginV},1");
-        sb.AppendLine($"Style: Headline,{FontName},{Variety.HeadlinePx},{Variety.BarNavy},&H0000FFFF,{Variety.BarCyan},{Variety.BarCyan},0,0,0,0,100,100,0,0,3,{Variety.HeadlinePad},0,8,60,{c.MarginR},{HeadlineMarginV},1");
-        sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,60,{c.MarginR},{CounterMarginV},1");
-        sb.AppendLine($"Style: Sfx,{FontName},{Variety.SfxPx},&H002020E0,&H0000FFFF,&H00FFFFFF,&H80000000,0,0,0,0,100,100,0,0,1,10,3,5,60,{c.MarginR},0,1");
-        CardStyle(sb, c);
+            sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.CaptionOutline},0,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
+        int punchV = g.CaptionMarginV + Variety.PunchLift;
+        sb.AppendLine($"Style: Emph,{FontName},{Variety.EmphPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{Variety.EmphOutline},4,2,{g.MarginL},{g.MarginR},{punchV},1");
+        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
+        sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
+        sb.AppendLine($"Style: Headline,{FontName},{Variety.HeadlinePx},{Variety.BarNavy},&H0000FFFF,{Variety.BarCyan},{Variety.BarCyan},0,0,0,0,100,100,0,0,3,{Variety.HeadlinePad},0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
+        sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,{g.MarginL},{g.MarginR},{g.CounterMarginV},1");
+        sb.AppendLine($"Style: Sfx,{FontName},{Variety.SfxPx},&H002020E0,&H0000FFFF,&H00FFFFFF,&H80000000,0,0,0,0,100,100,0,0,1,10,3,5,{g.MarginL},{g.MarginR},0,1");
+        CardStyle(sb, g);
         EventsHeader(sb);
         var ins = Planning.InsertMap.Active(plan);
         var keywords = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Emphasis).Select(t => t.Text.Trim()).Distinct().ToList();
@@ -165,9 +193,9 @@ public static class AssWriter
             if (caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
             var (size, outline, scaleX) = Metrics(style, p);
             var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
-            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, scaleX, plan.Language));
+            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, g.MarginR, scaleX, plan.Language, g.MarginL));
             if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
-            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
+            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
             {
@@ -175,15 +203,15 @@ public static class AssWriter
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{text}");
             }
         }
-        CardEvents(sb, plan, c, Variety.LayerCard);
+        CardEvents(sb, plan, g, Variety.LayerCard);
         return sb.ToString();
     }
 
-    static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement)
+    static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement, int sfxY)
     {
         var pos = placement.Positioned && placement.Bounds is { } b
             ? FormattableString.Invariant($@"\an5\pos({(b.Left + b.Right) / 2:0.###},{(b.Top + b.Bottom) / 2:0.###})")
-            : t.Style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{SfxY})\frz-8" : "";
+            : t.Style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{sfxY})\frz-8" : "";
         return t.Animation == "pop" ? $@"{{{pos}\fad(60,0){fs}\fscx70\fscy70\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}}" : (fs.Length > 0 || pos.Length > 0) ? $"{{{pos}{fs}}}" : "";
     }
 
@@ -200,9 +228,9 @@ public static class AssWriter
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
     }
 
-    static void CardStyle(StringBuilder sb, CaptionStyle c) =>
+    static void CardStyle(StringBuilder sb, Geometry g) =>
         // scene-change card (tsukkomi): big yellow text, thick black outline, drop shadow; positioned explicitly
-        sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,60,{c.MarginR},0,1");
+        sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,{g.MarginL},{g.MarginR},0,1");
 
     static void EventsHeader(StringBuilder sb)
     {
@@ -211,12 +239,12 @@ public static class AssWriter
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
     }
 
-    static void CardEvents(StringBuilder sb, EditPlan plan, CaptionStyle c, int layer)
+    static void CardEvents(StringBuilder sb, EditPlan plan, Geometry g, int layer)
     {
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(Planning.InsertMap.Active(plan)).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = CardFontSize(card, plan.Canvas, c, plan.Language);
-            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
+            var fit = CardFontSize(card, plan.Canvas, g, plan.Language);
+            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (g.MarginL + plan.Canvas.Width - g.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
             sb.AppendLine($@"Dialogue: {layer},{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
@@ -225,7 +253,7 @@ public static class AssWriter
 
     static string WriteStandard(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
     {
-        var c = p.Telop.Caption;
+        var c = p.Telop.Caption; var g = Geo(p, plan.Canvas);
         var sb = new StringBuilder();
         sb.AppendLine("[Script Info]");
         sb.AppendLine("ScriptType: v4.00+");
@@ -237,19 +265,19 @@ public static class AssWriter
         sb.AppendLine("[V4+ Styles]");
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
         // colours are &HAABBGGRR. White=speech, yellow=emphasis (FR-TEL-10). Captions: black outline (readable on any background).
-        sb.AppendLine($"Style: Caption,{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,7,2,2,60,{c.MarginR},{c.MarginV},1");
-        sb.AppendLine($"Style: Emph,{FontName},{(int)(c.FontPx * 1.25)},&H0000F0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,9,3,2,60,{c.MarginR},{c.MarginV + EmphLift},1");
-        sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,60,{c.MarginR},{HeadlineMarginV},1");
-        sb.AppendLine($"Style: Headline,{FontName},60,&H00FFFFFF,&H0000FFFF,&H00202020,&HB0202020,0,0,0,0,100,100,0,0,3,14,0,8,60,{c.MarginR},{HeadlineMarginV},1");
-        sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,60,{c.MarginR},{CounterMarginV},1");
-        sb.AppendLine($"Style: Sfx,{FontName},120,&H002020E0,&H0000FFFF,&H00FFFFFF,&H80000000,0,0,0,0,100,100,0,0,1,10,3,5,60,{c.MarginR},0,1");
-        sb.AppendLine($"Style: Tsukkomi,{FontName},64,&H00202020,&H0000FFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,12,0,2,60,{c.MarginR},{TsukkomiMarginV},1");
+        sb.AppendLine($"Style: Caption,{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,7,2,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
+        sb.AppendLine($"Style: Emph,{FontName},{(int)(c.FontPx * 1.25)},&H0000F0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,9,3,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV + EmphLift},1");
+        sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
+        sb.AppendLine($"Style: Headline,{FontName},60,&H00FFFFFF,&H0000FFFF,&H00202020,&HB0202020,0,0,0,0,100,100,0,0,3,14,0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
+        sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,{g.MarginL},{g.MarginR},{g.CounterMarginV},1");
+        sb.AppendLine($"Style: Sfx,{FontName},120,&H002020E0,&H0000FFFF,&H00FFFFFF,&H80000000,0,0,0,0,100,100,0,0,1,10,3,5,{g.MarginL},{g.MarginR},0,1");
+        sb.AppendLine($"Style: Tsukkomi,{FontName},64,&H00202020,&H0000FFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,12,0,2,{g.MarginL},{g.MarginR},{g.TsukkomiMarginV},1");
         // per-speaker caption colour: white text, speaker-coloured outline (FR-TEL-10)
         string[] outlines = ["&H00D47800", "&H003C3CD4", "&H0050A030"];
         for (int i = 0; i < outlines.Length; i++)
-            sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H80000000,0,0,0,0,100,100,0,0,1,9,2,2,60,{c.MarginR},{c.MarginV},1");
+            sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H80000000,0,0,0,0,100,100,0,0,1,9,2,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
         // scene-change card (tsukkomi): big yellow text, thick black outline, drop shadow; positioned explicitly
-        sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,60,{c.MarginR},0,1");
+        sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,{g.MarginL},{g.MarginR},0,1");
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -263,17 +291,17 @@ public static class AssWriter
             if (t.Type == TelopType.Caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
             var (size, outline, _) = Metrics(style, p);
             var lines = t.Type == TelopType.Caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
-            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, c.MarginR, language: plan.Language));
+            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, g.MarginR, language: plan.Language, marginL: g.MarginL));
             if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
-            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement);
+            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
             // body time → file time; a telop running across a card or bumper is split around it
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{string.Join(@"\N", lines.Select(Escape))}");
         }
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
         {
-            var fit = CardFontSize(card, plan.Canvas, c, plan.Language);
-            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (MarginL + plan.Canvas.Width - c.MarginR) / 2;
+            var fit = CardFontSize(card, plan.Canvas, g, plan.Language);
+            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (g.MarginL + plan.Canvas.Width - g.MarginR) / 2;
             int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
             var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
             sb.AppendLine($@"Dialogue: 3,{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
@@ -283,12 +311,12 @@ public static class AssWriter
 
     public const int CardFontPx = 120, CardOutline = 12;
 
-    static int CardFontSize(Insert card, Canvas canvas, CaptionStyle c, string language)
+    static int CardFontSize(Insert card, Canvas canvas, Geometry g, string language)
     {
-        if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, c.MarginR, language: language);
+        if (card.Bgm == null) return FitFontSize(card.Text, CardFontPx, CardOutline, canvas.Width, g.MarginR, language: language, marginL: g.MarginL);
         // the card image fills the screen, so the text may use the whole safe width
-        double width = canvas.Width - 2 * Math.Max(MarginL, c.MarginR);
-        return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + MarginL + c.MarginR, c.MarginR, language: language);
+        double width = canvas.Width - 2 * Math.Max(g.MarginL, g.MarginR);
+        return FitFontSize(card.Text, CardFontPx, CardOutline, (int)width + g.MarginL + g.MarginR, g.MarginR, language: language, marginL: g.MarginL);
     }
 
     public static string Time(double s)

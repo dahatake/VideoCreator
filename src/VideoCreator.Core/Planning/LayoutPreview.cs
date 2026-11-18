@@ -31,7 +31,7 @@ public static class LayoutPreview
         var issues = new List<string>();
         var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault() ?? Placeholder("main", Camera);
         if (assets.Count > 1 && assets.All(a => a.Role != AssetRole.Main)) issues.Add("implicit_main");
-        Box? captions = p.HasTelop("caption") && AssWriter.Band(TelopType.Caption, p, c.Height) is { } band
+        Box? captions = p.HasTelop("caption") && AssWriter.Band(TelopType.Caption, p, c) is { } band
             ? new Box("captions", null, "rect", 0, (int)band.Top, c.Width, (int)Math.Ceiling(band.Bottom - band.Top)) : null;
         var beats = new List<Beat>(); string basis = "";
         switch (p.Planner)

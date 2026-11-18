@@ -112,21 +112,25 @@ public static class Api
             };
     }
 
-    /// <summary>The kit plus which variant a 1080x1920 output would use, how much it is upscaled at render time, and the registration-time upscale.</summary>
+    /// <summary>
+    /// The kit plus which variant a portrait (1080x1920: opening / closing) and a landscape (1920x1080: opening_landscape / closing_landscape)
+    /// output would use, how much it is upscaled at render time, and the registration-time upscale (judged against the canvas of the file's own shape, as BrandKitWorker does).
+    /// </summary>
     static object BrandKitView(BrandKit? kit, List<string> problems, BrandKitWorker worker)
     {
-        var canvas = new Canvas();
-        object? Pick(string kind) => kit == null ? null : Planning.BrandKitService.Pick(kit.Files, kind, canvas) is { } f
+        object? Pick(string kind, Canvas canvas) => kit == null ? null : Planning.BrandKitService.Pick(kit.Files, kind, canvas) is { } f
             ? new
             {
                 f.Path, f.Width, f.Height, f.Duration, f.HasAudio, Lufs = double.IsNaN(f.Lufs) ? (double?)null : Math.Round(f.Lufs, 1),
                 Upscale = Math.Round(Planning.BrandKitService.Upscale(f.Width, f.Height, canvas), 2), f.Enhancement,
-                Needs = Planning.BrandKitEnhancer.Needs(f, canvas),
+                Needs = Planning.BrandKitEnhancer.Needs(f, Canvas.For(f.Width, f.Height)),
             } : null;
+        Canvas portrait = new(), landscape = Canvas.Landscape();
         return new
         {
             Registered = kit != null, Kit = kit, Problems = problems,
-            Opening = Pick("opening"), Closing = Pick("closing"), CardImages = kit?.Files.Count(f => f.Kind == "card") ?? 0,
+            Opening = Pick("opening", portrait), Closing = Pick("closing", portrait),
+            OpeningLandscape = Pick("opening", landscape), ClosingLandscape = Pick("closing", landscape), CardImages = kit?.Files.Count(f => f.Kind == "card") ?? 0,
             Enhance = worker.Current,
         };
     }
@@ -322,6 +326,8 @@ public static class Api
                     return Error(422, "E-VALIDATION", "シリーズの分け方は parts / minutes のどちらかを指定してください");
                 if (!Planning.TsukkomiPlacement.Styles.Contains(settings.TsukkomiStyle))
                     return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
+                if (!Canvas.Orientations.Contains(settings.Orientation))
+                    return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
                 p = p with { GenerationSettings = settings };
                 rt.Store.Put(Kinds.Project, id, null, p);
                 return Results.Json(p.GenerationSettings, Json.Options);
@@ -430,13 +436,17 @@ public static class Api
         });
 
         // where each video goes per preset, for the current roles (the UI animates it); faces come from an earlier analysis when there is one
-        api.MapGet("/projects/{id}/layouts", (Runtime rt, string id) =>
+        // the canvas follows the main video and the output orientation (query, else the saved generation setting), as PlanBuilder does
+        api.MapGet("/projects/{id}/layouts", (Runtime rt, string id, string? orientation) =>
         {
-            if (rt.Store.Get<Project>(Kinds.Project, id) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            if (rt.Store.Get<Project>(Kinds.Project, id) is not { } project) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+            orientation ??= project.GenerationSettings.Orientation;
+            if (!Canvas.Orientations.Contains(orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
             var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
             var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
             var faces = main == null ? [] : rt.CreateRunner().CachedFaces(main);
-            var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])).Select(p => Planning.LayoutPreview.For(p, assets, faces)).ToList();
+            var canvas = main == null ? new Canvas() : Canvas.For(main.Media.Width, main.Media.Height, orientation);
+            var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])).Select(p => Planning.LayoutPreview.For(p, assets, faces, canvas)).ToList();
             return Results.Json(layouts, Json.Options);
         });
 
@@ -1231,6 +1241,7 @@ public static class Api
         options ??= new JobOptions();
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
         if (!Planning.TsukkomiPlacement.Styles.Contains(options.TsukkomiStyle)) return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
+        if (!Canvas.Orientations.Contains(options.Orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
         if (options.MaskWords.Count > Planning.Masking.MaxWords || options.MaskWords.Any(w => w.Trim().Length > Planning.Masking.MaxWordLength))
             return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
         options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };

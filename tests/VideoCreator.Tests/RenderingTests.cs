@@ -58,6 +58,37 @@ public class RenderingTests : IAsyncLifetime
         Assert.Contains("aac,48000,2", probe.StdOut);
     }
 
+    [Fact] // landscape in → 1920×1080 out with the 16:9 opening: hard QA (H-02 size, H-05 title-safe) passes and the frame edge shows the picture, not a blurred band
+    public async Task Landscape_source_renders_landscape_with_the_landscape_opening()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var op169 = Path.Combine(_dir, "op169.mp4");
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=30:d=1.5", "-f", "lavfi", "-i", "sine=f=550:d=1.5,volume=0.3",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", op169], ct);
+        var (plan, assets, ctx) = Build(_landscape, 1280, 720);
+        var canvas = Canvas.For(1280, 720);
+        var kit = new BrandKit
+        {
+            RightsConfirmed = true,
+            Files = [new() { Path = "op916.mp4", Kind = "opening", Width = 1080, Height = 1920, Duration = 1.5, HasAudio = true, Lufs = -14 },
+                     new() { Path = op169, Kind = "opening", Width = 1920, Height = 1080, Duration = 1.5, HasAudio = true, Lufs = -14 }],
+        };
+        var (packed, inserts) = InsertPlanner.Plan(PlanBuilder.Orient(plan.Timeline.ToList(), [.. assets.Values], canvas), new JobOptions { Opening = true }, kit, canvas, -14, null, []);
+        plan = plan with { Canvas = canvas, Timeline = packed, Inserts = inserts };
+        Assert.Equal(op169, plan.Inserts.Single().Path);
+
+        var outp = await new Renderer(Ff).RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "land_final.mp4"), preview: false, ct);
+        var qa = await new QaEngine(Ff).RunAsync(ctx with { Plan = plan }, outp.Path, preview: false, Path.Combine(_dir, "qa_land"), ct);
+        Assert.All(qa.Where(q => q.Hard), q => Assert.True(q.Status == QaStatus.Pass, $"{q.CheckId} {q.Measured} vs {q.Threshold}"));
+        Assert.Equal("1920,1080", (await Ff.RunProbeAsync(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", outp.Path], ct)).StdOut.Trim());
+
+        // edge energy of the left 64 px (outside the 96 px title-safe margin, so no telop) in the body: the sharp test pattern, not boxblur(20:2)
+        async Task<double> Edges(string extra) => double.Parse(Regex.Match((await Ff.RunFfmpegAsync(["-hide_banner", "-ss", "4", "-i", outp.Path, "-frames:v", "1",
+            "-vf", $"{extra}crop=64:1080:0:0,edgedetect,signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"], ct)).StdErr, @"YAVG=([\d.]+)").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        double sharp = await Edges(""), blurred = await Edges("boxblur=20:2,");
+        Assert.True(sharp > 0.5 && sharp > 3 * blurred, $"left edge looks blurred: {sharp:F2} vs {blurred:F2}");
+    }
+
     [Fact] // AT-03: compare decoded frames, not encoded packets
     public async Task Rendering_is_deterministic()
     {

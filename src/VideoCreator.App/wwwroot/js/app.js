@@ -70,6 +70,11 @@ function setSteps(current, done = current, links = {}) {
 function phone(src, id = '') {
   return `<div class="phone" ${id ? `id="${id}"` : ''}><video src="${esc(src)}" controls playsinline preload="metadata"></video><div class="safezone" aria-hidden="true"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i></div></div>`;
 }
+// the frame follows the rendered file, so 16:9 exports (landscape input) show without letterbox bars
+document.addEventListener('loadedmetadata', (e) => {
+  const v = e.target, frame = v instanceof HTMLVideoElement ? v.parentElement : null;
+  if (frame?.classList.contains('phone') && v.videoWidth && v.videoHeight) frame.classList.toggle('land', v.videoWidth > v.videoHeight);
+}, true);
 function field(label, control) { return `<fluent-field label-position="after"><label slot="label">${label}</label>${control}</fluent-field>`; }
 // WAI-ARIA radio group on custom role=radio elements: one tab stop (the checked radio), arrows move and select, disabled radios are skipped.
 // Returns a function that re-syncs the tab stop after a selection made elsewhere.
@@ -851,7 +856,7 @@ async function project(id, showSettings = false) {
   const notReady = !assets.length ? trUi('m141') : !allRights ? trUi('m142') : '';
   const saved = d.project.generation_settings ?? {};
   let selected = saved.preset_id ?? 'P4';
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
@@ -859,8 +864,13 @@ async function project(id, showSettings = false) {
   if (gone()) return;
   // where each video appears per pattern for the current roles (Planning.LayoutPreview); the page works without it
   let layouts = [];
-  try { layouts = await api(`/api/projects/${id}/layouts`); } catch { }
+  const fetchLayouts = async () => { try { return await api(`/api/projects/${id}/layouts?orientation=${encodeURIComponent(opts.orientation)}`); } catch { return []; } };
+  layouts = await fetchLayouts();
   if (gone()) return;
+  // same rule as Canvas.For: the main video (role main, else the first) decides 'auto'
+  const mainAsset = assets.find(a => a.role === 'main') ?? assets[0];
+  const mainLandscape = !!mainAsset && mainAsset.media.width > mainAsset.media.height * 1.05;
+  const orientationLabel = (o) => ({ portrait: trUi('out.portrait'), landscape: trUi('out.landscape') }[o] ?? trUi('out.auto', [mainLandscape ? trUi('out.shapeLandscape') : trUi('out.shapePortrait')]));
   const multiPlanner = (p) => ['switch', 'screen', 'pip'].includes(p.planner);
   const layoutIcon = (p) => {
     const lp = layouts.find(l => l.preset_id === p.id);
@@ -978,6 +988,13 @@ async function project(id, showSettings = false) {
         <h2 id="h-gen">${trUi('m290')}</h2>
         <div id="settingsSaveMsg" aria-live="polite"></div>
         <div class="col-body stack" style="gap:var(--s8)">
+        ${group('output', trUi('out.title'), `
+          <fluent-radio-group id="orientation" orientation="vertical" aria-labelledby="orientationTitle" value="${esc(opts.orientation)}">
+            ${field(orientationLabel('auto'), '<fluent-radio slot="input" value="auto"></fluent-radio>')}
+            ${field(trUi('out.portrait'), '<fluent-radio slot="input" value="portrait"></fluent-radio>')}
+            ${field(trUi('out.landscape'), '<fluent-radio slot="input" value="landscape"></fluent-radio>')}
+          </fluent-radio-group>
+          <p class="caption">${trUi('out.help')}</p>`, { titleId: 'orientationTitle' })}
         ${group('series', trUi('m180'), `
           ${field(trUi('m181'), `<fluent-switch slot="input" id="seriesSw" ${opts.series ? 'checked' : ''}></fluent-switch>`)}
           <fieldset class="series-by" aria-describedby="seriesInfo"><legend class="caption">${trUi('m182')}</legend>
@@ -1046,8 +1063,10 @@ async function project(id, showSettings = false) {
               return e.path ? `<br><span class="caption pass">${trUi('m227', [e.width, e.height, esc(e.device), Math.round(e.seconds), esc(g)])}</span>` : `<br><span class="caption">→ ${esc(serverText(e.note))}（${esc(g)}）</span>`;
             };
             const f = (x) => x ? trUi('m229', [esc(x.path.split(/[\\/]/).pop()), x.width, x.height, Number(x.duration).toFixed(1), x.upscale > 1.05 && !x.enhancement?.path ? trUi('m228', [x.upscale]) : '', enh(x)]) : trUi('m230');
-            const pending = [kitView.opening, kitView.closing].filter(x => x?.needs && !x.enhancement?.path);
-            return `<p class="caption" id="kitInfo">${trUi('m235', [f(kitView.opening)])}<br>${trUi('m236', [f(kitView.closing)])}<br>${trUi('m237', [kitView.card_images ? trUi('m231', [kitView.card_images]) : trUi('m232')])}</p>
+            // a kit can hold 9:16 and 16:9 bumpers; the export picks the one closest to the output shape
+            const land = (x, y) => y && y.path !== x?.path ? `<br>${trUi('kit.landscape')}: ${f(y)}` : '';
+            const pending = [kitView.opening, kitView.closing, kitView.opening_landscape, kitView.closing_landscape].filter(x => x?.needs && !x.enhancement?.path);
+            return `<p class="caption" id="kitInfo">${trUi('m235', [f(kitView.opening)])}${land(kitView.opening, kitView.opening_landscape)}<br>${trUi('m236', [f(kitView.closing)])}${land(kitView.closing, kitView.closing_landscape)}<br>${trUi('m237', [kitView.card_images ? trUi('m231', [kitView.card_images]) : trUi('m232')])}</p>
               <div id="enhStatus" aria-live="polite"></div>
               ${pending.length && kitView.enhance?.state !== 'running' && !pending.every(x => x.enhancement) ? `<p class="caption warnc">${trUi('m233')}<fluent-button size="small" id="enhanceBtn">${trUi('m234')}</fluent-button></p>` : ''}`;
           })()}
@@ -1264,6 +1283,7 @@ async function project(id, showSettings = false) {
   let reuseAnalysis = true;
   const updateSums = () => {
     const set = (k, t) => { const el = $(`#sum-${k}`); if (el) el.textContent = t; };
+    set('output', orientationLabel(opts.orientation));
     set('series', !opts.series ? trUi('m316') : opts.series_by === 'parts' ? trUi('m317', [opts.parts]) : trUi('m318', [opts.part_minutes]));
     set('scope', opts.series ? trUi('m319') : `${scopeLabel[opts.scope]?.[0] ?? ''}${$('#scopes .selected .scope-cost')?.textContent ? trUi('m031', [$('#scopes .selected .scope-cost').textContent]) : ''}`);
     const bgm = $('#bgm'), bgmName = opts.bgm === 'auto' ? trUi('m169') : opts.bgm === 'none' ? trUi('m041') : opts.bgm === 'scene' ? trUi('m320') : bgm?.selectedOptions[0]?.textContent.trim() ?? trUi('m321');
@@ -1340,6 +1360,15 @@ async function project(id, showSettings = false) {
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; $('#tsukkomiStyle').disabled = !opts.tsukkomi; $('#tsukkomiStyleBox').hidden = !opts.tsukkomi; saveOpts(); });
+  $('#orientation').addEventListener('change', async () => {
+    const v = $$('#orientation fluent-radio').find(r => r.checked)?.value;
+    if (!v || v === opts.orientation) return;
+    opts.orientation = v; saveOpts();
+    layouts = await fetchLayouts();
+    if (gone()) return;
+    $$('#presets .preset').forEach((card, i) => { const icon = card.querySelector('.lp-card-icon'), html = layoutIcon(presets[i]); if (icon && html) icon.outerHTML = html; });
+    showLayout();
+  });
   $('#tsukkomiStyle').addEventListener('change', () => { const v = $$('#tsukkomiStyle fluent-radio').find(r => r.checked)?.value; if (v) { opts.tsukkomi_style = v; saveOpts(); } });
   $('#maskWords').addEventListener('input', () => {
     opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean);
@@ -1630,6 +1659,7 @@ function patternSummary(j, presets) {
   bits.push(`BGM: ${o.bgm === 'auto' ? trUi('m169') : o.bgm === 'none' ? trUi('m041') : trUi('m321')}`);
   if (o.opening) bits.push(trUi('m255')); if (o.closing) bits.push(trUi('m256'));
   if (o.scene_cards) bits.push(trUi('m384')); if (o.tsukkomi) bits.push(trUi('m385', [{ telop: trUi('m177'), card: trUi('m325') }[o.tsukkomi_style] ?? trUi('m169')]));
+  if (o.orientation === 'portrait') bits.push(trUi('out.portrait')); else if (o.orientation === 'landscape') bits.push(trUi('out.landscape'));
   if (o.mask_words?.length) bits.push(trUi('m386', [o.mask_words.length]));
   if (j.instruction) bits.push(trUi('m387', [j.instruction]));
   if (o.reuse_analysis === false) bits.push(trUi('m388'));
@@ -1668,7 +1698,7 @@ async function loadPatterns(projectId, presets) {
     const x = items.find(y => y.job.id === b.dataset.job), o = x.job.options ?? {};
     try {
       await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
-        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto',
+        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
         series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
         opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [] } });
       derivedFrom = { project: projectId, job: x.job.id };

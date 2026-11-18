@@ -30,6 +30,7 @@ public static class PlanBuilder
     {
         var p = r.Preset; var tr = r.Transcript; var sig = r.Signals; var notes = new List<string>(); var master = r.Master;
         var segs = r.OverrideSegments ?? r.Candidate.Segments;
+        var canvas = Canvas.For(master.Media.Width, master.Media.Height, r.Job.Options.Orientation);
         var bursts = r.Bursts ?? [];
         if (p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && r.Part == null && tr.Sentences.Count > 0)
         {
@@ -48,7 +49,7 @@ public static class PlanBuilder
                     if (cams.Count >= 2) clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes);
                     else notes.Add("カメラ素材が 2 つ以上ないため、切り替えは行いませんでした");
                 }
-                clips = Screen(clips, r, notes);
+                clips = Screen(clips, r, canvas, notes);
                 break;
             }
             case "speed":
@@ -77,15 +78,16 @@ public static class PlanBuilder
                     if (cams.Count >= 2) clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes);
                     else notes.Add("カメラ素材が 2 つ以上ないため、切り替えは行いませんでした");
                 }
-                clips = Screen(clips, r, notes);
+                clips = Screen(clips, r, canvas, notes);
                 break;
             }
         }
         if (clips.Count == 0) throw new PlanException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした");
 
-        clips = ApplyDrift(clips, r.Assets, master.Id, new Canvas().Fps);
+        clips = ApplyDrift(clips, r.Assets, master.Id, canvas.Fps);
         clips = ApplyFades(clips, p, r.Assets, notes);
-        clips = ApplyFaces(clips, r, notes);
+        clips = Orient(clips, r.Assets, canvas);
+        clips = ApplyFaces(clips, r, canvas, notes);
 
         double total = clips.Sum(c => c.Length);
         // 伏せ字: telops are built from a masked transcript (so a name split across words/captions is hidden too); LLM texts are masked afterwards
@@ -111,7 +113,6 @@ public static class PlanBuilder
         var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
         if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n, tr.Language));
-        var canvas = new Canvas();
         var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes, tr.Language);
         if (p.HasTelop("tsukkomi") && r.Job.Options.Tsukkomi)
         {
@@ -212,17 +213,17 @@ public static class PlanBuilder
         return (plan, notes);
     }
 
-    static List<Clip> Screen(List<Clip> clips, PlanRequest r, List<string> notes)
+    static List<Clip> Screen(List<Clip> clips, PlanRequest r, Canvas canvas, List<string> notes)
     {
         if (r.Preset.Planner == "pip")
         {
             var screens = r.Assets.Where(a => a.Id != r.Master.Id && a.Role == AssetRole.Screen).ToList();
             if (screens.Count != 1) throw new PlanException("E-PIP-ASSETS", "主映像と、役割を「画面」にした副映像を 1 本ずつ指定してください");
-            return PipPlanner.Plan(clips, r.Transcript, r.Master, screens[0], r.Preset, new Canvas(), notes, r.Faces.GetValueOrDefault(r.Master.Id));
+            return PipPlanner.Plan(clips, r.Transcript, r.Master, screens[0], r.Preset, canvas, notes, r.Faces.GetValueOrDefault(r.Master.Id));
         }
         if (r.Preset.Planner != "screen") return clips;
         if (r.Screen == null) { notes.Add("画面収録の解析結果がないため、基準映像だけで編集しました"); return clips; }
-        return ScreenPlanner.Plan(clips, r.Transcript, r.Assets, r.Master, r.Screen, r.Faces, r.Preset, new Canvas(), notes);
+        return ScreenPlanner.Plan(clips, r.Transcript, r.Assets, r.Master, r.Screen, r.Faces, r.Preset, canvas, notes);
     }
 
     /// <summary>
@@ -282,9 +283,20 @@ public static class PlanBuilder
         return res;
     }
 
-    static List<Clip> ApplyFaces(List<Clip> clips, PlanRequest r, List<string> notes)
+    /// <summary>The planners frame for the portrait canvas; on a landscape canvas whole-frame clips are reframed with <see cref="ReframeSpec.Default"/>.</summary>
+    public static List<Clip> Orient(List<Clip> clips, IReadOnlyList<SourceAsset> assets, Canvas canvas)
     {
-        if (r.Preset.Reframe != "auto" || r.Faces.Count == 0) return clips;
+        if (!canvas.IsLandscape) return clips;
+        var byId = assets.ToDictionary(a => a.Id);
+        return clips.Select(c => c.Reframe.Mode is "fit" or "blur_bg" && c.Reframe.FgScale == 0 && byId.TryGetValue(c.AssetId, out var a)
+            ? c with { Reframe = c.Reframe with { Mode = ReframeSpec.Default(a.Media, canvas).Mode, FgOffsetY = 0 } }
+            : c).ToList();
+    }
+
+    static List<Clip> ApplyFaces(List<Clip> clips, PlanRequest r, Canvas canvas, List<string> notes)
+    {
+        // face-follow crops a landscape source to 9:16; a landscape canvas shows the whole frame instead
+        if (r.Preset.Reframe != "auto" || r.Faces.Count == 0 || canvas.IsLandscape) return clips;
         var byId = r.Assets.ToDictionary(a => a.Id);
         int followed = 0, eligible = 0; var reasons = new HashSet<string>();
         var res = new List<Clip>();

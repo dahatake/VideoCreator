@@ -45,6 +45,7 @@ public sealed record ProjectGenerationSettings
     public bool Opening { get; init; } = true;
     public bool Closing { get; init; } = true;
     public bool SceneCards { get; init; }
+    public string Orientation { get; init; } = "auto";
     public List<string> MaskWords { get; init; } = [];
 }
 
@@ -358,6 +359,14 @@ public sealed record ReframeSpec
     /// <summary>blur_bg mode: the sharp picture's width as a share of the canvas (0 or 1 = full width); below 1 it is centred horizontally with its top at FgOffsetY (canvas pixels).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public double FgScale { get; init; }
+
+    /// <summary>
+    /// Whole-frame framing of a source on a canvas. Portrait (AT-11): a vertical source passes through, anything wider sits on its blurred copy,
+    /// raised for the captions. Landscape: a source of (nearly) the canvas shape fills it, any other shape is centred whole on its blurred copy.
+    /// </summary>
+    public static ReframeSpec Default(MediaInfo media, Canvas? canvas = null) => canvas is { IsLandscape: true } c
+        ? new() { Mode = media.Height > 0 && Math.Abs(Math.Log(media.Aspect / c.Aspect)) < 0.05 ? "fit" : "blur_bg", FgOffsetY = 0 }
+        : new() { Mode = media.Aspect < 0.9 ? "fit" : "blur_bg" };
 }
 
 /// <summary>A synchronised inset. Existing plans default to a circular presenter; rectangular insets show the whole screen.</summary>
@@ -514,7 +523,23 @@ public sealed record Provenance
     public List<EditRecord> Edits { get; init; } = [];
 }
 
-public sealed record Canvas(int Width = 1080, int Height = 1920, int Fps = 30);
+public sealed record Canvas(int Width = 1080, int Height = 1920, int Fps = 30)
+{
+    public static readonly string[] Orientations = ["auto", "portrait", "landscape"];
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsLandscape => Width > Height;
+    [System.Text.Json.Serialization.JsonIgnore] public double Aspect => (double)Width / Height;
+    public static Canvas Landscape(int fps = 30) => new(1920, 1080, fps);
+    /// <summary>
+    /// The output canvas: "auto" follows the master's shape (wider than tall → 1920×1080, otherwise 1080×1920);
+    /// "portrait" / "landscape" force it (e.g. a 9:16 short from landscape footage).
+    /// </summary>
+    public static Canvas For(double width, double height, string? orientation = "auto", int fps = 30) => orientation switch
+    {
+        "portrait" => new(Fps: fps),
+        "landscape" => Landscape(fps),
+        _ => width > height * 1.05 ? Landscape(fps) : new(Fps: fps),
+    };
+}
 
 public sealed record PresetRef(string Id, string Version);
 
@@ -657,6 +682,8 @@ public sealed record JobOptions
     public bool Closing { get; init; }
     /// <summary>2–3 s tsukkomi cards at scene changes.</summary>
     public bool SceneCards { get; init; }
+    /// <summary>Output shape: auto (follow the master: landscape → 1920×1080, else 1080×1920) | portrait | landscape. See <see cref="Canvas.For"/>.</summary>
+    public string Orientation { get; init; } = "auto";
     /// <summary>伏せ字: words hidden as ● in every telop/SRT/card, with the dialogue under them replaced by a tone (Planning.Masking).</summary>
     public List<string> MaskWords { get; init; } = [];
     /// <summary>

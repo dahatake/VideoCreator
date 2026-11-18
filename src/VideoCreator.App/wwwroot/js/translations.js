@@ -232,7 +232,7 @@ export const translated = `
 230|Not registered|未注册|미등록
 231|{0} images|{0} 张|{0}장
 232|None (text reaction cards)|无（吐槽文字卡片）|없음(반응 글자 카드)
-233|Videos below 1080×1920 are enlarged on export and may look slightly soft.|低于 1080×1920 的视频导出时会放大，可能略显模糊。|1080×1920 미만 영상은 내보낼 때 확대되어 약간 흐려질 수 있습니다.
+233|Videos smaller than the output (portrait 1080×1920 / landscape 1920×1080) are enlarged on export and may look slightly soft.|小于输出尺寸（竖屏 1080×1920／横屏 1920×1080）的视频导出时会放大，可能略显模糊。|출력 크기(세로 1080×1920/가로 1920×1080)보다 작은 영상은 내보낼 때 확대되어 약간 흐려질 수 있습니다.
 234|Enhance now|立即增强画质|지금 화질 향상
 235|Opening: {0}|片头：{0}|오프닝: {0}
 236|Closing: {0}|片尾：{0}|클로징: {0}
@@ -242,7 +242,7 @@ export const translated = `
 240|Add 2–3 s transition reaction cards (image, text, BGM; AI text requires approval)|场景切换处添加 2～3 秒吐槽卡片（图片、文字、BGM，AI 文字需批准）|전환 시 2~3초 반응 카드 삽입(이미지·글자·BGM, AI 문구 승인 필요)
 241|Replace or unregister|重新注册或取消注册|다시 등록·해제
 242|Register opening/closing|注册片头及片尾|오프닝·클로징 등록
-243|Enhance videos below 1080×1920 once at registration. AI super-resolution is used only when measurements confirm fidelity to the original (1–2 min/video on GPU).|注册时一次性增强低于 1080×1920 的视频。仅在实测确认更忠于原片时使用 AI 超分辨率（GPU 每段约 1～2 分钟）。|등록 시 1080×1920 미만 영상을 한 번 향상합니다. 실측으로 원본 충실도가 확인될 때만 AI 초해상도를 사용합니다(GPU 영상당 1~2분).
+243|Enhance videos smaller than the output (portrait 1080×1920 / landscape 1920×1080) once at registration. AI super-resolution is used only when measurements confirm fidelity to the original (1–2 min/video on GPU).|注册时一次性增强小于输出尺寸（竖屏 1080×1920／横屏 1920×1080）的视频。仅在实测确认更忠于原片时使用 AI 超分辨率（GPU 每段约 1～2 分钟）。|등록 시 출력 크기(세로 1080×1920/가로 1920×1080)보다 작은 영상을 한 번 향상합니다. 실측으로 원본 충실도가 확인될 때만 AI 초해상도를 사용합니다(GPU 영상당 1~2분).
 244|I own or have permission to use these videos/images, including logos, music and illustrations.|我拥有这些视频、图片（含标志、音乐、插图）的使用权或已获许可。|로고·음악·일러스트를 포함한 이 영상·이미지의 사용 권리를 보유하거나 허가받았습니다.
 245|Unregister|取消注册|등록 해제
 246|Registered card images will be used.|将使用已注册的卡片图片。|등록된 카드 이미지를 사용합니다.
@@ -478,7 +478,7 @@ export const translated = `
 476|Export {0}|导出 {0}|{0} 내보내기
 477|Export progress for {0}|{0} 的导出进度|{0} 내보내기 진행 상황
 478|Export approved videos|导出已批准视频|승인한 영상 내보내기
-479|Check content, approve it and select videos to export (one or more). Edits invalidate approval. If any selected video is blocked, none will export. Videos export sequentially at 1080×1920.|确认内容并批准，勾选要导出的视频（可单个或多个）。批准后修改需重新批准。若任一所选视频无法导出，则全部不导出。按顺序逐个导出（1080×1920）。|내용을 확인·승인하고 내보낼 영상을 선택하세요(하나 이상). 수정하면 재승인이 필요합니다. 선택한 영상 중 하나라도 막히면 모두 내보내지 않습니다. 1080×1920으로 순서대로 처리합니다.
+479|Check content, approve it and select videos to export (one or more). Edits invalidate approval. If any selected video is blocked, none will export. Videos export sequentially (portrait 1080×1920 / landscape 1920×1080).|确认内容并批准，勾选要导出的视频（可单个或多个）。批准后修改需重新批准。若任一所选视频无法导出，则全部不导出。按顺序逐个导出（竖屏 1080×1920／横屏 1920×1080）。|내용을 확인·승인하고 내보낼 영상을 선택하세요(하나 이상). 수정하면 재승인이 필요합니다. 선택한 영상 중 하나라도 막히면 모두 내보내지 않습니다. 순서대로 처리합니다(세로 1080×1920/가로 1920×1080).
 480|Select all approved|选择全部已批准项|승인된 항목 모두 선택
 481|Export selected videos|导出所选视频|선택한 영상 내보내기
 482|Batch export overall progress|批量导出整体进度|일괄 내보내기 전체 진행 상황
@@ -629,10 +629,10 @@ export const translated = `
 627|Approve and review next ({0})|批准并检查下一个（{0}）|승인 후 다음 영상({0})
 628|Approve and continue to export|批准并前往导出|승인 후 내보내기로
 629|Approve and return to candidates|批准此内容并返回候选|이 내용으로 승인 후 후보로
-630|Export only this video now (1080×1920)|立即仅导出此视频（1080×1920）|이 영상만 지금 내보내기(1080×1920)
+630|Export only this video now|立即仅导出此视频|이 영상만 지금 내보내기
 631|Export approved videos together in step 6. Editing after approval requires reapproval.|可在“6 导出”中批量导出已批准视频。批准后修改需重新批准。|승인한 영상은 “6 내보내기”에서 함께 내보낼 수 있습니다. 승인 후 수정하면 재승인이 필요합니다.
 632|Approve only and return to candidates|仅批准并返回候选|승인만 하고 후보로
-633|Approve and export this content (1080×1920)|批准并导出此内容（1080×1920）|승인 후 내보내기(1080×1920)
+633|Approve and export this content|批准并导出此内容|승인 후 내보내기
 634|Fix failing checks to export (Automatic checks on the right)|修复未通过项目后可导出（右侧“自动检查”）|실패 항목을 고치면 내보낼 수 있습니다(오른쪽 자동 검사)
 635|Approve all reactions|批准全部吐槽|모든 반응 승인
 636|Approve all cards|批准全部卡片|모든 카드 승인
@@ -723,5 +723,5 @@ export const translated = `
 721|Export failed|无法导出|내보내기 실패
 722|Exporting video|正在导出|내보내는 중
 723|Export progress|导出进度|내보내기 진행 상황
-724|1080×1920 / H.264 / AAC 48 kHz. Two-pass volume normalization to −14 LUFS; automatic checks after export.|1080×1920 / H.264 / AAC 48kHz。使用两遍处理将音量调整至 −14 LUFS，导出后自动检查。|1080×1920 / H.264 / AAC 48kHz. 2패스로 −14 LUFS 정규화 후 내보낸 결과를 자동 검사합니다.
+724|Portrait 1080×1920 / landscape 1920×1080 (follows the input) / H.264 / AAC 48 kHz. Two-pass volume normalization to −14 LUFS; automatic checks after export.|竖屏 1080×1920／横屏 1920×1080（与输入一致）/ H.264 / AAC 48kHz。使用两遍处理将音量调整至 −14 LUFS，导出后自动检查。|세로 1080×1920/가로 1920×1080(입력에 맞춤) / H.264 / AAC 48kHz. 2패스로 −14 LUFS 정규화 후 내보낸 결과를 자동 검사합니다.
 `;
