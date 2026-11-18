@@ -36,6 +36,7 @@ public sealed class PipelineServices
     public IHighlightSelector? Llm { get; init; }
     public ITextEmbedder? Embedder { get; init; }
     public Func<string, IImageGenerator>? ImageGenerator { get; init; }
+    public Func<string, string>? ResolveImageDeployment { get; init; }
     public Pricing Pricing { get; init; } = new();
     public List<string> Dictionary { get; init; } = [];
     public int SelectionCharBudget { get; init; } = SelectionService.DefaultCharBudget;
@@ -907,7 +908,8 @@ public sealed class PipelineRunner(PipelineServices s)
     public (bool Enabled, string Deployment) EngageImageSettings(EditPlan plan)
     {
         var settings = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)?.GenerationSettings;
-        return (settings?.MakeEngageImage == true, settings?.EngageImageDeployment?.Trim() ?? "");
+        var deployment = s.ResolveImageDeployment?.Invoke(settings?.EngageImageDeployment?.Trim() ?? "") ?? settings?.EngageImageDeployment?.Trim() ?? "";
+        return (settings?.MakeEngageImage == true, deployment);
     }
 
     public async Task<Render> EngageImageAsync(Render render, EditPlan plan, PostKit post, CancellationToken ct)

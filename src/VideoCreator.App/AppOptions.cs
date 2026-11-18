@@ -41,6 +41,8 @@ public sealed class LlmOptions
     public string Deployment { get; set; } = "gpt-chat-latest";
     /// <summary>Embedding deployment used to find where the subject changes (series split). Empty = vocabulary-only detection.</summary>
     public string EmbeddingDeployment { get; set; } = "text-embedding-3-large";
+    /// <summary>Optional Microsoft Foundry image deployment used to create the Viva Engage banner.</summary>
+    public string ImageDeployment { get; set; } = "";
     public string? TenantId { get; set; }
     public string? CopilotCliPath { get; set; }
     public string? CopilotModel { get; set; }

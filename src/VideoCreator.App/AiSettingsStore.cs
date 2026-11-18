@@ -66,7 +66,7 @@ public sealed class NoSecretStorage : ISecretProtector
     public string Unprotect(string blob) => throw new NotSupportedException("secrets cannot be stored on this OS");
 }
 
-public sealed record SavedFoundry(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt);
+public sealed record SavedFoundry(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt, string? ImageDeployment = null);
 public sealed record SavedSpeech(string Endpoint, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt);
 public sealed record SavedCopilot(string Auth, string? TokenProtected, string? Model, string? ReasoningEffort, string? ContextTier, string? Login, DateTimeOffset TestedAt);
 /// <summary>Connections chosen in the settings screen; they override appsettings.json. Secrets are stored only in protected form.</summary>
@@ -121,7 +121,7 @@ public static class SavedAiExtensions
         new(s.Endpoint, s.Auth, s.TenantId, s.Auth == "key" ? store.Reveal(s.ApiKeyProtected) : null);
 
     public static FoundryConnection ToConnection(this SavedFoundry f, AiSettingsStore store) =>
-        new(f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth, f.TenantId, f.Auth == "key" ? store.Reveal(f.ApiKeyProtected) : null);
+        new(f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth, f.TenantId, f.Auth == "key" ? store.Reveal(f.ApiKeyProtected) : null, f.ImageDeployment);
 
     public static CopilotConnection ToConnection(this SavedCopilot c, AiSettingsStore store) =>
         new(c.Auth, c.Auth == "token" ? store.Reveal(c.TokenProtected) : null, c.Model, c.ReasoningEffort, c.ContextTier);

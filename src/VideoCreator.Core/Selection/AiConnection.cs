@@ -9,7 +9,7 @@ using Azure.Identity;
 namespace VideoCreator.Selection;
 
 /// <summary>Microsoft Foundry connection to an existing resource and deployments. <c>Auth</c> = "entra" (Microsoft Entra ID) | "key" (API key).</summary>
-public sealed record FoundryConnection(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth = "entra", string? TenantId = null, string? ApiKey = null)
+public sealed record FoundryConnection(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth = "entra", string? TenantId = null, string? ApiKey = null, string? ImageDeployment = null)
 {
     public bool UsesKey => Auth == "key";
 }

@@ -162,7 +162,7 @@ public sealed class AiConnectionTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
         var rt = app.Services.GetRequiredService<Runtime>();
         const string secret = "key-that-must-not-leave-0123456789";
-        rt.SaveFoundry(new FoundryConnection("https://r1.openai.azure.com/openai/v1/", "gpt", null, "key", ApiKey: secret), DateTimeOffset.Now);
+        rt.SaveFoundry(new FoundryConnection("https://r1.openai.azure.com/openai/v1/", "gpt", null, "key", ApiKey: secret, ImageDeployment: "flux-image"), DateTimeOffset.Now);
         rt.SaveCopilot(new CopilotConnection("token", "github_pat_must_not_leave_0123"), "me", DateTimeOffset.Now);
 
         var settings = await http.GetStringAsync("/api/settings", ct);
@@ -171,6 +171,7 @@ public sealed class AiConnectionTests : IDisposable
         using var doc = JsonDocument.Parse(settings);
         Assert.True(doc.RootElement.GetProperty("foundry").GetProperty("has_api_key").GetBoolean());
         Assert.Equal("app", doc.RootElement.GetProperty("foundry").GetProperty("source").GetString());
+        Assert.Equal("flux-image", doc.RootElement.GetProperty("foundry").GetProperty("image_deployment").GetString());
         Assert.True(doc.RootElement.GetProperty("copilot").GetProperty("has_token").GetBoolean());
         Assert.Equal(rt.AiSettings.Protector.Kind, doc.RootElement.GetProperty("secret_protection").GetString());
 

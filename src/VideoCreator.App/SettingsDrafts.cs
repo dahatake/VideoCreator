@@ -11,7 +11,7 @@ namespace VideoCreator.App;
 public static class SettingsDrafts
 {
     public sealed record SpeechDraft(string? Endpoint, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
-    public sealed record FoundryDraft(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
+    public sealed record FoundryDraft(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
     public sealed record CopilotDraft(string? Auth, string? Model, string? ReasoningEffort, string? ContextTier, DateTimeOffset UpdatedAt = default);
     public sealed record ProjectsDirDraft(string? Path, string? Move, DateTimeOffset UpdatedAt = default);
 
@@ -41,7 +41,7 @@ public static class SettingsDrafts
         api.MapPut("/settings/drafts/speech", (Runtime rt, SpeechDraft d) =>
             Put(rt, Speech, () => new SpeechDraft(Text(d.Endpoint), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
         api.MapPut("/settings/drafts/foundry", (Runtime rt, FoundryDraft d) =>
-            Put(rt, Foundry, () => new FoundryDraft(Text(d.Endpoint), Text(d.Deployment), Text(d.EmbeddingDeployment), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
+            Put(rt, Foundry, () => new FoundryDraft(Text(d.Endpoint), Text(d.Deployment), Text(d.EmbeddingDeployment), Text(d.ImageDeployment), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
         api.MapPut("/settings/drafts/copilot", (Runtime rt, CopilotDraft d) =>
             Put(rt, Copilot, () => new CopilotDraft(OneOf(d.Auth, "user", "token"), Text(d.Model), Text(d.ReasoningEffort), OneOf(d.ContextTier, "default", "long_context"), DateTimeOffset.Now)));
         api.MapPut("/settings/drafts/projects_dir", (Runtime rt, ProjectsDirDraft d) =>

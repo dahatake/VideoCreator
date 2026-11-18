@@ -11,7 +11,7 @@ namespace VideoCreator.App;
 public static class AiConnectionApi
 {
     /// <summary>Empty <c>api_key</c> = keep the saved key (only for the same endpoint host).</summary>
-    public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? Auth, string? TenantId, string? ApiKey);
+    public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, string? ApiKey);
     public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
     public sealed record CopilotRequest(string? Auth, [property: System.Text.Json.Serialization.JsonPropertyName("github_token")] string? GitHubToken, string? Model = null, string? ReasoningEffort = null, string? ContextTier = null);
@@ -28,12 +28,12 @@ public static class AiConnectionApi
         if (saved != null)
             return new
             {
-                Source = "app", saved.Endpoint, saved.Deployment, saved.EmbeddingDeployment, saved.Auth, saved.TenantId, saved.TestedAt,
+                Source = "app", saved.Endpoint, saved.Deployment, saved.EmbeddingDeployment, saved.ImageDeployment, saved.Auth, saved.TenantId, saved.TestedAt,
                 HasApiKey = saved.ApiKeyProtected != null,
                 ApiKeyUnreadable = saved.ApiKeyProtected != null && rt.AiSettings.Reveal(saved.ApiKeyProtected) == null,
             };
         var f = rt.Foundry;
-        return f == null ? new { Source = "none", Auth = "entra" } : new { Source = "config", f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth, f.TenantId };
+        return f == null ? new { Source = "none", Auth = "entra" } : new { Source = "config", f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.ImageDeployment, f.Auth, f.TenantId };
     }
 
     public static object SpeechView(Runtime rt)
@@ -237,7 +237,7 @@ public static class AiConnectionApi
                 key = rt.AiSettings.Reveal(saved.ApiKeyProtected) ?? throw new ArgumentException("保存した API キーをこの Windows ユーザーでは読めません。キーを入力し直してください");
             else throw new ArgumentException(saved?.ApiKeyProtected != null ? "エンドポイントが変わったため、保存した API キーは使いません。キーを入力してください" : "API キーを入力してください（Azure portal の「キーとエンドポイント」）");
         }
-        return new FoundryConnection(endpoint, deployment, Clean(req.EmbeddingDeployment), auth, auth == "entra" ? tenant : null, key);
+        return new FoundryConnection(endpoint, deployment, Clean(req.EmbeddingDeployment), auth, auth == "entra" ? tenant : null, key, Clean(req.ImageDeployment));
     }
 
     public static CopilotConnection CopilotInput(Runtime rt, CopilotRequest req)

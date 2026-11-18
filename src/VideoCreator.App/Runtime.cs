@@ -36,7 +36,7 @@ public sealed class Runtime
     public AiSettingsStore AiSettings { get; internal set; }
     /// <summary>The Foundry connection in use: the one saved in the settings screen, else appsettings.json (Entra ID). Null = not configured.</summary>
     public FoundryConnection? Foundry => AiSettings.Load().Foundry is { } f ? f.ToConnection(AiSettings)
-        : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment, TenantId: _o.Llm.TenantId);
+        : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment, TenantId: _o.Llm.TenantId, ImageDeployment: _o.Llm.ImageDeployment);
     public SpeechConnection? Speech => AiSettings.Load().Speech is { } speech ? speech.ToConnection(AiSettings)
         : _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint) ? null : new SpeechConnection(_o.Asr.Endpoint, TenantId: _o.Asr.TenantId);
     public CopilotConnection Copilot => AiSettings.Load().Copilot is { } c ? c.ToConnection(AiSettings) : new CopilotConnection(Model: _o.Llm.CopilotModel);
@@ -88,7 +88,7 @@ public sealed class Runtime
         var keep = AiSettings.Load().Foundry;
         // switching to Entra ID deletes the stored key; an empty key field keeps the stored one
         var key = c.UsesKey ? (string.IsNullOrWhiteSpace(c.ApiKey) ? keep?.ApiKeyProtected : AiSettings.Protect(c.ApiKey)) : null;
-        AiSettings.Update(s => s with { Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt) });
+        AiSettings.Update(s => s with { Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt, c.ImageDeployment) });
     }
 
     public void SaveCopilot(CopilotConnection c, string? login, DateTimeOffset testedAt)
@@ -161,23 +161,30 @@ public sealed class Runtime
     public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && Foundry is { } f && TryEndpoint(f) != null && !string.IsNullOrWhiteSpace(f.EmbeddingDeployment) && (!f.UsesKey || f.ApiKey != null)
         ? FoundryEmbedder(f) : null;
 
-    public string? ImageConfigurationError(bool enabled, string? deployment) => !enabled ? null
-        : LocalOnly ? "LLM不使用モードでは画像生成を使えません"
-        : string.IsNullOrWhiteSpace(deployment) ? "画像生成モデル（GPT Image / FLUX）のデプロイ名を入力してください"
-        : Foundry is not { } f || TryEndpoint(f) == null ? "設定の「AI の接続」で Microsoft Foundry を設定してください（画像生成はこの接続を使用します）"
-        : f.UsesKey && string.IsNullOrWhiteSpace(f.ApiKey) ? "保存した Foundry API キーを読めません。設定画面で入力し直してください"
-        : null;
+    public string? ImageConfigurationError(bool enabled, string? deployment)
+    {
+        if (!enabled) return null;
+        if (LocalOnly) return "LLM不使用モードでは画像生成を使えません";
+        var f = Foundry;
+        if (f is null || TryEndpoint(f) == null) return "設定の「AI の接続」で Microsoft Foundry を設定してください（画像生成はこの接続を使用します）";
+        var resolved = !string.IsNullOrWhiteSpace(f.ImageDeployment) ? f.ImageDeployment.Trim() : deployment?.Trim();
+        if (string.IsNullOrWhiteSpace(resolved)) return "設定画面の Microsoft Foundry に画像モデルのデプロイ名を設定してください";
+        if (f.UsesKey && string.IsNullOrWhiteSpace(f.ApiKey)) return "保存した Foundry API キーを読めません。設定画面で入力し直してください";
+        return null;
+    }
 
     IImageGenerator ImageGenerator(string deployment)
     {
         if (ImageConfigurationError(true, deployment) is { } error) throw new PipelineException("E-IMAGE-CONFIG", error);
         var f = Foundry!;
-        return new FoundryImageGenerator(FoundryEndpoint.Normalize(f.Endpoint), deployment, FoundryAuth.Policy(f, Credential), _http);
+        var resolved = !string.IsNullOrWhiteSpace(f.ImageDeployment) ? f.ImageDeployment.Trim() : deployment.Trim();
+        return new FoundryImageGenerator(FoundryEndpoint.Normalize(f.Endpoint), resolved, FoundryAuth.Policy(f, Credential), _http);
     }
 
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {
         Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, AsrForLanguage = AsrForLanguage, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
         Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces, UpscaleModel = UpscaleModel, ImageGenerator = ImageGenerator,
+        ResolveImageDeployment = legacy => !string.IsNullOrWhiteSpace(Foundry?.ImageDeployment) ? Foundry.ImageDeployment.Trim() : legacy,
     });
 }
