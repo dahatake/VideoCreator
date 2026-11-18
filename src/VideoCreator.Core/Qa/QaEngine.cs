@@ -227,9 +227,9 @@ public sealed class QaEngine(FFmpeg ff)
     static bool DurationOk(double body, double total, double min, double max, double cap, double tol) => body >= min - tol && body <= max + tol && total <= cap + tol;
     static string DurationText(double body, double total, string suffix = "") => Math.Abs(total - body) < 0.01 ? $"{body:F2}s{suffix}" : $"本編 {body:F2}s / 全体 {total:F2}s{suffix}";
 
-    /// <summary>Shorts: the preset's range and the 180 s cap (C-1). Series parts: the part's own range around the requested length.</summary>
+    /// <summary>Shorts: the preset's range and the 180 s cap (C-1); a Preset.Short file as a whole stays within its own max (60 s). Series parts: the part's own range around the requested length.</summary>
     public static (double Min, double Max, double Cap) DurationRange(EditPlan plan, Preset p) =>
-        plan.Series is { } s ? (s.MinSec, s.MaxSec, double.PositiveInfinity) : (p.Target.Min, p.Target.Max, 180);
+        plan.Series is { } s ? (s.MinSec, s.MaxSec, double.PositiveInfinity) : (p.Target.Min, p.Target.Max, p.Short ? p.Target.Max : 180);
 
     static string RangeText(double min, double max, double cap) =>
         double.IsInfinity(cap) ? $"{min / 60:F1}–{max / 60:F1}分（{min:F0}–{max:F0}s）" : $"本編 {min}–{max}s, 全体 ≤{cap}s";

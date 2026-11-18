@@ -62,7 +62,8 @@ try {
     }
     if (-not $ready) { throw 'The executable did not become ready within 60 seconds.' }
     $health = Invoke-RestMethod "$base/api/health"
-    if ($health.presets -ne 10 -or $health.missing_filters.Count -ne 0 -or -not $health.faces_model) {
+    $expectedPresets = @(Get-ChildItem -Path (Join-Path $PSScriptRoot '..\presets') -Filter 'P*.json').Count
+    if ($health.presets -ne $expectedPresets -or $health.missing_filters.Count -ne 0 -or -not $health.faces_model) {
         throw "Bundled dependencies failed health checks: $($health | ConvertTo-Json -Depth 5)"
     }
     if ($health.transmission.llm_destination -ne 'https://verify.invalid') {
@@ -122,7 +123,7 @@ try {
     if ($deleted.folder_path -and (Test-Path -LiteralPath $deleted.folder_path)) { throw "The project folder was not removed: $($deleted.folder_path)" }
     $beside = @(Get-ChildItem -LiteralPath $appDir -Force | Where-Object { $_.Name -ne 'appsettings.json' })
     if ($beside.Count -ne 1) { throw "Unexpected files next to the executable: $($beside.Name -join ', ')" }
-    Write-Host 'PASS: single file; isolated startup; bundled runtime, UI, 10 presets, models, fonts; user settings beside the executable;'
+    Write-Host "PASS: single file; isolated startup; bundled runtime, UI, $expectedPresets presets, models, fonts; user settings beside the executable;"
     Write-Host '      FFmpeg/libass render; API/ffprobe/SQLite; project deletion to Recycle Bin/Trash.'
     $health | ConvertTo-Json -Depth 5
 }

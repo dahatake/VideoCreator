@@ -15,6 +15,16 @@
 
 ## 1. 진행 방법
 
+### Viva Engage용 AI 이미지
+
+「[설정]」 화면의 Microsoft Foundry에서 이미지 모델(GPT Image / FLUX-1.1-pro 등 OpenAI 호환 Images API)의 배포 이름을 선택하거나 입력하며, Azure Resource Manager에서 찾은 배포를 후보로 고를 수 있습니다. Foundry 연결은 Entra ID와 API 키를 모두 지원합니다. 「2 패턴」에서는 만들기／만들지 않기를 토글만으로 고릅니다. 기본값은 「만들지 않기」이며 설정은 프로젝트에 저장됩니다. 이미지는 내보내기 산출물이므로 편집 계획을 만든 작업의 값이 아니라 **내보내기 시점의 프로젝트 설정**(`PipelineRunner.EngageImageSettings`)으로 판정합니다(생성 후에 켜도 재생성은 필요 없음). 채팅 연결 대상이 Copilot이어도 이미지에는 Foundry 연결을 사용합니다. LLM 미사용 모드에서는 생성할 수 없습니다.
+
+「6 내보내기」의 Viva Engage 게시글을 그대로 사용하고, 「MC와 직원이 이 주제에 대해 설레며 이야기하고 있다」는 애니메이션풍·중앙 구도 지시를 추가합니다(이것이 지정 프롬프트). FLUX 등 영어만 해석하는 모델이 있으므로, 설정된 LLM으로 지정 프롬프트를 영어 장면 묘사(브랜드명·문자 없음)로 바꾼 뒤 보냅니다(LLM이 없거나 실패하면 지정 프롬프트 그대로). 크기는 먼저 5:1의 1440×288을 요청하고, 고정 크기만 지원하는 모델(GPT Image)이 400/422로 거부하면 1536×1024로 다시 요청합니다. 어느 쪽이든 종횡비를 유지한 확대·축소와 중앙 크롭으로 **1000×200 px PNG**로 마무리하고, 지정 프롬프트와 실제 전송 프롬프트를 `.engage-image.json`에 기록합니다. 동영상 잘라내기의 섬네일은 바꾸지 않습니다.
+
+산출물은 `<동영상 이름>.engage.png`(`engage_image`)와, 게시글·전송 프롬프트·배포 이름·크기를 기록한 `<동영상 이름>.engage-image.json`(`engage_image_prompt`)입니다. 내보내기 화면의 파일 목록에서 미리 보고 저장할 수 있습니다. 게시글을 다시 만들면 이미지도 다시 생성되며 추가 요금이 발생합니다(기존 음성 인식·채팅 개산에는 포함되지 않음). 게시글만 설정한 대상으로 보내며, 동영상이나 실제 인물 사진은 이미지 모델로 보내지 않습니다. 연결 미비·모델 오류·이미지 변환 실패는 명시하며, 대체 섬네일로 성공 처리하지 않습니다.
+
+검증: `EngageImageTests`는 HTTP 경계에서 요청 크기(5:1 우선과 고정 크기로의 폴백)·영어화한 전송 프롬프트·지정 프롬프트(게시글+추가 문자열)를 확인하고, 합성 이미지를 실제 FFmpeg로 변환하여 ffprobe로 1000×200을 측정합니다. `ProjectGenerationSettingsTests`는 설정의 영속화와 비활성 시 미생성을 확인합니다. 실제 클라우드의 이미지 품질·인물 구도는 모델 출력에 의존하므로 생성 후 미리보기로 확인하십시오.
+
 PRD의 각 기능을 본체에 통합하기 전에 **작은 검증 프로그램(spikes/)**으로 PRD 임계값을 기계 측정한 뒤 구현했습니다. 구현 후 단위·통합 테스트 67건과 실제 브라우저(Microsoft Edge) + 실제 Azure E2E(`ui/e2e.mjs` 9항목, v1.1은 `ui/e2e-v11.mjs` 29항목)로 확인했습니다.
 
 | spike | 검증 내용 | 결과 | 발견 사항 → 설계 반영 |
@@ -26,6 +36,7 @@ PRD의 각 기능을 본체에 통합하기 전에 **작은 검증 프로그램(
 | [05-llm-select](../../../spikes/05-llm-select.cs) | Microsoft Foundry Structured Outputs | 후보 4개, 모든 항목 통과 | strict 모드의 `maxLength`/`minimum`/`maxItems` 미지원(Microsoft Learn) → **코드에서 제약 강제** |
 | [06-copilot-sdk](../../../spikes/06-copilot-sdk.cs) | GitHub Copilot SDK × OS에 설치된 CLI | 통과 | 에이전트가 중간 JSON·수정본 두 메시지를 보내고 길이·구간 수 제약 위반 → **최신의 완전한 JSON 추출 + 동일 검증기** |
 | [07-make-long](../../../spikes/07-make-long.cs) | 64분 일본어 테스트 영상 생성(LLM 대본 + TTS) | 1,252행, 64분 | 성능·장편 분할 검증용 |
+| [24-mai-transcribe](../../../spikes/24-mai-transcribe.cs) | 전사 A/B: 표준 모델과 MAI-Transcribe-2(같은 API의 `enhancedMode`). TTS 2화자 정답 대본, 깨끗한 음성과 잡음(SNR 5 dB) | CER 13.5%→**12.1%**, 단어 시각 오차 p90 0.99초→**0.32초**, 잡음 시 화자 순도 85%→**96~100%**, 처리 3.9초→1.6초 | MAI가 모든 지표에서 우세 → **자막 기본값을 MAI-Transcribe-2로**. MAI는 `maxSpeakers`를 400으로 거부, 단어는 1글자·길이 약 80ms 고정값 → 단어 끝을 다음 단어 시작까지(최대 0.3초) 연장(음성 구간 피복 61%→97%) |
 
 이 절의 테스트 원본은 권리 문제를 피하려고 모두 합성(FFmpeg 테스트 패턴 + Azure TTS 음성)했습니다. §2.2 AT-10 재검증만 사용자가 지정하고 외부 전송을 허가한 실제 영상을 사용했습니다. §2.3은 고정 전사·FFmpeg 합성 미디어이며 실제 Azure로 전송하지 않았습니다.
 
@@ -258,7 +269,7 @@ v1.1에서 v1.0 미구현 항목을 모두 구현했습니다. v1.1 보충에서
 
 | 범위 | 상태 |
 |---|---|
-| 완전 오프라인 전사 | 없음. 자막 필수이므로 항상 Azure AI Speech 사용(음성 Azure 전송) |
+| 완전 오프라인 전사 | 없음. 자막 필수이므로 항상 Azure 음성 인식(기본 MAI-Transcribe-2, 미지원 지역은 표준 모델) 사용(음성 Azure 전송) |
 | 실제 음성 웃음 정확도 | 합성 확인만. 실제 웃음·박수 녹음 정확도 평가 안 함(평가 데이터 없음) |
 | 화자·카메라 자동 배정 | 별도 마이크일 때만. 얼굴 위치 배정 미구현 |
 | 의성어·반응의 재미 | 의성어 규칙, 반응 AI 제안(승인제). 재미는 사용자 판단 |
@@ -822,6 +833,7 @@ AI 프롬프트도 「직전 행이 완결·질문이며 다음 행이 앞말을
 - **GitHub Copilot**([CopilotCatalog](../../../src/VideoCreator.Core/Selection/AiConnection.cs)): Copilot CLI에 로그인한 GitHub 사용자(권장) 또는 fine-grained personal access token으로 인증한다. SDK에서 해당 계정이 쓸 수 있는 모델, 추론 깊이(Reasoning Effort), 표준·긴 컨텍스트(예: 200K / 1M), 요금(100만 토큰당 크레딧)을 가져와 표시한다. 선택지는 모델마다 달라지며, 모델이 받지 않는 추론 깊이·Context Size는 서버에서도 거부한다. 테스트에서는 선택한 설정으로 실제 응답을 1회 받는다.
 - **저장**([AiSettingsStore.cs](../../../src/VideoCreator.App/AiSettingsStore.cs)): `{DataDir}/ai-settings.json`. appsettings.json보다 우선하며, 「저장한 연결 삭제」로 appsettings.json 설정으로 돌아간다. API 키·토큰은 Windows에서 DPAPI(CurrentUser, 앱 고유 엔트로피)로 암호화한다. 다른 Windows 사용자·다른 PC에서는 복호화할 수 없으며, 그 경우 다시 입력을 요청한다. OS 암호화를 쓸 수 없는 환경에서는 키·토큰 저장을 `secret_storage_unavailable`로 거부한다(PRD NFR-SEC-02). 키 없는 인증은 저장할 수 있다.
 - **Azure Speech**([AzureFastTranscriber.cs](../../../src/VideoCreator.Core/Asr/AzureFastTranscriber.cs)): Foundry와 독립된 엔드포인트·인증·테넌트를 저장한다. 새 입력은 HTTPS 리소스 루트만 허용한다. Entra는 `https://cognitiveservices.azure.com/.default`, 키는 `Ocp-Apim-Subscription-Key`를 쓰며 함께 보내거나 자동 폴백하지 않는다. POST `/api/settings/ai/speech/test`는 생성과 같은 빠른 전사 API로 합성 무음 1초를 보낸다. PUT `/api/settings/ai/speech`는 재테스트 후 저장, DELETE는 시작 설정을 복원한다. LLM 미사용 시에도 이용 가능. 빈 키는 같은 HTTPS 호스트·포트에서만 재사용한다. 공유 사용자는 RG Speech User / OpenAI User 역할을 사용한다([Azure 접근 설정](../azure-access.md)).
+- **자막 모델(MAI-Transcribe-2)**: spike 24의 A/B(위 표)에서 MAI-Transcribe-2가 표준 모델보다 우수했으므로 기본값을 `VideoCreator:Asr:Model = "MAI-Transcribe-2"`로 했다(`standard`로 기존 표준 모델 고정). 같은 빠른 전사 API 정의에 `enhancedMode{model, modelOptions{timestamps:"word", transcribeStyle:"verbatim"}}`를 붙인다. 축어(verbatim)는 자막 방침(말 더듬음도 남김)에 맞췄다. MAI는 `diarization.maxSpeakers`를 받지 않으므로 보내지 않는다. MAI의 단어는 1글자·길이 약 80ms 고정값이므로 `Parse`에서 단어 끝을 「다음 단어 시작·문장 끝·시작+0.3초」의 최솟값까지 연장한다(줄이지 않음). 무음 검출과 대조하면 음성 구간 피복은 61%→97%, 0.3초 이상의 간격은 거의 유지된다. 지원 지역은 Central India / East US / North Europe / Southeast Asia / West Europe / West US / West US 2(Japan East는 400 "Enhanced mode with model is currently not supported yet."). 첫 전사 전에 합성 무음 1초로 MAI를 시험하고, 이 400이면 엔드포인트별로 기억하여 표준 모델로 전사한다. 녹음 자체가 400/413(2시간·250MB 상한)으로 거부된 경우에도 표준 모델로 재전송한다. 전사의 `Provider`는 실제로 사용한 모델(`azure-mai-transcribe-2` / `azure-fast-transcription`). 표준 모델로 전환한 경우 작업에 경고를 내고, MAI 지원 엔드포인트로 바꾼 뒤에는 표준 모델로 만든 캐시를 한 번만 다시 만든다. 연결 테스트의 각 단계·설정 화면의 Speech 항목·「Azure에서 선택」의 지역 표시·`/api/health`와 `/api/settings`의 `asr_model`에 사용하는 모델을 표시한다. `run.cmd --check`도 MAI 사용 가능 여부를 진단한다. Azure AI Vision은 사용하지 않으며 MAI에 이미지 분석 모델도 없으므로 대체 대상은 없다.
 - Speech 인증 추가 회귀 검증: 인증·V12·다국어·PRD 78건 통과. 인증 헤더 배타성, 실패 시 저장 유지, 다른 호스트·포트의 키 재사용 거부, 프로젝트 언어, 비밀 비공개, 기존 시작 설정 호환성을 확인했다. 실제 Azure Speech·채팅·임베딩은 기존 Entra 권한 계정으로 성공했다. 키 정책·IAM은 변경하지 않았으며 새 공유 사용자의 최소 권한은 검증하지 않았다.
 - **비밀 처리**: `GET /api/settings`는 자격 증명을 포함하지 않고 `has_api_key`·`has_token`만 반환한다. 키 칸을 비운 채 테스트·저장하면 저장된 키를 쓰지만, 저장했을 때와 같은 호스트에만 사용한다(다른 호스트로 보내지 않음). 오류 세부 정보에서 토큰을 제거한다. Entra ID로 바꾸면 저장된 키를 삭제한다. LLM 미사용 모드에서는 LLM 연결 테스트도 보내지 않는다(`local_only`). Speech는 제외한다.
 - API: `POST /api/settings/ai/foundry/test`, `PUT`/`DELETE /api/settings/ai/foundry`, `POST /api/settings/ai/copilot/models`, `POST /api/settings/ai/copilot/test`, `PUT`/`DELETE /api/settings/ai/copilot`([AiConnectionApi.cs](../../../src/VideoCreator.App/AiConnectionApi.cs)). 테스트 또는 저장 실패는 HTTP 422로 단계별 결과를 반환한다.
@@ -840,3 +852,32 @@ AI 프롬프트도 「직전 행이 완결·질문이며 다음 행이 앞말을
 - Foundry 리소스나 배포 생성은 대상 외(목록에서 선택하거나 이름을 입력). 목록의 권한 표시는 참고값.
 - macOS / Linux의 OS 자격 증명 저장소(키체인 등)는 미지원. 따라서 이들 OS에서는 키·토큰을 저장하지 않는다.
 - 표시하는 Copilot 요금은 SDK가 반환한 값이며 청구액을 보장하지 않는다.
+
+## 22. 쇼츠 동영상(P12, 세로 9:16)을 다른 패턴과 동시에 만들기
+
+원본 동영상에서 YouTube Shorts·TikTok·Instagram Reels용 세로 쇼츠를 잘라낸다. PRD FR-SHORT-01, §8.1.
+
+### 구조
+- **프리셋**([P12.json](../../../presets/P12.json), [Preset.cs](../../../src/VideoCreator.Core/Presets/Preset.cs)): `"short": true`인 패턴. 15~60초, 훅은 처음 2초 이내, teaser 콜드 오픈, 무음 제거 0.5초, 전체 자막, BGM 없음, 루프 사용. `PresetStore.Validate`는 쇼츠가 9:16이고 상한이 60초 이하인지 로드 시 검사한다. 상한을 60초로 한 것은 1분을 넘는 쇼츠가 Content ID 소유권 주장을 받으면 전 세계에서 차단되기 때문이다([YouTube 고객센터 15424877](https://support.google.com/youtube/answer/15424877)). TikTok·Reels에서도 같은 길이로 다룰 수 있다.
+- **옵션 정규화**(`Preset.Apply`): 쇼츠이면 사용자의 선택과 관계없이 방향을 `portrait`(1080×1920)로 하고, 전후편 분할(`Parts`/`PartMinutes`)·오프닝·클로징·장면 전환 카드를 빼며, 츳코미를 텔롭으로 한다. 처음 2초의 훅을 늦추는 삽입을 만들지 않기 위해서다. 다른 패턴은 같은 인스턴스를 그대로 반환한다. API(작업 등록·레이아웃 목록), `PipelineRunner.GenerateCoreAsync`, `PlanBuilder.BuildAsync`의 3곳에서 적용한다. 재편집·재계획 경로에서도 삽입이 들어가지 않는다.
+- **동시 선택**([Api.cs](../../../src/VideoCreator.App/Api.cs) `StartGeneration`): `preset_ids` 중 쇼츠는 별도 그룹으로 나눈다(쇼츠는 1개만). 그룹별로 `Apply` 후의 옵션으로 브랜드 키트·길이 하한·전후편을 검증하고, **모두 통과한 뒤에** 큐에 넣는다. 한쪽만 등록되는 일은 없다. 2건일 때는 `Job.CompanionJobId`로 서로 연결하고, 나중 작업은 `ReuseAnalysis=true`, 견적의 전사 비용을 0으로 한다. 큐는 1건씩 순서대로 처리하므로 나중 작업은 앞 작업이 만든 전사·분석 캐시를 사용한다. 앞 작업이 실패한 경우에는 스스로 분석한다. 응답은 `{ job_id, cost, companion_job_id, job_ids }`.
+- **생성 설정**: `ProjectGenerationSettings.Short`(`off` / `with` / `only`). 주 패턴(`preset_id`)에는 쇼츠를 지정할 수 없다.
+- **UI**([app.js](../../../src/VideoCreator.App/wwwroot/js/app.js)): 패턴 목록 아래에 「쇼츠 동영상」 라디오(만들지 않음/함께 만들기/쇼츠만). 「쇼츠만」에서는 주 패턴 목록을 비활성화(`inert`)하고 주석을 표시한다. 작업 화면·후보 화면·시리즈 화면에는 연결된 작업으로의 링크를 표시한다. 「이 설정으로 다시 만들기」는 쇼츠와의 조합도 복원한다.
+
+### 검증
+- 자동 테스트 [ShortPresetTests.cs](../../../tests/VideoCreator.Tests/ShortPresetTests.cs):
+  - 16:9·90초 쇼츠를 검증에서 거부한다.
+  - `Apply`에 의한 정규화와, 다른 패턴을 바꾸지 않는 것.
+  - 가로 원본에서 「가로 16:9」를 골라도 계획은 1080×1920이며 삽입이 없다.
+  - P6+P12로 연결된 2건이 등록되고, 짧은 쪽은 세로·분석 재사용·전사 0분.
+  - 쇼츠만이면 브랜드 키트가 없어도 등록할 수 있다.
+  - 브랜드 키트 부족이나 길이 부족이면 어느 작업도 등록하지 않는다.
+  - 생성 설정 검증.
+- 실제 내보내기의 검증 결과는 아래와 같다.
+- 실제 내보내기(2026-11-19, `spikes/media/talk.mp4`: 1920×1080·125초, Azure 전사와 LLM 사용, 분리한 데이터 폴더):
+  - P6+P12를 동시에 선택하여 연결된 2건이 등록되었다. P12 로그에서 전사와 분석의 재사용을 확인했다. 둘 다 후보 3개로 완료했다.
+  - 미리보기(ffprobe): P6는 960×540·33~35초, P12는 540×960·17~28초.
+  - 최종 내보내기(ffprobe): P6는 1920×1080·32.9초, P12는 1080×1920(H.264/AAC)·20.3초로 60초 이하. P12의 통합 라우드니스는 -14.0 LUFS. 추출한 프레임으로 세로 화면과 자막을 눈으로 확인했다.
+- 이 검증에서 발견하여 고친 문제:
+  - 새 데이터 폴더에서 P12를 내보내면 실패했다. 효과음 라이브러리(`sfx_pop.wav` 등)를 준비하는 것은 장면 전환 카드·츳코미·BGM이 켜져 있을 때뿐이어서 쇼츠에서는 준비되지 않았다. 렌더러는 찾지 못한 효과음을 조용히 건너뛰지만, 내보내기 재현성 기록(`RenderProvenance`)이 그 파일의 해시를 구하려다 실패했다. `PipelineRunner`에서 효과음이 켜져 있으면 생성 시에, 계획에 효과음이 있으면 내보내기 시에도 라이브러리를 준비하도록 고쳤다.
+  - QA 길이 검사(`QaEngine`의 DurationRange) 상한은 180초였다. 쇼츠에서는 `Target.Max`(60초)를 상한으로 하여, 오프닝 등을 포함한 파일 전체가 60초 안에 들어가는지 확인한다.

@@ -15,9 +15,17 @@ Azure service to provision.
 
 | Purpose | Requirement | Entra ID role |
 |---|---|---|
-| Caption transcription (required) | Azure AI Services / Speech in a fast-transcription region, S0, custom subdomain | Cognitive Services Speech User |
+| Caption transcription (required) | Azure AI Services / Speech, S0, custom subdomain. MAI-Transcribe-2 requires a supported region (below); other regions use the standard model | Cognitive Services Speech User |
 | AI selection, telops, post copy | Azure AI Services / Azure OpenAI with a Structured Outputs-capable chat deployment | Cognitive Services OpenAI User |
 | Semantic topic boundaries | Embedding deployment in the same resource; vocabulary-based detection if unset | Cognitive Services OpenAI User |
+
+Caption transcription uses Microsoft's speech recognition model **MAI-Transcribe-2** by default.
+It calls the Azure Speech Fast Transcription API with `enhancedMode`, so no deployment is needed.
+MAI-Transcribe-2 is available in Central India, East US, North Europe, Southeast Asia,
+West Europe, West US and West US 2 (as of 2026-11; Japan East is not supported).
+In unsupported regions, or for recordings of 2 hours / 250 MB or more, the app automatically
+switches to the standard model and says so in the connection test, settings screen and job warnings.
+To pin the standard model, set `VideoCreator:Asr:Model` to `standard`. Image analysis (Azure AI Vision) is not used.
 
 **One Azure AI Services resource can serve all three purposes.** A Foundry project,
 Video Indexer, Event Grid and an additional managed identity are not required by
@@ -30,7 +38,8 @@ the current execution path. Existing resources do not need to be deleted.
 - Tenant: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - Resource group: `rg-videocreator-jpe`
 - Resource: `videocreator-ai-40800` (AIServices / S0 / Japan East)
-- Speech: `https://videocreator-ai-40800.cognitiveservices.azure.com/`
+- Caption resource: `videocreator-mai-9709` (AIServices / S0 / Southeast Asia; added in 2026-11 for MAI-Transcribe-2)
+- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
 - Chat deployment: `gpt-chat-latest`
 - Embeddings: `text-embedding-3-large`
@@ -183,7 +192,10 @@ does not automatically fall back to another authentication method.**
 - Changes apply to newly started operations, not already-running jobs.
 - Speech testing sends **one second of synthetic silence** through the same fast
   transcription API as generation; it does not send user audio. This verifies
-  authentication/connectivity, not recognition accuracy on real media.
+  authentication/connectivity, not recognition accuracy on real media. The result shows
+  which model will be used (MAI-Transcribe-2 or standard).
+- If you see "Transcribing with the standard model", the resource's region does not support
+  MAI-Transcribe-2. The **Select from Azure** list also shows whether each region is supported.
 - Foundry testing checks strict JSON Schema chat output and the embedding
   deployment when specified.
 - LLM-disabled mode still needs Speech. Speech tests and saves remain enabled.
@@ -199,4 +211,5 @@ does not automatically fall back to another authentication method.**
 Official references:
 [Speech RBAC](https://learn.microsoft.com/azure/ai-services/speech-service/role-based-access-control) /
 [Fast transcription](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create) /
+[MAI-Transcribe-2](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe) /
 [Azure OpenAI RBAC](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/role-based-access-control).

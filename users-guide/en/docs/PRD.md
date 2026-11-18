@@ -216,7 +216,7 @@ Only official/internal mandatory constraints may become hard H checks. External 
 | ID | Dependency | Use | Alternative |
 |---|---|---|---|
 | D-1 | Bundled FFmpeg≥7.x win-x64/arm64/macOS/Linux | Decode/analyze/render/encode | None |
-| D-2 | Speech batch/word times/diarization | ASR | Local faster-whisper |
+| D-2 | Speech recognition: Azure AI Speech Fast Transcription API (word times, diarization). Default model is Microsoft Foundry **MAI-Transcribe-2**, which won the comparison (spike 24); standard model in unsupported regions | ASR | Local faster-whisper |
 | D-3 | Foundry schema-output model | Highlights/text shortening | Local OpenAI-compatible LLM Could |
 | D-4 | PySceneDetect AdaptiveDetector | Shots | FFmpeg select scene |
 | D-5 | MediaPipe-like face detector | Should tracking | Must blur |
@@ -360,7 +360,7 @@ IDs `FR-<area>-<sequence>`; M Must/S Should/C Could.
 | FR-ASR-01 | Generate transcripts with start/end times for every word, or Japanese morpheme/string unit. | M | R§5.3-1 |
 | FR-ASR-02 | Diarize up to four speakers and attach a speaker ID to every utterance. | M | R§3.6 |
 | FR-ASR-03 | Reestimate sentence boundaries for Japanese transcripts lacking punctuation, using rules or an LLM. | M | R§5.3-1 |
-| FR-ASR-04 | Allow switching ASR providers through configuration: Azure AI Speech or faster-whisper. | M | AP-4/D-2 |
+| FR-ASR-04 | Allow switching ASR providers through configuration: Azure AI Speech or faster-whisper. On Azure, the model (MAI-Transcribe-2 / standard) can also be chosen, and the model actually used is shown in the connection test and jobs. | M | AP-4/D-2 |
 | FR-ASR-05 | Let users register a terminology dictionary of proper/product names, used for ASR phrase lists and telop matching. | S | US-09 |
 | FR-ASR-06 | Display the transcript as editable UI text so users can correct recognition errors manually. | S | US-03 |
 
@@ -432,6 +432,8 @@ Types: ①verbatim speech,②emphasis,③reaction/inner voice,④context heading
 | FR-RFM-03 | Automatically fall back to blurred background for multiple faces or no detected face. | S | R§5.3-6 |
 | FR-RFM-04 | Fit existing9:16or1:1into1080×1920without reframing;add top/bottom background for square sources. | M | C-1 |
 | FR-RFM-05 | Apply1.10–1.20×punch-ins to preset-designated intervals,such as emphasis speech or clips after the first. | M | R§3.2/5.5A |
+| FR-RFM-06 | Output orientation is set by the generation setting "Output orientation". The default, "Match input", follows the shape of the main video (role Main, otherwise the first video): landscape shows the whole frame at 1920×1080 (no crop or blur bars, no face following, no shrinking of the main video for picture-in-picture); anything else is 1080×1920. "Portrait 9:16" and "Landscape 16:9" fix it. The landscape telop safe area is 5% on every side (SMPTE ST 2046-1 title safe); opening, closing and scene-change cards use the version closest to the output shape (16:9 / 9:16), and re-editing keeps the original plan's orientation. | M | US-12/C-1 |
+| FR-SHORT-01 | A short (a pattern with `short: true`, P12) is chosen on the generate screen from "Don't make / Make together with other patterns / Make only the short". When made together, two jobs, the main pattern's and the short's, are registered and linked to each other. Both are queued only if both pass validation (never only one). The later job reuses the earlier job's transcription and analysis, and its estimated transcription cost is 0. A short is always 1080×1920 regardless of "Output orientation", and uses no opening, closing, scene-change cards or part splitting. The choice is saved in the project's generation settings and restored by "Recreate from these settings". | M | US-12/C-1 |
 
 ### 7.8 Switching (SWT), P7
 
@@ -513,6 +515,9 @@ ASL **targets require calibration**, from report heuristics R§3.2/§15.5.
 | P7 | Interview |30–60|2|2–6 speaker|1.2|Few|①②④/speaker colors|One master|Optional|v1.x|
 | P8 | Process/cooking/DIY |20–60|1.5|1–2,longer result|.5|Few|②④⑥|ASMR|Recommended|v1.x|
 | P9 | Minimal/ambient |30–90|3|3–8|None|None|None default|Original only|Optional|v1.x|
+| P12 | Short video (vertical 9:16) |15–60|2|1.5–3|0.5|Medium|①②④|Original (−14 LUFS, no BGM)|On|v1.x|
+
+P12 is the short template, with `"short": true`. From any source it always renders at 1080×1920 (9:16), with no opening, closing, scene-change cards or part splitting (so the hook stays in the first 2 seconds; quips are telops, not cards). The length cap is 60 seconds because a short longer than one minute is blocked worldwide when it receives a Content ID claim (YouTube Help 15424877). It is separate from the main patterns in §8.2 and **can be selected together** with another pattern (FR-SHORT-01).
 
 ### 8.2 Combination
 

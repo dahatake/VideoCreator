@@ -141,6 +141,8 @@ $vc = $config.VideoCreator
 function Get-Setting([string]$EnvName, $Default) { $e = [Environment]::GetEnvironmentVariable($EnvName); if ($e) { $e } else { $Default } }
 $asrEndpoint = Get-Setting 'VideoCreator__Asr__Endpoint' $vc.Asr.Endpoint
 $asrProvider = Get-Setting 'VideoCreator__Asr__Provider' $vc.Asr.Provider
+$asrModel = Get-Setting 'VideoCreator__Asr__Model' $(if ($vc.Asr.PSObject.Properties['Model']) { $vc.Asr.Model } else { 'MAI-Transcribe-2' })
+$useMai = $asrModel -and $asrModel -ne 'standard'
 $llmEndpoint = Get-Setting 'VideoCreator__Llm__Endpoint' $vc.Llm.Endpoint
 $llmProvider = Get-Setting 'VideoCreator__Llm__Provider' $vc.Llm.Provider
 $deployment = Get-Setting 'VideoCreator__Llm__Deployment' $vc.Llm.Deployment
@@ -172,13 +174,14 @@ function Send-Probe([string]$Kind, [string]$Token) {
     $http.Timeout = [TimeSpan]::FromSeconds(60)
     $http.DefaultRequestHeaders.Authorization = New-Object System.Net.Http.Headers.AuthenticationHeaderValue('Bearer', $Token)
     try {
-        if ($Kind -eq 'speech') {
+        if ($Kind -like 'speech*') {
             # Same call the app makes (AzureFastTranscriber, api-version 2025-10-15) with 1 s of silence.
             $form = New-Object System.Net.Http.MultipartFormDataContent
             $audio = New-Object System.Net.Http.ByteArrayContent(, (New-SilentWav))
             $audio.Headers.ContentType = New-Object System.Net.Http.Headers.MediaTypeHeaderValue('audio/wav')
             $form.Add($audio, 'audio', 'probe.wav')
-            $form.Add((New-Object System.Net.Http.StringContent('{"locales":["ja-JP"]}', [Text.Encoding]::UTF8, 'application/json')), 'definition')
+            $def = if ($Kind -eq 'speech-mai') { '{"locales":["ja-JP"],"enhancedMode":{"enabled":true,"model":"' + $asrModel + '","modelOptions":{"timestamps":"word","transcribeStyle":"verbatim"}}}' } else { '{"locales":["ja-JP"]}' }
+            $form.Add((New-Object System.Net.Http.StringContent($def, [Text.Encoding]::UTF8, 'application/json')), 'definition')
             $uri = $asrEndpoint.TrimEnd('/') + '/speechtotext/transcriptions:transcribe?api-version=2025-10-15'
             $resp = $http.PostAsync($uri, $form).GetAwaiter().GetResult()
         } else {
@@ -235,11 +238,17 @@ else {
             $token = Invoke-Az @('account', 'get-access-token', '--resource', 'https://cognitiveservices.azure.com', '--query', 'accessToken', '-o', 'tsv')
             $probes = @()
             if ($useAsr) { $probes += [pscustomobject]@{ Kind = 'speech'; Item = 'Azure Speech (subtitles)'; Endpoint = $asrEndpoint; Role = 'Cognitive Services User' } }
+            if ($useAsr -and $useMai) { $probes += [pscustomobject]@{ Kind = 'speech-mai'; Item = "$asrModel (subtitles)"; Endpoint = $asrEndpoint; Role = 'Cognitive Services User' } }
             if ($useLlm) { $probes += [pscustomobject]@{ Kind = 'openai'; Item = "Microsoft Foundry ($deployment)"; Endpoint = $llmEndpoint; Role = 'Cognitive Services OpenAI User' } }
             $denied = @()
             foreach ($pr in $probes) {
                 if (-not $token) { Add-Result $pr.Item WARN 'could not get a token for cognitiveservices.azure.com'; continue }
                 $r = Send-Probe $pr.Kind $token
+                if ($pr.Kind -eq 'speech-mai' -and $r.Code -eq 400 -and $r.Body -match 'Enhanced mode') {
+                    Add-Result $pr.Item WARN 'this region does not serve MAI-Transcribe; the app uses the standard model (MAI regions: centralindia, eastus, northeurope, southeastasia, westeurope, westus, westus2)'
+                    continue
+                }
+                if ($pr.Kind -eq 'speech-mai' -and $r.Code -eq 403) { Add-Result $pr.Item WARN 'HTTP 403 (see Azure Speech above)'; continue }
                 switch ($r.Code) {
                     200 { Add-Result $pr.Item OK "HTTP 200 from $(([Uri]$pr.Endpoint).Host)" }
                     401 { Add-Result $pr.Item WARN "HTTP 401: token rejected. Sign in to the resource's tenant: az login --tenant <tenant>" }

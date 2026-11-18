@@ -133,8 +133,9 @@ public class SelectionTests
     public void All_presets_load_and_mvp_presets_are_available()
     {
         var ps = Fixtures.Presets;
-        Assert.Equal(11, ps.Count);
+        Assert.Equal(12, ps.Count);
         Assert.True(ps.Values.All(p => p.Available));
+        Assert.Equal(["P12"], ps.Values.Where(p => p.Short).Select(p => p.Id));
         Assert.Equal("switch", ps["P7"].Planner);
         Assert.Equal("speed", ps["P8"].Planner);
         Assert.Equal("beat", ps["P5"].Planner);

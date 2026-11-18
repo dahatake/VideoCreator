@@ -17,6 +17,8 @@ public sealed class AsrException(string message, bool transient) : Exception(mes
 {
     public bool Transient { get; } = transient;
     public HttpStatusCode? StatusCode { get; init; }
+    /// <summary>The resource's region does not serve MAI-Transcribe (400 "Enhanced mode with model is currently not supported yet.").</summary>
+    public bool MaiUnavailable => StatusCode == HttpStatusCode.BadRequest && Message.Contains("Enhanced mode", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record SpeechConnection(string Endpoint, string Auth = "entra", string? TenantId = null, string? ApiKey = null)
@@ -33,34 +35,81 @@ public sealed record SpeechConnection(string Endpoint, string Auth = "entra", st
     }
 }
 
-/// <summary>Azure AI Speech fast transcription using either Entra ID or a resource key.</summary>
+/// <summary>
+/// Azure Speech fast transcription using either Entra ID or a resource key. With <c>model</c> = <see cref="MaiModel"/> it calls Microsoft AI's
+/// MAI-Transcribe-2 through the same API (<c>enhancedMode</c>); resources in regions without MAI-Transcribe fall back to the standard model.
+/// </summary>
 public sealed class AzureFastTranscriber : ITranscriber
 {
+    public const string MaiModel = "MAI-Transcribe-2";
+    public const string StandardName = "azure-fast-transcription", MaiName = "azure-mai-transcribe-2";
+    /// <summary>Regions that serve MAI-Transcribe (learn.microsoft.com/azure/ai-services/speech-service/regions, LLM speech tab, 2026-11).</summary>
+    public static readonly IReadOnlyList<string> MaiRegions = ["centralindia", "eastus", "northeurope", "southeastasia", "westeurope", "westus", "westus2"];
+    /// <summary>MAI word times are onsets with a fixed placeholder length; each word is extended towards the next onset by at most this much.</summary>
+    public const double MaiWordHoldSec = 0.3;
+
+    // endpoint origin → whether it serves MAI-Transcribe (learned once per process from a one-second silent request)
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> MaiSupport = new(StringComparer.OrdinalIgnoreCase);
+
     readonly Uri _endpoint;
     readonly TokenCredential? _credential;
     readonly string? _apiKey;
     readonly HttpClient _http;
     readonly string _locale;
+    readonly string? _model;
 
-    public AzureFastTranscriber(Uri endpoint, TokenCredential credential, HttpClient http, string locale = "ja-JP")
-        : this(endpoint, credential ?? throw new ArgumentNullException(nameof(credential)), null, http, locale) { }
+    public AzureFastTranscriber(Uri endpoint, TokenCredential credential, HttpClient http, string locale = "ja-JP", string? model = null)
+        : this(endpoint, credential ?? throw new ArgumentNullException(nameof(credential)), null, http, locale, model) { }
 
-    public AzureFastTranscriber(Uri endpoint, string apiKey, HttpClient http, string locale = "ja-JP")
-        : this(endpoint, null, string.IsNullOrWhiteSpace(apiKey) ? throw new ArgumentException("Speech API key is required.", nameof(apiKey)) : apiKey.Trim(), http, locale) { }
+    public AzureFastTranscriber(Uri endpoint, string apiKey, HttpClient http, string locale = "ja-JP", string? model = null)
+        : this(endpoint, null, string.IsNullOrWhiteSpace(apiKey) ? throw new ArgumentException("Speech API key is required.", nameof(apiKey)) : apiKey.Trim(), http, locale, model) { }
 
-    AzureFastTranscriber(Uri endpoint, TokenCredential? credential, string? apiKey, HttpClient http, string locale)
+    AzureFastTranscriber(Uri endpoint, TokenCredential? credential, string? apiKey, HttpClient http, string locale, string? model)
     {
         _endpoint = endpoint; _credential = credential; _apiKey = apiKey; _http = http; _locale = locale;
+        _model = string.IsNullOrWhiteSpace(model) || model.Trim().Equals("standard", StringComparison.OrdinalIgnoreCase) ? null : model.Trim();
     }
 
-    public string Name => "azure-fast-transcription";
+    /// <summary>The preferred model (also the transcript cache key); <see cref="Transcript.Provider"/> records the model that actually answered.</summary>
+    public string Name => _model == null ? StandardName : MaiName;
     public const string ApiVersion = "2025-10-15";
 
-    public Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) =>
-        TranscribeAudioAsync(() => File.OpenRead(audioFile), Path.GetFileName(audioFile), "audio/flac", duration, phrases, maxSpeakers, ct);
+    public static string ModelLabel(string? provider) => provider == MaiName ? MaiModel : "Azure AI Speech";
 
-    /// <summary>Same API as generation, with one second of synthetic silence instead of user audio.</summary>
-    public Task<Transcript> ProbeAsync(CancellationToken ct)
+    public async Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct)
+    {
+        // learn region support from one second of silence, so a long recording is never uploaded twice
+        var mai = await ServesMaiAsync(ct);
+        Task<Transcript> Run(bool useMai) => TranscribeAudioAsync(() => File.OpenRead(audioFile), Path.GetFileName(audioFile), "audio/flac", duration, phrases, maxSpeakers, useMai, ct);
+        if (!mai) return await Run(false);
+        // a recording MAI rejects (e.g. its stricter length/size limits: < 2 h, < 250 MB) is still captioned by the standard model; Provider shows which answered
+        try { return await Run(true); }
+        catch (AsrException e) when (e.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.RequestEntityTooLarge) { return await Run(false); }
+    }
+
+    /// <summary>Whether this connection transcribes with MAI-Transcribe (preferred and the region serves it); probed once per endpoint and process.</summary>
+    public async Task<bool> ServesMaiAsync(CancellationToken ct) =>
+        _model != null && (MaiSupport.TryGetValue(_endpoint.GetLeftPart(UriPartial.Authority), out var known) ? known : await ProbeMaiAsync(ct));
+
+    /// <summary>The model this connection uses as far as known without a request: MAI unless a probe found the region unsupported.</summary>
+    public string ExpectedModel => _model != null && !(MaiSupport.TryGetValue(_endpoint.GetLeftPart(UriPartial.Authority), out var known) && !known) ? _model : "standard";
+
+    /// <summary>Same API as generation, with one second of synthetic silence instead of user audio. Provider tells which model answered.</summary>
+    public async Task<Transcript> ProbeAsync(CancellationToken ct) =>
+        _model != null && await ProbeMaiAsync(ct) ? Silence(MaiName) : await SilenceAsync(false, ct);
+
+    async Task<bool> ProbeMaiAsync(CancellationToken ct)
+    {
+        var origin = _endpoint.GetLeftPart(UriPartial.Authority);
+        try { await SilenceAsync(true, ct); }
+        catch (AsrException e) when (e.MaiUnavailable) { MaiSupport[origin] = false; return false; }
+        MaiSupport[origin] = true;
+        return true;
+    }
+
+    static Transcript Silence(string provider) => new() { Provider = provider, Duration = 1 };
+
+    Task<Transcript> SilenceAsync(bool mai, CancellationToken ct)
     {
         using var wav = new MemoryStream();
         using (var writer = new BinaryWriter(wav, Encoding.ASCII, leaveOpen: true))
@@ -71,17 +120,23 @@ public sealed class AzureFastTranscriber : ITranscriber
             writer.Write("data"u8); writer.Write(32000); writer.Write(new byte[32000]);
         }
         var bytes = wav.ToArray();
-        return TranscribeAudioAsync(() => new MemoryStream(bytes, writable: false), "connection-test.wav", "audio/wav", 1, [], 2, ct);
+        return TranscribeAudioAsync(() => new MemoryStream(bytes, writable: false), "connection-test.wav", "audio/wav", 1, [], 2, mai, ct);
     }
 
-    async Task<Transcript> TranscribeAudioAsync(Func<Stream> openAudio, string fileName, string contentType, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct)
+    async Task<Transcript> TranscribeAudioAsync(Func<Stream> openAudio, string fileName, string contentType, double duration, IReadOnlyList<string> phrases, int maxSpeakers, bool mai, CancellationToken ct)
     {
         var definition = new Dictionary<string, object>
         {
             ["locales"] = new[] { _locale },
-            ["diarization"] = new { enabled = true, maxSpeakers = Math.Clamp(maxSpeakers, 2, 35) },
             ["profanityFilterMode"] = "None",
         };
+        if (mai)
+        {
+            // verbatim keeps fillers and false starts (captions are what was said); MAI rejects maxSpeakers
+            definition["enhancedMode"] = new { enabled = true, model = _model, modelOptions = new { timestamps = "word", transcribeStyle = "verbatim" } };
+            definition["diarization"] = new { enabled = true };
+        }
+        else definition["diarization"] = new { enabled = true, maxSpeakers = Math.Clamp(maxSpeakers, 2, 35) };
         if (phrases.Count > 0) definition["phraseList"] = new { phrases };
         var defJson = JsonSerializer.Serialize(definition);
 
@@ -106,7 +161,7 @@ public sealed class AzureFastTranscriber : ITranscriber
             {
                 using var resp = await _http.SendAsync(req, ct);
                 body = await resp.Content.ReadAsStringAsync(ct);
-                if (resp.IsSuccessStatusCode) return Parse(body, duration, Name, _locale);
+                if (resp.IsSuccessStatusCode) return Parse(body, duration, mai ? MaiName : StandardName, _locale);
                 if (_apiKey != null) body = body.Replace(_apiKey, "***", StringComparison.Ordinal);
                 bool transient = resp.StatusCode is HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError;
                 if (!transient || delay == 16) throw new AsrException($"Speech API {(int)resp.StatusCode}: {Truncate(body)}", transient) { StatusCode = resp.StatusCode };
@@ -134,6 +189,16 @@ public sealed class AzureFastTranscriber : ITranscriber
                 {
                     double w0 = w.GetProperty("offsetMilliseconds").GetInt64() / 1000.0;
                     words.Add(new Word($"w{words.Count}", w0, w0 + w.GetProperty("durationMilliseconds").GetInt64() / 1000.0, w.GetProperty("text").GetString() ?? "", spk));
+                }
+            // MAI-Transcribe words are one character with a fixed ~80 ms length: hold each until the next onset (≤ MaiWordHoldSec, within the phrase)
+            // so masking, jump cuts and ducking see the voiced span (spike 24: 61% → 97% of voiced audio covered, pauses ≥0.3 s stay visible)
+            if (provider == AzureFastTranscriber.MaiName)
+                for (int i = first; i < words.Count; i++)
+                {
+                    var w = words[i];
+                    double next = i + 1 < words.Count ? words[i + 1].T0 : t1;
+                    double end = Math.Min(Math.Min(next, t1), w.T0 + AzureFastTranscriber.MaiWordHoldSec);
+                    if (end > w.T1) words[i] = w with { T1 = end };
                 }
             raw.Add((t0, t1, p.GetProperty("text").GetString() ?? "", spk, first, words.Count - 1));
         }

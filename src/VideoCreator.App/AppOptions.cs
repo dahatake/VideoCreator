@@ -11,7 +11,7 @@ public sealed class AppOptions
     public string? FontsDir { get; set; }
     public string? PresetsDir { get; set; }
     public bool OpenBrowser { get; set; } = true;
-    /// <summary>US-11 / NFR-SEC-04 (v1.1): no LLM calls. Speech-to-text (Azure AI Speech) is still used because captions are mandatory.</summary>
+    /// <summary>US-11 / NFR-SEC-04 (v1.1): no LLM calls. Speech-to-text (Azure Speech: MAI-Transcribe-2 or the standard model) is still used because captions are mandatory.</summary>
     public bool LocalOnly { get; set; }
     public string? FaceModel { get; set; }
     /// <summary>Real-ESRGAN animevideov3 ONNX used to upscale small opening/closing videos (default tools/models/realesr-animevideov3.onnx).</summary>
@@ -32,6 +32,8 @@ public sealed class AsrOptions
     public string Endpoint { get; set; } = "";
     public string Locale { get; set; } = "ja-JP";
     public string? TenantId { get; set; }
+    /// <summary>Speech model: MAI-Transcribe-2 (Microsoft Foundry, more accurate in spike 24) or "standard". Regions without MAI fall back to standard.</summary>
+    public string Model { get; set; } = VideoCreator.Asr.AzureFastTranscriber.MaiModel;
 }
 
 public sealed class LlmOptions

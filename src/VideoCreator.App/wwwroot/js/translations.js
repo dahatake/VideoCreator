@@ -413,7 +413,7 @@ export const translated = `
 411|Generating videos|正在生成|생성 중
 412|Elapsed|已用时|경과
 413|What happens during generation|生成过程中执行的操作|생성 중 수행하는 작업
-414|Azure AI Speech transcribes words with timestamps and identifies speakers.|Azure AI Speech 生成带单词时间戳的转写并区分说话人。|Azure AI Speech로 단어별 시각을 기록하고 화자를 구분합니다.
+414|MAI-Transcribe-2 (Azure Speech) transcribes words with timestamps and identifies speakers.|MAI-Transcribe-2（Azure Speech）生成带单词时间戳的转写并区分说话人。|MAI-Transcribe-2(Azure Speech)로 단어별 시각을 기록하고 화자를 구분합니다.
 415|FFmpeg measures shot changes, volume and silence.|FFmpeg 测量镜头变化、音量和静音。|FFmpeg로 장면 전환·음량·무음을 측정합니다.
 416|AI scores hook, standalone clarity, payoff and emotion, then ranks using audio energy.|AI 评估开头吸引力、独立可理解性、笑点和情感，结合音频活跃度排序。|AI가 도입·독립 이해도·마무리·감정을 평가하고 음성 에너지와 함께 순위를 매깁니다.
 417|Aligns cuts to sentences, trims gaps and adds captions and emphasis overlays.|按句子边界确定片段，缩短间隔并添加字幕和强调文字。|문장 경계에 맞춰 자르고 간격을 줄여 자막과 강조 글자를 추가합니다.

@@ -29,6 +29,7 @@ public static class PlanBuilder
     public static async Task<(EditPlan Plan, List<string> Notes)> BuildAsync(PlanRequest r, CancellationToken ct)
     {
         var p = r.Preset; var tr = r.Transcript; var sig = r.Signals; var notes = new List<string>(); var master = r.Master;
+        r = r with { Job = r.Job with { Options = p.Apply(r.Job.Options) } };
         var segs = r.OverrideSegments ?? r.Candidate.Segments;
         var canvas = Canvas.For(master.Media.Width, master.Media.Height, r.Job.Options.Orientation);
         var bursts = r.Bursts ?? [];

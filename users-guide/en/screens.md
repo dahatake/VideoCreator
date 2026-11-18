@@ -273,6 +273,7 @@ Open via Candidates **Proceed to export** or last video's **Approve/proceed** (`
 | Final video/location | Automatically shows final player per completed video; play/seek/safe guides/absolute path/copy/**Open folder** |
 | Posting copy | Saved read-only YouTube/Viva Engage/chapters, individual Copy. Missing: **Create posting text**; opening list alone does not generate |
 | Other artifacts/previews | Expand per-file paths/Open/Save. Image previews; SRT/ASS/Markdown/JSON text **Preview contents**, first 65,536 chars plus full link |
+| Viva Engage image (if configured) | Preview/save a 1000×200 px image separate from the thumbnail. The generation prompt and original post are saved as JSON too. Recreating the post also regenerates the image, which incurs extra charges |
 
 Previous final remains inspectable during re-export. Edit-invalidated results are not shown as current. Missing/play/copy/folder failures show per video; select text + Ctrl+C if copy fails. After moving/deleting files, **Reload artifacts**.
 

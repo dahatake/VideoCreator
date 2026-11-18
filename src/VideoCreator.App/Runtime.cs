@@ -148,8 +148,8 @@ public sealed class Runtime
         new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
     public AzureFastTranscriber SpeechTranscriber(SpeechConnection c, string language) => c.UsesKey
-        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language)
-        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language);
+        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language, _o.Asr.Model)
+        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language, _o.Asr.Model);
 
     public ITranscriber? Asr => AsrForLanguage(_o.Asr.Locale);
 
@@ -160,7 +160,7 @@ public sealed class Runtime
     sealed class UnreadableKeyTranscriber : ITranscriber
     {
         public const string Message = "保存した Speech の API キーをこの Windows ユーザーでは読めません。設定画面でキーを入力し直してください";
-        public string Name => "azure-fast-transcription";
+        public string Name => AzureFastTranscriber.StandardName;
         public Task<VideoCreator.Models.Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) =>
             throw new AsrException(Message, transient: false);
     }

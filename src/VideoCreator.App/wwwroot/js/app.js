@@ -129,12 +129,15 @@ function qaBadges(qa) {
 }
 
 // ---------------- settings / provider ----------------
+// MAI-Transcribe-2 runs through Azure Speech; "standard" (or unknown) is the Azure AI Speech standard model
+const asrLabel = (model) => model && model !== 'standard' ? model : 'Azure AI Speech';
+let speechPref = { model: 'standard', mai_regions: [] };
 async function refreshProvider() {
   try {
     const h = await api('/api/health');
     const names = { 'azure-openai': `Microsoft Foundry（${h.llm_model ?? ''}）`, copilot: trUi('m037'), none: trUi('m038') };
     const sel = h.llm_provider !== 'none' && !h.llm_model ? trUi('m039') : names[h.llm_provider] ?? h.llm_provider;
-    $('#provider').textContent = trUi('m042', [h.local_only ? trUi('m040') : '', h.asr === 'none' ? trUi('m041') : 'Azure AI Speech', sel]);
+    $('#provider').textContent = trUi('m042', [h.local_only ? trUi('m040') : '', h.asr === 'none' ? trUi('m041') : asrLabel(h.asr_model), sel]);
     return h;
   } catch { $('#provider').textContent = ''; }
 }
@@ -225,7 +228,7 @@ async function openSettings(flash = null) {
   ];
   const cur = choices.find(c => c[0] === s.llm_provider);
   $('#settings-body').innerHTML = `
-    <p id="llm-label">${trUi('m072', [s.asr_configured ? '（Azure AI Speech）' : ''])}</p>
+    <p id="llm-label">${trUi('m072', [s.asr_configured ? `（${asrLabel(s.asr_model)}）` : ''])}</p>
     ${transmissionNotice(s)}
     ${!s.local_only && cur?.[3] ? info(trUi('m070', [cur[1]]), 'warning') : ''}
     <fluent-radio-group id="llm" orientation="vertical" aria-labelledby="llm-label" value="${esc(s.llm_provider)}">
@@ -373,12 +376,18 @@ function aiDiagnosisText(d, deployment) {
 function aiResultBar(r, names, deployments = {}) {
   const failed = r.steps.find(st => !st.ok);
   const d = failed?.diagnosis ?? r.diagnosis;
-  const steps = r.steps.map(st => `<li><span class="${st.ok ? 'pass' : 'fail'}" aria-hidden="true">${st.ok ? '✓' : '✗'}</span> ${esc(names[st.id] ?? st.id)}: ${st.ok ? trUi('ai.stepOk') : trUi('ai.stepFailed')} <span class="caption">(${(st.ms / 1000).toFixed(1)} s)</span></li>`).join('');
+  const model = (st) => st.model ? ` · ${st.model === 'standard' ? trUi('ai.s.standardModel') : esc(st.model)}` : '';
+  const steps = r.steps.map(st => `<li><span class="${st.ok ? 'pass' : 'fail'}" aria-hidden="true">${st.ok ? '✓' : '✗'}</span> ${esc(names[st.id] ?? st.id)}${model(st)}: ${st.ok ? trUi('ai.stepOk') : trUi('ai.stepFailed')} <span class="caption">(${(st.ms / 1000).toFixed(1)} s)</span></li>`).join('');
   const partial = r.ok && failed;
   return `<fluent-message-bar intent="${partial ? 'warning' : r.ok ? 'success' : 'error'}" layout="multiline">
     <b>${partial ? trUi('ai.f.sharedSpeechUnavailable') : r.ok ? trUi('ai.testOk') : trUi('ai.testFailed')}</b>${steps ? `<ul class="notes">${steps}</ul>` : ''}
     ${d ? `<p>${esc(aiDiagnosisText(d, deployments[failed?.id]))}</p>${d.detail ? `<details><summary class="caption">${trUi('ai.detail')}</summary><p class="caption ai-detail">${esc(d.detail)}</p></details>` : ''}` : ''}
-  </fluent-message-bar>`;
+  </fluent-message-bar>${speechFallbackNote(r)}`;
+}
+// the speech step answered with the standard model although MAI-Transcribe-2 is preferred → the region does not serve MAI
+function speechFallbackNote(r) {
+  return speechPref.model !== 'standard' && r.steps?.some(st => st.id === 'speech' && st.ok && st.model === 'standard')
+    ? info(trUi('ai.s.maiFallback', [speechPref.mai_regions.join(', ')]), 'warning') : '';
 }
 // fluent-text-input names its shadow <input> only from its own default slot (a host aria-label or fluent-field label does not reach it)
 function aiInput(id, label, value, extra = '', help = '') {
@@ -402,6 +411,7 @@ function azPicker(p, disabled) {
 function aiConnectionsSection(s, flash, dr = {}) {
   const f = s.foundry ?? { source: 'none', auth: 'entra' }, c = s.copilot ?? { source: 'config', auth: 'user' };
   const speech = s.speech ?? { source: 'none', auth: 'entra' };
+  speechPref = { model: speech.model ?? 'standard', mai_regions: speech.mai_regions ?? [] };
   const separate = speech.separate ?? speech;
   // A restored draft replaces the shown values (not the saved connection); secrets still come only from what is saved.
   const sv = dr.speech ? { endpoint: dr.speech.endpoint ?? '', auth: dr.speech.auth, tenant_id: dr.speech.tenant_id ?? '' } : separate;
@@ -422,6 +432,7 @@ function aiConnectionsSection(s, flash, dr = {}) {
       <summary><h3>Azure Speech</h3><span class="caption group-sum">${esc(aiSource(speech))}</span></summary>
       <div class="stack setgroup-body">
         <p class="caption">${trUi('ai.s.intro')}</p>
+        <p class="caption" id="sModel">${speechPref.model === 'standard' ? trUi('ai.s.modelStandard') : trUi('ai.s.modelMai', [esc(speechPref.mai_regions.join(', '))])}</p>
         ${speech.endpoint ? `<p class="caption">${trUi('ai.s.destination', [esc(speech.endpoint)])}</p>` : ''}
         ${speech.foundry_available || speech.use_foundry ? `<div class="stack">
           ${speech.foundry_available ? `<p class="caption">${trUi('ai.s.sourceHelp')}</p>` : info(trUi('ai.s.sourceUnavailable'), 'warning')}
@@ -536,7 +547,7 @@ function wireAiConnections(s, flash, dr = {}) {
       if (save) await flushDraft('speech');
       const r = await api(save ? '/api/settings/ai/speech' : '/api/settings/ai/speech/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
       const result = r.test ?? r;
-      if (save && result.ok) { $('#sKey').value = ''; await aiAfterSave(info(trUi('ai.savedSpeech', [result.endpoint ?? '']), 'success')); return; }
+      if (save && result.ok) { $('#sKey').value = ''; await aiAfterSave(info(trUi('ai.savedSpeech', [result.endpoint ?? '']), 'success') + speechFallbackNote(result)); return; }
       $('#sResult').innerHTML = aiResultBar(result, { speech: trUi('ai.step.speech') })
         + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
     } catch (e) { $('#sResult').innerHTML = errorBar(e); }
@@ -594,7 +605,7 @@ function wireAiConnections(s, flash, dr = {}) {
       if (save && result.ok) {
         $('#fKey').value = '';
         await aiAfterSave(info(trUi('ai.savedFoundry', [result.endpoint ?? '']), 'success') + speechUnavailable
-          + (speechPassed ? info(trUi('ai.s.sourceHelp'), 'success') : '')
+          + (speechPassed ? info(trUi('ai.s.sourceHelp'), 'success') + speechFallbackNote(result) : '')
           + (result.steps.some(st => st.id === 'speech' && !st.ok) ? aiResultBar(result, fNames) : ''));
         return;
       }
@@ -659,6 +670,12 @@ function wireAiConnections(s, flash, dr = {}) {
     if (p === 'f' && a.can_chat === true && a.can_embed === false) notes.push(info(trUi('ai.az.noEmbedRole'), 'warning'));
     if (a.key_auth_disabled) { notes.push(info(trUi('ai.az.keyDisabled'))); useEntra(p); }
     if (!a.custom_domain) notes.push(info(trUi('ai.az.noDomain'), 'warning'));
+    // captions use MAI-Transcribe-2 only in its regions (the Foundry resource's speech is shared, so both pickers note it)
+    if (speechPref.model !== 'standard' && a.location) {
+      const loc = String(a.location).toLowerCase().replace(/\s+/g, '');
+      notes.push(speechPref.mai_regions.includes(loc) ? info(trUi('ai.az.maiRegion', [a.location]), 'success')
+        : info(trUi('ai.az.noMaiRegion', [a.location, speechPref.mai_regions.join(', ')]), p === 's' ? 'warning' : undefined));
+    }
     notes.push(`<p class="caption">${trUi('ai.az.picked')}</p>`);
     note.innerHTML = notes.join('');
     if (p === 'f') {
@@ -949,8 +966,10 @@ async function project(id, showSettings = false) {
   // the generate button stays enabled (a disabled button is unreadable and unfocusable); clicking it early explains what is missing
   const notReady = !assets.length ? trUi('m141') : !allRights ? trUi('m142') : '';
   const saved = d.project.generation_settings ?? {};
-  let selected = saved.preset_id ?? 'P4';
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+  // the Shorts template (preset.short) is not one of the patterns: it is made instead of, or together with, the chosen one
+  const mainPresets = presets.filter(p => !p.short), shortPreset = presets.find(p => p.short && p.available);
+  let selected = mainPresets.some(p => p.id === saved.preset_id) ? saved.preset_id : 'P4';
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', short: ['off', 'with', 'only'].includes(saved.short) ? saved.short : 'off', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [],
     make_engage_image: saved.make_engage_image ?? false, engage_image_deployment: saved.engage_image_deployment ?? '' };
   setSteps(assets.length && allRights ? 1 : 0);
@@ -1073,7 +1092,7 @@ async function project(id, showSettings = false) {
           <p class="caption" id="engage-image-help">${trUi('engageImage.help')}</p>
         </section>
         <div class="grid" id="presets" role="radiogroup" aria-label="${trUi('m289')}">
-          ${presets.map(p => `
+          ${mainPresets.map(p => `
             <div class="card selectable preset ${p.available ? '' : 'disabled'} ${p.id === selected ? 'selected' : ''}" style="padding:16px">
               <div class="preset-radio" role="radio" aria-checked="${p.id === selected}" aria-disabled="${!p.available}" tabindex="-1" data-id="${esc(p.id)}">
               <div class="card-head"><span><span class="pid">${esc(p.id)}</span> <b>${esc(p.name)}</b></span>
@@ -1084,6 +1103,16 @@ async function project(id, showSettings = false) {
               <div class="caption">${trUi('m179', [p.examples.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>`).join(' / ')])}</div>
             </div>`).join('')}
         </div>
+        <p class="caption" id="shortOnlyNote" ${opts.short === 'only' && shortPreset ? '' : 'hidden'}>${trUi('short.onlyNote')}</p>
+        ${shortPreset ? `<section class="card stack" aria-labelledby="short-title" style="padding:16px">
+          <h3 id="short-title">${trUi('short.title')}</h3>
+          <fluent-radio-group id="shortMode" orientation="vertical" aria-labelledby="short-title" aria-describedby="short-help" value="${esc(opts.short)}">
+            ${field(trUi('short.off'), '<fluent-radio slot="input" value="off"></fluent-radio>')}
+            ${field(trUi('short.with'), '<fluent-radio slot="input" value="with"></fluent-radio>')}
+            ${field(trUi('short.only'), '<fluent-radio slot="input" value="only"></fluent-radio>')}
+          </fluent-radio-group>
+          <p class="caption" id="short-help">${trUi('short.help', [shortPreset.target.duration_sec[0], shortPreset.target.duration_sec[1]])}</p>
+        </section>` : ''}
         </div>
       </section>
       <section class="card step-col" aria-labelledby="h-gen">
@@ -1472,10 +1501,16 @@ async function project(id, showSettings = false) {
     opts.orientation = v; saveOpts();
     layouts = await fetchLayouts();
     if (gone()) return;
-    $$('#presets .preset').forEach((card, i) => { const icon = card.querySelector('.lp-card-icon'), html = layoutIcon(presets[i]); if (icon && html) icon.outerHTML = html; });
+    $$('#presets .preset').forEach((card, i) => { const icon = card.querySelector('.lp-card-icon'), html = layoutIcon(mainPresets[i]); if (icon && html) icon.outerHTML = html; });
     showLayout();
   });
   $('#tsukkomiStyle').addEventListener('change', () => { const v = $$('#tsukkomiStyle fluent-radio').find(r => r.checked)?.value; if (v) { opts.tsukkomi_style = v; saveOpts(); } });
+  const showShort = () => {
+    const only = opts.short === 'only' && !!shortPreset, grid = $('#presets');
+    grid.classList.toggle('muted-box', only); grid.inert = only; $('#shortOnlyNote').hidden = !only;
+  };
+  showShort();
+  $('#shortMode')?.addEventListener('change', () => { const v = $$('#shortMode fluent-radio').find(r => r.checked)?.value; if (v && v !== opts.short) { opts.short = v; saveOpts(); showShort(); } });
   $('#maskWords').addEventListener('input', () => {
     opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean);
     clearTimeout(maskSaveTimer); maskSaveTimer = setTimeout(saveOpts, 250);
@@ -1743,12 +1778,13 @@ async function project(id, showSettings = false) {
       (!assets.length ? $('#pick') : $$('.rights').find(c => !c.checked))?.focus();
       return;
     }
-    const { series, series_by, parts, part_minutes, ...rest } = opts;
+    const { series, series_by, parts, part_minutes, short, ...rest } = opts;
     const options = { ...rest, parts: series && series_by === 'parts' ? Number(parts) : null, part_minutes: series && series_by !== 'parts' ? Number(part_minutes) : null, reuse_analysis: reuseAnalysis };
+    const presetIds = !shortPreset || short === 'off' ? [selected] : short === 'only' ? [shortPreset.id] : [selected, shortPreset.id];
     try {
       clearTimeout(maskSaveTimer);
       if (!await saveOpts()) return;
-      const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: [selected], options, derived_from_job_id: derivedFrom?.project === id ? derivedFrom.job : null } }); derivedFrom = null; location.hash = `#/job/${r.job_id}`;
+      const r = await api(`/api/projects/${id}/jobs`, { method: 'POST', body: { preset_ids: presetIds, options, derived_from_job_id: derivedFrom?.project === id ? derivedFrom.job : null } }); derivedFrom = null; location.hash = `#/job/${r.job_id}`;
     }
     catch (e) { $('#genMsg').innerHTML = errorBar(e); }
   });
@@ -1802,10 +1838,17 @@ async function loadPatterns(projectId, presets) {
     </div>`;
   }).join('') : `<p class="caption">${trUi('m397')}</p>`;
   $$('#patternList .reuse').forEach(b => b.addEventListener('click', async () => {
-    const x = items.find(y => y.job.id === b.dataset.job), o = x.job.options ?? {};
+    const x = items.find(y => y.job.id === b.dataset.job);
+    const isShort = (job) => presets.find(p => p.id === job?.preset_ids[0])?.short === true;
+    // a short runs with normalized options (portrait, no series/inserts): take the settings from the pattern made with it, else keep the saved ones
+    const companion = items.find(y => y.job.id === x.job.companion_job_id)?.job;
+    const base = isShort(x.job) ? companion : x.job;
+    const short = isShort(x.job) ? (companion ? 'with' : 'only') : companion && isShort(companion) ? 'with' : 'off';
     try {
+      const kept = base ? null : (await api(`/api/projects/${projectId}`)).project.generation_settings ?? {};
+      const o = base ? base.options ?? {} : { ...kept, ...(x.job.options ?? {}), orientation: kept.orientation, opening: kept.opening, closing: kept.closing, scene_cards: kept.scene_cards, tsukkomi_style: kept.tsukkomi_style, parts: kept.series && kept.series_by === 'parts' ? kept.parts : null, part_minutes: kept.series && kept.series_by !== 'parts' ? kept.part_minutes : null };
       await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
-        preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
+        preset_id: base ? base.preset_ids[0] : kept.preset_id ?? 'P4', short, scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
         series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
         opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [],
         make_engage_image: o.make_engage_image ?? false, engage_image_deployment: o.engage_image_deployment ?? '' } });
@@ -1835,6 +1878,8 @@ async function loadPatterns(projectId, presets) {
 }
 
 // ---------------- job: progress (SSE) + candidates ----------------
+// a short made together with another pattern (and that pattern) link to each other
+const companionLink = (j) => j.companion_job_id ? `<fluent-anchor-button href="#/job/${esc(j.companion_job_id)}" appearance="subtle">${trUi('short.companion')}</fluent-anchor-button>` : '';
 async function job(jobId) {
   const gone = routeGuard();
   const j = await api(`/api/jobs/${jobId}`);
@@ -1853,7 +1898,7 @@ async function job(jobId) {
           <div id="stepBox" class="progress-row" hidden><span id="stepLabel" class="caption"></span><fluent-progress-bar id="stepBar" max="100" aria-label="${trUi('m406')}"></fluent-progress-bar><span id="stepPct" class="caption pct"></span></div>`}
           <p class="caption" style="margin-top:8px">${trUi('m412')} <span id="elapsed">0:00</span><span id="eta"></span>${j.cost ? trUi('m407', [j.cost.estimated_jpy.toFixed(1)]) : ''} · ${j.options?.reuse_analysis === false ? trUi('m408') : trUi('m409')}</p>
           <div id="stages">${stageLabels().map(([k, label]) => `<div class="stage" data-stage="${k}"><span class="dot"></span><span>${label}</span><span class="caption"></span></div>`).join('')}</div>
-          <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings">${trUi('m410')}</fluent-anchor-button>` : `<fluent-button id="cancel">${trUi('m278')}</fluent-button>`}</div>
+          <div class="row" style="margin-top:12px">${failed ? `<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings">${trUi('m410')}</fluent-anchor-button>` : `<fluent-button id="cancel">${trUi('m278')}</fluent-button>`}${companionLink(j)}</div>
         </section>
         <section class="card"><h2>${trUi('m413')}</h2>
           <ul class="caption" style="line-height:20px">
@@ -1932,7 +1977,7 @@ async function candidates(j) {
   const bar = (label, v) => `<span>${label}</span><span class="bar"><span style="width:${v * 10}%"></span></span><span>${Number(v).toFixed(v % 1 ? 1 : 0)}</span>`;
   main.innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>${trUi('m443', [list.length])}</h1>
-      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">${trUi('m444')}</fluent-anchor-button></div></div>
+      <div class="row">${safeToggle()}${companionLink(j)}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">${trUi('m444')}</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(serverText(w), 'warning')).join('')}
     <p class="caption">${trUi('m445', [esc(j.llm_model ?? ''), esc(j.prompt_version ?? ''), (j.cost?.estimated_jpy ?? 0).toFixed(2), Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)])}</p>
     ${workProgress(j, list)}
@@ -1972,7 +2017,7 @@ function seriesView(j, list) {
   const total = list.reduce((a, x) => a + (x.preview?.duration ?? 0), 0);
   main.innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>${trUi('m459', [list.length, first.series_title ? `: ${esc(first.series_title)}` : ''])}</h1>
-      <div class="row">${safeToggle()}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">${trUi('m444')}</fluent-anchor-button></div></div>
+      <div class="row">${safeToggle()}${companionLink(j)}<fluent-anchor-button href="#/p/${esc(j.project_id)}/settings" appearance="subtle">${trUi('m444')}</fluent-anchor-button></div></div>
     ${(j.warnings ?? []).map(w => info(serverText(w), 'warning')).join('')}
     <p class="caption">${trUi('m460', [first.requested_parts ? trUi('m450', [first.requested_parts, (first.target_sec / 60).toFixed(1)]) : trUi('m451', [(first.target_sec / 60).toFixed(1)]), fmt(total), esc(j.llm_model && j.llm_model !== 'none' ? j.llm_model : trUi('m452')), (j.cost?.estimated_jpy ?? 0).toFixed(2), Object.values(j.stage_seconds ?? {}).reduce((a, b) => a + b, 0).toFixed(0)])}</p>
         ${workProgress(j, list)}

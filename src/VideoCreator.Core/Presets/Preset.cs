@@ -121,6 +121,21 @@ public sealed record Preset
     public string Reframe { get; init; } = "auto";
     public PresetSwitching? Switching { get; init; }
     public PresetScreen? Screen { get; init; }
+    /// <summary>
+    /// A Shorts template (YouTube Shorts / TikTok / Instagram Reels). It can be chosen together with one other template (a second, linked job)
+    /// and always renders 1080×1920 whatever the output-orientation setting, see <see cref="Apply"/>.
+    /// </summary>
+    public bool Short { get; init; }
+
+    /// <summary>
+    /// The options a job of this preset actually runs with. A short is always portrait, never a series, and starts on its hook:
+    /// no opening / closing video and no 2–3 s pause cards (scene cards, tsukkomi cards become overlays).
+    /// </summary>
+    public JobOptions Apply(JobOptions o) => !Short ? o : o with
+    {
+        Orientation = "portrait", Parts = null, PartMinutes = null, Opening = false, Closing = false, SceneCards = false,
+        TsukkomiStyle = o.Tsukkomi ? "telop" : o.TsukkomiStyle,
+    };
 
     public bool HasTelop(string type) => Telop.Types.Contains(type);
     public PresetRef Ref => new(Id, Version);
@@ -149,6 +164,7 @@ public static class PresetStore
         Req(System.Text.RegularExpressions.Regex.IsMatch(p.Id, "^P[0-9]+$"), "id must match ^P[0-9]+$");
         Req(System.Text.RegularExpressions.Regex.IsMatch(p.Version, @"^\d+\.\d+\.\d+$"), "version must be semver");
         Req(p.Target.Aspect is "9:16" or "1:1" or "16:9", "aspect");
+        Req(!p.Short || p.Target.Aspect == "9:16" && p.Target.Max <= 60, "a short must be 9:16 and at most 60 s (Shorts, TikTok and Reels alike)");
         Req(p.Target.DurationSec.Length == 2 && p.Target.Min >= 5 && p.Target.Max <= 180 && p.Target.Min < p.Target.Max, "duration_sec must be [min,max] within 5..180 (C-1)");
         Req(p.Hook.MaxSec is >= 0.5 and <= 5, "hook.max_sec 0.5..5");
         Req(p.Cut.RemoveSilenceOverSec is null || p.Cut.RemoveSilenceOverSec >= 0.2, "remove_silence_over_sec >= 0.2");

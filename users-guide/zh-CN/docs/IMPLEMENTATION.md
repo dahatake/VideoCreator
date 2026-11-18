@@ -15,6 +15,16 @@
 
 ## 1. 实施方法
 
+### 用于 Viva Engage 的 AI 图像
+
+在“[设置]”界面的 Microsoft Foundry 中，选择或输入图像模型（GPT Image / FLUX-1.1-pro 等 OpenAI 兼容 Images API）的部署名称，也可以从 Azure Resource Manager 找到的部署中选择。Foundry 连接同时支持 Entra ID 和 API 密钥。在“2 模式”中只需用开关选择生成／不生成。默认为“不生成”，设置保存在项目中。图像是导出产物，因此不是按生成编辑计划的任务的值，而是按**导出时的项目设置**（`PipelineRunner.EngageImageSettings`）判定（生成后再启用也无需重新生成）。即使聊天连接的是 Copilot，图像也使用 Foundry 连接。不使用 LLM 的模式下无法生成。
+
+直接使用“6 导出”中的 Viva Engage 帖子，并追加“主持人和员工正兴奋地谈论这个话题”的动漫风格、居中构图的指示（这就是指定提示词）。由于 FLUX 等模型只理解英语，会先用已配置的 LLM 把指定提示词改写为英语场景描述（不含品牌名和文字）再发送（没有 LLM 或失败时按指定提示词原样发送）。尺寸先请求 5:1 的 1440×288，若只支持固定尺寸的模型（GPT Image）以 400/422 拒绝，则改为请求 1536×1024。无论哪种，都通过保持纵横比的缩放和居中裁剪生成 **1000×200 px 的 PNG**，并把指定提示词和实际发送的提示词记录到 `.engage-image.json`。不更改视频剪辑的缩略图。
+
+产物为 `<视频名>.engage.png`（`engage_image`），以及记录帖子、发送的提示词、部署名称和尺寸的 `<视频名>.engage-image.json`（`engage_image_prompt`）。可在导出界面的文件列表中预览和保存。重新生成帖子时图像也会重新生成，并产生额外费用（不包含在现有的语音识别、聊天估算中）。只把帖子文本发送到设置的目标，不会把视频或真实人物照片发送给图像模型。连接不完整、模型错误和图像转换失败都会明确显示，不会用替代缩略图当作成功。
+
+验证：`EngageImageTests` 在 HTTP 边界确认请求尺寸（优先 5:1，回退到固定尺寸）、英语化后的发送提示词和指定提示词（帖子＋追加文字），并用真实 FFmpeg 转换合成图像，再用 ffprobe 测得 1000×200。`ProjectGenerationSettingsTests` 确认设置的持久化以及禁用时不生成。真实云端的图像质量和人物构图取决于模型输出，请在生成后的预览中确认。
+
 对于 PRD 的每项功能，先在 `spikes/` 制作小型验证程序，以机器测量确认符合 PRD 阈值，再整合进应用。实现后执行了 67 项单元与集成测试，并使用真实 Microsoft Edge 浏览器和真实 Azure 服务进行端到端验证。`ui/e2e.mjs` 包含九项检查；v1.1 的 `ui/e2e-v11.mjs` 包含二十九项。
 
 | spike | 验证内容 | 结果 | 发现及设计反映 |
@@ -26,6 +36,7 @@
 | [05-llm-select](../../../spikes/05-llm-select.cs) | Microsoft Foundry Structured Outputs。 | 四个候选全部项目通过。 | strict 模式不支持 `maxLength`、`minimum`、`maxItems`（Microsoft Learn），因此约束由代码强制执行。 |
 | [06-copilot-sdk](../../../spikes/06-copilot-sdk.cs) | GitHub Copilot SDK 与操作系统已安装 CLI。 | 通过。 | 智能体会分两次发送“中间 JSON”和“修正版”，也可能违反时长、区间数限制；因此提取最新完整 JSON，并使用同一验证器。 |
 | [07-make-long](../../../spikes/07-make-long.cs) | 由 LLM 台本和 TTS 生成 64 分钟日语测试视频。 | 1,252 行、64 分钟。 | 用于性能与长视频分块验证。 |
+| [24-mai-transcribe](../../../spikes/24-mai-transcribe.cs) | 转录 A/B：标准模型与 MAI-Transcribe-2（同一 API 的 `enhancedMode`）。TTS 双说话人的标准答案台本，干净音频与噪声音频（SNR 5 dB） | CER 13.5%→**12.1%**，词时刻误差 p90 0.99 秒→**0.32 秒**，噪声下说话人纯度 85%→**96~100%**，处理 3.9 秒→1.6 秒 | MAI 在所有指标上胜出 → **字幕默认改为 MAI-Transcribe-2**。MAI 以 400 拒绝 `maxSpeakers`，词为单字、长度固定约 80ms → 将词结束时间延长到下一词开始（最多 0.3 秒）（有声区间覆盖率 61%→97%） |
 
 为避免权利问题，本节全部测试素材均由 FFmpeg 测试图与 Azure TTS 音频合成。只有 §2.2 的 AT-10 再验证使用用户指定、明确允许外发的真实视频。§2.3 使用固定转写与 FFmpeg 合成媒体，没有发送给真实 Azure。
 
@@ -258,7 +269,7 @@ v1.1实现了v1.0未实现项目。v1.1补充中，上次列为未验证／未�
 
 | 范围 | 状态 |
 |---|---|
-| 全离线转写 | 没有，字幕必需，所以始终Azure AI Speech，声音发Azure |
+| 全离线转写 | 没有，字幕必需，所以始终使用Azure语音识别（默认MAI-Transcribe-2，不支持的区域用标准模型），声音发Azure |
 | 真实笑声精度 | 只合成声验证，无真实笑掌声精度评价，缺评估数据 |
 | 自动相机分配 | 仅各机独立麦，按脸位置分配未实现 |
 | 拟声吐槽趣味 | 拟声规则、吐槽AI且需批，趣味用户目视判 |
@@ -824,6 +835,7 @@ P1/P8无声−6LU，P5主乐0差10，P6−14差18，其他−8/14。旧无场景
 - **GitHub Copilot**（[CopilotCatalog](../../../src/VideoCreator.Core/Selection/AiConnection.cs)）：以已登录 Copilot CLI 的 GitHub 用户（推荐）或 fine-grained personal access token 认证。从 SDK 获取该账户可用的模型、推理深度（Reasoning Effort）、标准与长上下文（如 200K / 1M）和价格（每百万令牌的点数）并显示。选项随模型变化，模型不接受的推理深度和 Context Size 在服务端同样拒绝。测试时用所选设置实际获取一次回复。
 - **保存**（[AiSettingsStore.cs](../../../src/VideoCreator.App/AiSettingsStore.cs)）：`{DataDir}/ai-settings.json`。优先于 appsettings.json，“删除已保存的连接”后恢复为 appsettings.json 的设置。在 Windows 上，API 密钥和令牌用 DPAPI（CurrentUser、应用专用熵）加密。其他 Windows 用户或其他电脑无法解密，此时要求重新输入。无法使用操作系统加密的环境中，以 `secret_storage_unavailable` 拒绝保存密钥和令牌（PRD NFR-SEC-02）。无密钥认证可以保存。
 - **Azure Speech**（[AzureFastTranscriber.cs](../../../src/VideoCreator.Core/Asr/AzureFastTranscriber.cs)）：终结点、身份验证和租户独立于 Foundry。新输入仅允许 HTTPS 资源根地址。Entra 使用 `https://cognitiveservices.azure.com/.default`，密钥使用 `Ocp-Apim-Subscription-Key`，不同时发送，也不自动回退。POST `/api/settings/ai/speech/test` 通过生成使用的快速转录 API 发送一秒合成静音。PUT `/api/settings/ai/speech` 重新测试后保存，DELETE 恢复启动配置。禁用 LLM 时仍可用。空密钥仅可复用同一 HTTPS 主机和端口。共享用户应使用资源组 Speech User / OpenAI User 角色，参见 [Azure 访问](../azure-access.md)。
+- **字幕模型（MAI-Transcribe-2）**：由于 spike 24 的 A/B（上表）中 MAI-Transcribe-2 优于标准模型，默认设为 `VideoCreator:Asr:Model = "MAI-Transcribe-2"`（设为 `standard` 则固定为原来的标准模型）。在同一快速转录 API 的定义中附加 `enhancedMode{model, modelOptions{timestamps:"word", transcribeStyle:"verbatim"}}`。逐字（verbatim）符合字幕方针（保留口误和停顿词）。MAI 不接受 `diarization.maxSpeakers`，因此不发送。MAI 的词为单字、长度固定约 80ms，因此 `Parse` 将词结束时间延长到“下一词开始、句子结束、开始+0.3 秒”中的最小值（不缩短）。与静音检测对照，有声区间覆盖率 61%→97%，0.3 秒以上的间隔基本保留。支持的区域为 Central India / East US / North Europe / Southeast Asia / West Europe / West US / West US 2（Japan East 返回 400 "Enhanced mode with model is currently not supported yet."）。首次转录前用一秒合成静音试用 MAI，若返回此 400，则按终结点记住并使用标准模型转录。录音本身被 400/413（2 小时、250MB 上限）拒绝时，也用标准模型重新发送。转录的 `Provider` 为实际使用的模型（`azure-mai-transcribe-2` / `azure-fast-transcription`）。切换到标准模型时会给任务发出警告；改为支持 MAI 的终结点后，用标准模型生成的缓存只重建一次。连接测试各步骤、设置界面的 Speech 栏、“从 Azure 选择”的区域显示，以及 `/api/health` 和 `/api/settings` 的 `asr_model` 都会显示所用模型。`run.cmd --check` 也会诊断 MAI 是否可用。未使用 Azure AI Vision，MAI 也没有图像分析模型，因此没有替换对象。
 - Speech 身份验证回归验证：身份验证、V12、多语言和 PRD 共 78 项通过。涵盖身份验证头互斥、失败时保留配置、禁止跨主机或端口复用密钥、项目语言、机密不泄露及旧启动配置兼容性。实际 Azure Speech、聊天、嵌入使用已有 Entra 权限账户成功。没有更改密钥策略或 IAM，未验证新共享用户的最小权限。
 - **机密处理**：`GET /api/settings` 不含凭据，只返回 `has_api_key`、`has_token`。密钥栏留空进行测试或保存时使用已保存的密钥，但仅用于保存时的同一主机（不发送到其他主机）。从错误详情中去除令牌。切换到 Entra ID 时删除已保存的密钥。不使用 LLM 模式下不发送 LLM 连接测试（`local_only`），但 Speech 不受限制。
 - API：`POST /api/settings/ai/foundry/test`、`PUT`/`DELETE /api/settings/ai/foundry`、`POST /api/settings/ai/copilot/models`、`POST /api/settings/ai/copilot/test`、`PUT`/`DELETE /api/settings/ai/copilot`（[AiConnectionApi.cs](../../../src/VideoCreator.App/AiConnectionApi.cs)）。测试或保存失败时返回 HTTP 422 及各步骤结果。
@@ -842,3 +854,32 @@ P1/P8无声−6LU，P5主乐0差10，P6−14差18，其他−8/14。旧无场景
 - 不包括创建 Foundry 资源或部署（从列表选择或输入名称）。列表中的权限提示仅供参考。
 - 暂不支持 macOS / Linux 的操作系统凭据存储（如钥匙串），因此这些系统上不保存密钥和令牌。
 - 显示的 Copilot 价格是 SDK 返回的值，不保证实际计费。
+
+## 22. 与其他模式同时制作短视频（P12，竖屏 9:16）
+
+从源视频剪出适用于 YouTube Shorts、TikTok、Instagram Reels 的竖屏短视频。PRD FR-SHORT-01，§8.1。
+
+### 机制
+- **预设**（[P12.json](../../../presets/P12.json)、[Preset.cs](../../../src/VideoCreator.Core/Presets/Preset.cs)）：`"short": true` 的模式。15～60 秒，钩子在开头 2 秒内，teaser 冷开场，静音去除 0.5 秒，全文字幕，无 BGM，启用循环。`PresetStore.Validate` 在加载时检查短视频是否为 9:16 且上限不超过 60 秒。上限设为 60 秒，是因为超过 1 分钟的短视频一旦收到 Content ID 版权主张，就会在全球范围内被屏蔽（[YouTube 帮助 15424877](https://support.google.com/youtube/answer/15424877)）。TikTok 和 Reels 也可以使用同样的时长。
+- **选项规范化**（`Preset.Apply`）：对于短视频，不论用户如何选择，都将方向设为 `portrait`（1080×1920），去掉前后篇分割（`Parts`/`PartMinutes`）、片头、片尾和场景转换卡，并把吐槽改为字幕，以免插入内容推迟开头 2 秒的钩子。其他模式原样返回同一实例。在 API（任务登记、布局列表）、`PipelineRunner.GenerateCoreAsync`、`PlanBuilder.BuildAsync` 三处应用，因此重新编辑和重新规划的路径中也不会加入插入内容。
+- **同时选择**（[Api.cs](../../../src/VideoCreator.App/Api.cs) `StartGeneration`）：`preset_ids` 中的短视频分到另一组（短视频只能有 1 个）。每组用 `Apply` 之后的选项验证品牌套件、时长下限和前后篇，**全部通过后**才放入队列，不会只登记其中一个。有 2 个任务时，用 `Job.CompanionJobId` 互相关联，后一个任务设为 `ReuseAnalysis=true`，预估的转写费用为 0。队列逐个按顺序处理，因此后一个任务使用前一个任务生成的转写和分析缓存。前一个任务失败时，后一个任务自行分析。响应为 `{ job_id, cost, companion_job_id, job_ids }`。
+- **生成设置**：`ProjectGenerationSettings.Short`（`off` / `with` / `only`）。主模式（`preset_id`）不能指定为短视频。
+- **UI**（[app.js](../../../src/VideoCreator.App/wwwroot/js/app.js)）：在模式列表下方有“短视频”单选项（不制作／一起制作／只制作短视频）。选择“只制作短视频”时，主模式列表被禁用（`inert`）并显示说明。任务界面、候选界面和系列界面显示指向关联任务的链接。“用此设置重新制作”也会恢复与短视频的组合。
+
+### 验证
+- 自动测试 [ShortPresetTests.cs](../../../tests/VideoCreator.Tests/ShortPresetTests.cs)：
+  - 验证会拒绝 16:9、90 秒的短视频。
+  - `Apply` 的规范化，以及不改变其他模式。
+  - 即使横屏源视频选择了“横屏 16:9”，计划仍为 1080×1920 且没有插入内容。
+  - P6+P12 会登记 2 个关联任务，短的那个为竖屏、复用分析、转写 0 分钟。
+  - 只制作短视频时，即使没有品牌套件也能登记。
+  - 品牌套件不足或时长不足时，两个任务都不登记。
+  - 生成设置的验证。
+- 实际导出的验证结果如下。
+- 实际导出（2026-11-19，`spikes/media/talk.mp4`：1920×1080、125 秒，使用 Azure 转写和 LLM，独立的数据文件夹）：
+  - 同时选择 P6+P12，登记了 2 个关联任务。在 P12 的日志中确认复用了转写和分析。两者都以 3 个候选完成。
+  - 预览（ffprobe）：P6 为 960×540、33～35 秒，P12 为 540×960、17～28 秒。
+  - 最终导出（ffprobe）：P6 为 1920×1080、32.9 秒，P12 为 1080×1920（H.264/AAC）、20.3 秒，不超过 60 秒。P12 的综合响度为 -14.0 LUFS。用提取的帧目视确认了竖屏画面和字幕。
+- 此次验证中发现并修复的问题：
+  - 在新的数据文件夹中导出 P12 时失败。音效库（`sfx_pop.wav` 等）只在场景转换卡、吐槽或 BGM 打开时才准备，因此短视频没有准备。渲染器会静默跳过找不到的音效，但导出的可复现记录（`RenderProvenance`）在计算该文件哈希时失败。已修改 `PipelineRunner`：音效打开时在生成时准备音效库，计划中有音效时在导出时也准备。
+  - QA 时长检查（`QaEngine` 的 DurationRange）上限为 180 秒。对于短视频，以 `Target.Max`（60 秒）为上限，确认包括片头等在内的整个文件都在 60 秒以内。

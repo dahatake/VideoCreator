@@ -299,10 +299,14 @@ public sealed class AiConnectionTests : IDisposable
         var file = Path.Combine(_root, "probe.wav");
         await File.WriteAllBytesAsync(file, [0], ct); // The fake transport only checks routing and authentication.
         await rt.Asr!.TranscribeAsync(file, 1, [], 1, ct);
-        var request = Assert.Single(handler.Requests);
-        Assert.Equal(endpoint + $"speechtotext/transcriptions:transcribe?api-version={AzureFastTranscriber.ApiVersion}", request.Uri.AbsoluteUri);
-        Assert.Equal(auth == "key" ? "shared-key" : null, request.Key);
-        Assert.Equal(auth == "entra" ? "Bearer speech-test-token" : null, request.Authorization);
+        // the MAI-Transcribe region check (one second of silence) may precede the upload; every request must take the same route and authentication
+        Assert.Single(handler.Requests, r => r.Body.Contains("probe.wav"));
+        Assert.All(handler.Requests, request =>
+        {
+            Assert.Equal(endpoint + $"speechtotext/transcriptions:transcribe?api-version={AzureFastTranscriber.ApiVersion}", request.Uri.AbsoluteUri);
+            Assert.Equal(auth == "key" ? "shared-key" : null, request.Key);
+            Assert.Equal(auth == "entra" ? "Bearer speech-test-token" : null, request.Authorization);
+        });
         using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", ct));
         Assert.Equal("foundry", settings.RootElement.GetProperty("speech").GetProperty("source").GetString());
         Assert.Equal(endpoint.TrimEnd('/'), settings.RootElement.GetProperty("transmission").GetProperty("asr_endpoint").GetString());
@@ -354,6 +358,75 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Equal("test-dedicated-key", rt.Speech!.ApiKey);
         rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
         Assert.Equal(separate, rt.Speech!.Endpoint);
+    }
+
+    sealed class MaiRegionHandler(bool regionServesMai) : HttpMessageHandler
+    {
+        public readonly List<string> Bodies = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = await request.Content!.ReadAsStringAsync(ct);
+            Bodies.Add(body);
+            // exact reply of a japaneast resource (2026-11); MAI regions answer the same request with 200
+            return !regionServesMai && body.Contains("enhancedMode")
+                ? new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("""{"code":"InvalidRequest","message":"Enhanced mode with model is currently not supported yet."}""") }
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"durationMilliseconds":1000,"phrases":[]}""") };
+        }
+    }
+
+    [Fact]
+    public async Task Mai_transcription_sends_verbatim_enhanced_mode_without_maxSpeakers_and_reports_the_model()
+    {
+        using var handler = new MaiRegionHandler(regionServesMai: true);
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://mai-ok.cognitiveservices.azure.com/"), "k", http, "ja-JP", AzureFastTranscriber.MaiModel);
+        Assert.Equal(AzureFastTranscriber.MaiName, asr.Name);
+        Assert.Equal(AzureFastTranscriber.MaiName, (await asr.ProbeAsync(TestContext.Current.CancellationToken)).Provider);
+        var body = Assert.Single(handler.Bodies);
+        Assert.Contains("\"enhancedMode\":{\"enabled\":true,\"model\":\"MAI-Transcribe-2\",\"modelOptions\":{\"timestamps\":\"word\",\"transcribeStyle\":\"verbatim\"}}", body);
+        Assert.DoesNotContain("maxSpeakers", body);   // MAI rejects it with 400
+        Assert.Contains("\"diarization\":{\"enabled\":true}", body);
+    }
+
+    [Fact]
+    public async Task Regions_without_MAI_fall_back_to_the_standard_model_after_one_silent_probe()
+    {
+        using var handler = new MaiRegionHandler(regionServesMai: false);
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://mai-unsupported.cognitiveservices.azure.com/"), "k", http, "ja-JP", AzureFastTranscriber.MaiModel);
+        var audio = Path.Combine(Path.GetTempPath(), $"vc-mai-{Guid.NewGuid():N}.flac");
+        await File.WriteAllBytesAsync(audio, new byte[64], TestContext.Current.CancellationToken);
+        try
+        {
+            var tr = await asr.TranscribeAsync(audio, 10, [], 4, TestContext.Current.CancellationToken);
+            Assert.Equal(AzureFastTranscriber.StandardName, tr.Provider);
+            Assert.Equal(2, handler.Bodies.Count);
+            Assert.Contains("connection-test.wav", handler.Bodies[0]);   // the recording itself is uploaded once, to the standard model
+            Assert.DoesNotContain("enhancedMode", handler.Bodies[1]);
+            Assert.Contains("\"maxSpeakers\":4", handler.Bodies[1]);
+            await asr.TranscribeAsync(audio, 10, [], 4, TestContext.Current.CancellationToken);
+            Assert.Equal(3, handler.Bodies.Count);   // the region answer is remembered
+            Assert.Equal("standard", asr.ExpectedModel);
+            Assert.Equal(AzureFastTranscriber.StandardName, (await asr.ProbeAsync(TestContext.Current.CancellationToken)).Provider);
+        }
+        finally { File.Delete(audio); }
+    }
+
+    [Fact]
+    public void Mai_word_onsets_are_held_until_the_next_word_at_most_300_ms_within_the_phrase()
+    {
+        // MAI returns one character per word with a fixed 80 ms placeholder length
+        const string json = """
+            {"durationMilliseconds":5000,"phrases":[{"offsetMilliseconds":1000,"durationMilliseconds":1500,"text":"あい。","speaker":1,"words":[
+              {"text":"あ","offsetMilliseconds":1000,"durationMilliseconds":80},
+              {"text":"い","offsetMilliseconds":1150,"durationMilliseconds":80},
+              {"text":"。","offsetMilliseconds":2400,"durationMilliseconds":80}]}]}
+            """;
+        var mai = AzureFastTranscriber.Parse(json, 5, AzureFastTranscriber.MaiName).Words;
+        Assert.Equal(1.15, mai[0].T1, 3);   // next onset
+        Assert.Equal(1.45, mai[1].T1, 3);   // 300 ms cap keeps the pause before the next word visible
+        Assert.Equal(2.5, mai[2].T1, 3);    // phrase end
+        Assert.Equal(1.08, AzureFastTranscriber.Parse(json, 5, AzureFastTranscriber.StandardName).Words[0].T1, 3);   // standard word times are real
     }
 
     [Theory]

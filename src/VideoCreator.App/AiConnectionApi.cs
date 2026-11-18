@@ -18,7 +18,8 @@ public static class AiConnectionApi
     public sealed record SpeechSourceRequest(bool? UseFoundry);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
     public sealed record CopilotRequest(string? Auth, [property: System.Text.Json.Serialization.JsonPropertyName("github_token")] string? GitHubToken, string? Model = null, string? ReasoningEffort = null, string? ContextTier = null);
-    public sealed record Step(string Id, bool Ok, long Ms, AiDiagnosis? Diagnosis = null);
+    /// <summary>Model: for the speech step, which transcription model answered ("MAI-Transcribe-2" or "standard").</summary>
+    public sealed record Step(string Id, bool Ok, long Ms, AiDiagnosis? Diagnosis = null, string? Model = null);
     public sealed record TestResult(bool Ok, IReadOnlyList<Step> Steps, AiDiagnosis? Diagnosis, string? Endpoint = null, string? Login = null);
     /// <summary>Lists resources in the given (or default) tenant; <c>account_id</c> selects whose deployments to list.</summary>
     public sealed record AzureCatalogRequest(string? TenantId, string? AccountId = null);
@@ -54,6 +55,9 @@ public static class AiConnectionApi
             ApiKeyUnreadable = source == "app" && saved.Speech?.ApiKeyProtected != null && active?.ApiKey == null,
             FoundryAvailable = rt.VerifiedFoundrySpeech(saved) != null,
             UseFoundry = saved.UseFoundrySpeech ?? (source == "foundry"),
+            // preferred model; regions without MAI-Transcribe fall back to "standard" (the connection test reports the model that answered)
+            Model = string.IsNullOrWhiteSpace(rt.Options.Asr.Model) || rt.Options.Asr.Model.Trim().Equals("standard", StringComparison.OrdinalIgnoreCase) ? "standard" : rt.Options.Asr.Model.Trim(),
+            MaiRegions = AzureFastTranscriber.MaiRegions,
             Separate = new
             {
                 Source = separateSource, Endpoint = SafeEndpoint(separate), Auth = separate?.Auth ?? "entra", separate?.TenantId,
@@ -286,8 +290,8 @@ public static class AiConnectionApi
         try
         {
             using var cts = Timeout(ct, FoundryTimeout);
-            await rt.SpeechTranscriber(c, rt.Options.Asr.Locale).ProbeAsync(cts.Token);
-            return (new(true, [new("speech", true, sw.ElapsedMilliseconds)], null, c.Endpoint), c);
+            var probe = await rt.SpeechTranscriber(c, rt.Options.Asr.Locale).ProbeAsync(cts.Token);
+            return (new(true, [new("speech", true, sw.ElapsedMilliseconds, Model: SpeechModel(probe))], null, c.Endpoint), c);
         }
         catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -303,6 +307,7 @@ public static class AiConnectionApi
         try { c = FoundryInput(rt, req); }
         catch (ArgumentException e) { return (Fail("invalid_input", e.Message), null); }
         var steps = new List<Step>();
+        string? speechModel = null;
         async Task<bool> Run(string id, string? deployment, Func<CancellationToken, Task> work)
         {
             var sw = Stopwatch.StartNew();
@@ -310,7 +315,7 @@ public static class AiConnectionApi
             {
                 using var cts = Timeout(ct, FoundryTimeout);
                 await work(cts.Token);
-                steps.Add(new(id, true, sw.ElapsedMilliseconds));
+                steps.Add(new(id, true, sw.ElapsedMilliseconds, Model: id == "speech" ? speechModel : null));
                 return true;
             }
             catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -323,9 +328,11 @@ public static class AiConnectionApi
         if (ok && c.EmbeddingDeployment != null)
             ok = await Run("embedding", c.EmbeddingDeployment, t => rt.FoundryEmbedder(c, FoundryTimeout).EmbedAsync(["接続テスト"], t));
         if (ok && Runtime.SharedSpeech(c) is { } shared)
-            await Run("speech", null, t => rt.SpeechTranscriber(shared, rt.Options.Asr.Locale).ProbeAsync(t));
+            await Run("speech", null, async t => speechModel = SpeechModel(await rt.SpeechTranscriber(shared, rt.Options.Asr.Locale).ProbeAsync(t)));
         return (new TestResult(ok, steps, ok ? null : steps.FirstOrDefault(s => !s.Ok)?.Diagnosis, c.Endpoint), ok ? c : null);
     }
+
+    static string SpeechModel(VideoCreator.Models.Transcript probe) => probe.Provider == AzureFastTranscriber.MaiName ? AzureFastTranscriber.MaiModel : "standard";
 
     static async Task<(TestResult Result, CopilotConnection? Conn)> RunCopilotAsync(Runtime rt, CopilotRequest req, CancellationToken ct)
     {

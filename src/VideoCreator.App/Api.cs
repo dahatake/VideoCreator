@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
+using VideoCreator.Asr;
 using VideoCreator.Media;
 using VideoCreator.Models;
 using VideoCreator.Pipeline;
@@ -149,6 +150,7 @@ public static class Api
             ffmpeg = await rt.Ff.VersionAsync(),
             missing_filters = await rt.Ff.MissingFiltersAsync(),
             asr = rt.Asr?.Name ?? "none",
+            asr_model = (rt.Asr as AzureFastTranscriber)?.ExpectedModel,
             llm_provider = rt.LlmProvider,
             llm_model = rt.Llm?.Model,
             copilot_cli = rt.CopilotCli,
@@ -169,6 +171,7 @@ public static class Api
             azure_deployment = rt.Foundry?.Deployment ?? rt.Options.Llm.Deployment,
             azure_configured = rt.Foundry != null,
             asr_configured = rt.Asr != null,
+            asr_model = (rt.Asr as AzureFastTranscriber)?.ExpectedModel,
             foundry = AiConnectionApi.FoundryView(rt),
             speech = AiConnectionApi.SpeechView(rt),
             copilot = AiConnectionApi.CopilotView(rt),
@@ -318,8 +321,10 @@ public static class Api
                 if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
                 if (settings == null || settings.MaskWords == null || string.IsNullOrWhiteSpace(settings.Bgm))
                     return Error(422, "E-VALIDATION", "生成設定の形式が正しくありません");
-                if (string.IsNullOrWhiteSpace(settings.PresetId) || !rt.Presets.TryGetValue(settings.PresetId, out var preset) || !preset.Available)
+                if (string.IsNullOrWhiteSpace(settings.PresetId) || !rt.Presets.TryGetValue(settings.PresetId, out var preset) || !preset.Available || preset.Short)
                     return Error(422, "E-VALIDATION", "利用できるパターンを選んでください");
+                if (settings.Short is not ("off" or "with" or "only"))
+                    return Error(422, "E-VALIDATION", "ショート動画は off / with / only のどれかを指定してください");
                 if (settings.Scope is not ("full" or "balanced" or "economy"))
                     return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
                 if (settings.SeriesBy is not ("parts" or "minutes"))
@@ -447,8 +452,9 @@ public static class Api
             var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
             var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
             var faces = main == null ? [] : rt.CreateRunner().CachedFaces(main);
-            var canvas = main == null ? new Canvas() : Canvas.For(main.Media.Width, main.Media.Height, orientation);
-            var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])).Select(p => Planning.LayoutPreview.For(p, assets, faces, canvas)).ToList();
+            var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..]))
+                .Select(p => Planning.LayoutPreview.For(p, assets, faces, main == null ? new Canvas() : Canvas.For(main.Media.Width, main.Media.Height, p.Apply(new JobOptions { Orientation = orientation }).Orientation)))
+                .ToList();
             return Results.Json(layouts, Json.Options);
         });
 
@@ -1269,17 +1275,16 @@ public static class Api
             return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
         options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };
         if (options.Bgm is not ("auto" or "none" or "scene") && rt.CreateRunner().SelectableBgm(projectId, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
-        if (options.Opening || options.Closing)
-        {
-            var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
-            if (options.Opening && kit?.Files.Any(f => f.Kind == "opening") != true) return Error(422, "E-BRANDKIT", "オープニング動画が登録されていません。「オープニング・クロージング」で登録してください");
-            if (options.Closing && kit?.Files.Any(f => f.Kind == "closing") != true) return Error(422, "E-BRANDKIT", "クロージング動画が登録されていません。「オープニング・クロージング」で登録してください");
-        }
         if (rt.Store.Get<Project>(Kinds.Project, projectId) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
         if (presetIds is not { Count: > 0 } || presetIds.Any(id => !rt.Presets.ContainsKey(id))) return Error(422, "E-VALIDATION", "パターンを選んでください");
-        var main = rt.Presets[presetIds[0]];
-        if (!main.Available) return Error(422, "E-PRESET-UNAVAILABLE", $"「{main.Name}」は未対応です（{main.UnavailableReason}）");
         if (presetIds.Any(a => presetIds.Any(b => rt.Presets[a].IncompatibleWith.Contains(b)))) return Error(422, "E-PRESET-CONFLICT", "同時に選べないパターンの組み合わせです（§8.2）");
+        // A short (Preset.Short) chosen together with another template becomes a second, linked job; both are validated before either is queued.
+        var shorts = presetIds.Where(id => rt.Presets[id].Short).Distinct().ToList();
+        var others = presetIds.Where(id => !rt.Presets[id].Short).ToList();
+        if (shorts.Count > 1) return Error(422, "E-VALIDATION", "ショート動画のパターンは1つだけ選んでください");
+        var groups = new List<List<string>>();
+        if (others.Count > 0) groups.Add(others);
+        if (shorts.Count > 0) groups.Add(shorts);
         var assets = rt.Store.List<SourceAsset>(Kinds.Asset, projectId);
         if (assets.Count == 0) return Error(422, "E-ING-UNSUPPORTED", "素材を追加してください");
         var rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, projectId).Select(r => r.AssetId).ToHashSet();
@@ -1287,28 +1292,50 @@ public static class Api
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
         var runner = rt.CreateRunner();
         var mainAsset = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets[0];
-        if (!options.IsSeries && mainAsset.Media.Duration < main.Target.Min)
-            return Error(422, "E-SOL-INFEASIBLE", $"素材が{main.Id}の尺の下限（{main.Target.Min:0.#}秒）より短い");
-        if (options.PartMinutes != null && options.Parts != null) return Error(422, "E-VALIDATION", "本数と1本あたりの長さは、どちらか一方だけを指定してください");
-        if (options.Parts is int np)
+        var jobs = new List<Job>();
+        foreach (var ids in groups)
         {
-            if (np < 2 || np > Planning.SeriesPlanner.MaxParts) return Error(422, "E-VALIDATION", $"本数は 2〜{Planning.SeriesPlanner.MaxParts} 本で指定してください");
-            int max = Planning.SeriesPlanner.MaxPartsFor(mainAsset.Media.Duration, int.MaxValue);
-            if (np > max) return Error(422, "E-SERIES-PARTS", max < 2 ? $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため分けられません" : $"{np}本に分けると1本あたり{Planning.SeriesPlanner.MinPartSec / 60:0}分未満になります。この動画（{mainAsset.Media.Duration / 60:F1}分）は最大 {max} 本まで分けられます");
+            var main = rt.Presets[ids[0]];
+            var o = main.Apply(options);
+            if (!main.Available) return Error(422, "E-PRESET-UNAVAILABLE", $"「{main.Name}」は未対応です（{main.UnavailableReason}）");
+            if (o.Opening || o.Closing)
+            {
+                var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId);
+                if (o.Opening && kit?.Files.Any(f => f.Kind == "opening") != true) return Error(422, "E-BRANDKIT", "オープニング動画が登録されていません。「オープニング・クロージング」で登録してください");
+                if (o.Closing && kit?.Files.Any(f => f.Kind == "closing") != true) return Error(422, "E-BRANDKIT", "クロージング動画が登録されていません。「オープニング・クロージング」で登録してください");
+            }
+            if (!o.IsSeries && mainAsset.Media.Duration < main.Target.Min)
+                return Error(422, "E-SOL-INFEASIBLE", $"素材が{main.Id}の尺の下限（{main.Target.Min:0.#}秒）より短い");
+            if (o.PartMinutes != null && o.Parts != null) return Error(422, "E-VALIDATION", "本数と1本あたりの長さは、どちらか一方だけを指定してください");
+            if (o.Parts is int np)
+            {
+                if (np < 2 || np > Planning.SeriesPlanner.MaxParts) return Error(422, "E-VALIDATION", $"本数は 2〜{Planning.SeriesPlanner.MaxParts} 本で指定してください");
+                int max = Planning.SeriesPlanner.MaxPartsFor(mainAsset.Media.Duration, int.MaxValue);
+                if (np > max) return Error(422, "E-SERIES-PARTS", max < 2 ? $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため分けられません" : $"{np}本に分けると1本あたり{Planning.SeriesPlanner.MinPartSec / 60:0}分未満になります。この動画（{mainAsset.Media.Duration / 60:F1}分）は最大 {max} 本まで分けられます");
+            }
+            if (o.IsSeries && main.Planner is not ("speech" or "switch" or "screen")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
+            if (o.PartMinutes is double pm)
+            {
+                if (!double.IsFinite(pm) || pm < MinPartMinutes || pm > MaxPartMinutes) return Error(422, "E-VALIDATION", $"1本あたりの長さは {MinPartMinutes}〜{MaxPartMinutes} 分で指定してください");
+                if (mainAsset.Media.Duration < 1.5 * pm * 60) return Error(422, "E-SERIES-SHORT", $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため、{pm:0.#}分ずつに分けられません。1本あたりの長さを {Math.Floor(mainAsset.Media.Duration / 60 / 2 * 10) / 10:0.#}分以下にしてください");
+            }
+            // the second job runs after the first in the queue and reuses the analysis the first one just made
+            bool after = jobs.Count > 0;
+            if (after) o = o with { ReuseAnalysis = true };
+            jobs.Add(new Job
+            {
+                Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = ids, Instruction = instruction, Options = o,
+                ExcludeCandidateIds = exclude, DerivedFromJobId = derivedFrom, Cost = runner.EstimateCost(mainAsset, o.IsSeries ? "full" : o.Scope, o.ReuseAnalysis, transcribedBefore: after),
+            });
         }
-        if (options.IsSeries && main.Planner is not ("speech" or "switch" or "screen")) return Error(422, "E-SERIES-PRESET", $"「{main.Name}」は前編・後編の分割に使えません。発話を軸に編集するパターン（P1〜P4・P6・P7・P9・P10）を選んでください");
-        if (options.PartMinutes is double pm)
+        if (jobs.Count == 2)
         {
-            if (!double.IsFinite(pm) || pm < MinPartMinutes || pm > MaxPartMinutes) return Error(422, "E-VALIDATION", $"1本あたりの長さは {MinPartMinutes}〜{MaxPartMinutes} 分で指定してください");
-            if (mainAsset.Media.Duration < 1.5 * pm * 60) return Error(422, "E-SERIES-SHORT", $"動画（{mainAsset.Media.Duration / 60:F1}分）が短いため、{pm:0.#}分ずつに分けられません。1本あたりの長さを {Math.Floor(mainAsset.Media.Duration / 60 / 2 * 10) / 10:0.#}分以下にしてください");
+            jobs[0] = jobs[0] with { CompanionJobId = jobs[1].Id };
+            jobs[1] = jobs[1] with { CompanionJobId = jobs[0].Id };
         }
-        var job = new Job
-        {
-            Id = "job_" + Guid.NewGuid().ToString("N")[..10], ProjectId = projectId, PresetIds = presetIds, Instruction = instruction, Options = options,
-            ExcludeCandidateIds = exclude, DerivedFromJobId = derivedFrom, Cost = runner.EstimateCost(mainAsset, options.IsSeries ? "full" : options.Scope, options.ReuseAnalysis),
-        };
-        q.EnqueueJob(job);
-        return Results.Json(new { job_id = job.Id, cost = job.Cost }, Json.Options, statusCode: 202);
+        foreach (var j in jobs) q.EnqueueJob(j);
+        return Results.Json(new { job_id = jobs[0].Id, cost = jobs[0].Cost, companion_job_id = jobs.Count > 1 ? jobs[1].Id : null, job_ids = jobs.Select(j => j.Id) },
+            Json.Options, statusCode: 202);
     }
 
     static async Task<IResult> RegisterAsset(Runtime rt, string projectId, string path, CancellationToken ct)

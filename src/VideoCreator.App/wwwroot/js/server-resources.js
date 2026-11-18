@@ -56,6 +56,11 @@ export const presetDisplays = {
     'zh-CN': ['屏幕讲解（屏幕＋画中画）', '讲解 / 教程', '以讲解者面部开始', '操作时显示屏幕并自动缩放，静止时显示讲解者', '字幕与要点', '单一主音轨'],
     ko: ['화면 해설(화면+작은 창)', '해설·튜토리얼', '화자의 얼굴로 시작', '조작 중 화면 자동 확대, 멈추면 화자', '자막·요점', '마스터 음성 하나'],
   },
+  P12: {
+    en: ['Short video (portrait 9:16)', 'All genres (Shorts / TikTok / Reels)', 'Strongest line, surprise or question in the first 2 s (no opening video)', 'Silence-trimmed jump cuts and punch-ins, 15–60 s', 'Full captions, emphasis and headlines (clear of the phone UI)', 'Original audio at −14 LUFS; the end leads back to the start', 'YouTube Help: About 3-minute YouTube Shorts'],
+    'zh-CN': ['短视频（竖屏 9:16）', '全类型（Shorts / TikTok / Reels）', '前 2 秒展示最有力的一句话、惊喜或问题（不加片头视频）', '去除静音的跳剪与放大，15～60 秒', '全文字幕、强调及标题（避开手机操作按钮）', '原声调整至 −14 LUFS，结尾衔接开头', 'YouTube 帮助：关于 3 分钟的 YouTube Shorts'],
+    ko: ['쇼츠 영상(세로 9:16)', '모든 장르(Shorts / TikTok / Reels)', '첫 2초에 강한 한마디·놀라움·질문(오프닝 영상 없음)', '무음 제거 점프 컷·펀치인, 15~60초', '전체 자막·강조·제목(휴대폰 버튼을 피함)', '원음을 −14 LUFS로, 끝이 처음으로 이어짐', 'YouTube 고객센터: 3분 길이의 YouTube Shorts 정보'],
+  },
 };
 
 // QA names and recommendations are selected by check_id, preserving pass/fail and numeric evidence.
@@ -115,6 +120,8 @@ export const qaRecommendations = {
 };
 
 export const serverMessages = [
+  ['ショート動画のパターンは1つだけ選んでください', 'Choose only one short-video pattern', '只能选择一个短视频模板', '쇼츠 영상 패턴은 하나만 선택하세요'],
+  ['ショート動画は off / with / only のどれかを指定してください', 'Short video must be off, with or only', '短视频请指定 off / with / only 之一', '쇼츠 영상은 off / with / only 중 하나로 지정하세요'],
   ['0 ungrounded claims', '0 ungrounded claims', '0 个无依据的断言', '근거 없는 주장 0개'],
   ['0 mid-word cuts (±150ms)', '0 mid-word cuts (±150 ms)', '0 处词中截断（±150 毫秒）', '단어 도중 잘림 0개(±150ms)'],
   ['safe zone', 'Safe area', '安全区域', '안전 영역'],
@@ -152,6 +159,8 @@ export const serverMessages = [
   ['書き起こしは無効です', 'Transcription disabled', '转写已禁用', '받아쓰기 비활성화'],
   ['書き起こしは前回の結果を使います（費用はかかりません）', 'Reusing previous transcript (no charge)', '复用上次转写（不收费）', '이전 받아쓰기 재사용(요금 없음)'],
   ['書き起こしています（Azure AI Speech）', 'Transcribing (Azure AI Speech)', '正在转写（Azure AI Speech）', '받아쓰기 중(Azure AI Speech)'],
+  ['書き起こしています（MAI-Transcribe-2）', 'Transcribing (MAI-Transcribe-2)', '正在转写（MAI-Transcribe-2）', '받아쓰기 중(MAI-Transcribe-2)'],
+  ['Speech の接続先が MAI-Transcribe-2 に対応していない（リージョン外か、録音が 2 時間・250 MB 以上）ため、標準モデルで書き起こしました', 'Transcribed with the standard model because the Speech endpoint could not use MAI-Transcribe-2 (unsupported region, or the recording is 2 hours / 250 MB or more).', '由于 Speech 终结点无法使用 MAI-Transcribe-2（区域不支持，或录音达 2 小时/250 MB 以上），已使用标准模型转写。', 'Speech 엔드포인트에서 MAI-Transcribe-2를 사용할 수 없어(지원되지 않는 지역 또는 2시간·250MB 이상의 녹음) 표준 모델로 받아썼습니다.'],
   ['発話が検出されませんでした', 'No speech detected', '未检测到发言', '발언이 감지되지 않았습니다'],
   ['ショット・音量・無音を解析しています', 'Analyzing shots, volume and silence', '正在分析镜头、音量和静音', '장면·음량·무음 분석 중'],
   ['ショット・音量・無音は前回の解析結果を使います', 'Reusing previous shot, volume and silence analysis', '复用之前的镜头、音量和静音分析', '이전 장면·음량·무음 분석 재사용'],

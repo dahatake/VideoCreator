@@ -15,7 +15,7 @@ Choose footage on your PC, select an editing pattern, review and revise candidat
 - **A Windows 10/11 PC, Internet and free storage:** first launch installs required tools. Follow your company's installation rules.
 - **An administrator handoff:** confirm the account, Speech endpoint and permissions, prepared settings file, billing owner and support contact. Do not guess missing endpoints; ask your administrator.
 
-> **Local does not mean fully offline.** Normally audio goes to Azure Speech; AI features also send transcripts to the configured service. Disabling the LLM does not disable Speech traffic. Never paste keys or tokens into documentation or support messages.
+> **Local does not mean fully offline.** Normally audio goes to Azure Speech (default model: MAI-Transcribe-2); AI features also send transcripts to the configured service. Disabling the LLM does not disable Speech traffic. Never paste keys or tokens into documentation or support messages.
 
 ## Your first video
 

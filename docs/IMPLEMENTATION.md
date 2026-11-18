@@ -34,6 +34,7 @@ PRD の各機能について、本体に組み込む前に **小さな検証プ�
 | [05-llm-select](../spikes/05-llm-select.cs) | Microsoft Foundry Structured Outputs | 4候補、全項目合格 | strict モードは `maxLength`/`minimum`/`maxItems` 非対応（Microsoft Learn）→ **制約はコード側で強制** |
 | [06-copilot-sdk](../spikes/06-copilot-sdk.cs) | GitHub Copilot SDK × OS インストール済み CLI | 合格 | エージェントが「途中の JSON」と「訂正版」の2通を送る、尺や区間数の制約違反 → **最新の完全な JSON を抽出＋同じ検証器** |
 | [07-make-long](../spikes/07-make-long.cs) | 64分の日本語テスト動画を生成（LLM 台本＋TTS） | 1,252行、64分 | 性能・長尺分割の検証用 |
+| [24-mai-transcribe](../spikes/24-mai-transcribe.cs) | 書き起こしの A/B：標準モデル と MAI-Transcribe-2（同じ API の `enhancedMode`）。TTS 2話者の正解台本、きれいな音と雑音（SNR 5 dB） | CER 13.5%→**12.1%**、単語時刻の誤差 p90 0.99秒→**0.32秒**、雑音時の話者純度 85%→**96〜100%**、処理 3.9秒→1.6秒 | MAI が全指標で上回る → **字幕の既定を MAI-Transcribe-2 に**。MAI は `maxSpeakers` を 400 で拒否、単語は1文字・長さ約80msの固定値 → 単語の終わりを次の単語の始まりまで（最大0.3秒）延ばす（声のある区間の被覆 61%→97%） |
 
 この節のテスト素材は権利の問題がないよう、すべて合成（FFmpeg のテストパターン＋Azure TTS の音声）で作っています。§2.2 の AT-10 再検証だけは、利用者が指定して外部送信を許可した実動画を使っています。§2.3 は固定書き起こしと FFmpeg 合成メディアで、実 Azure には送信していません。
 
@@ -266,7 +267,7 @@ v1.1 で、v1.0 の未実装項目をすべて実装しました。v1.1 追補�
 
 | 範囲 | 状態 |
 |---|---|
-| 完全オフラインの書き起こし | なし。字幕は必須のため、常に Azure AI Speech を使います（音声が Azure に送られます） |
+| 完全オフラインの書き起こし | なし。字幕は必須のため、常に Azure の音声認識（既定は MAI-Transcribe-2、対応外のリージョンでは標準モデル）を使います（音声が Azure に送られます） |
 | 笑い検出の実音声での精度 | 合成音で動作を確認。実際の笑い声・拍手の録音による精度評価は行っていません（評価用データがありません） |
 | 話者とカメラの自動割り当て | カメラが別々のマイクを持つ場合のみ。顔の位置による割り当ては未実装 |
 | 擬音テロップ・ツッコミの面白さ | 擬音は規則ベース、ツッコミは AI 提案（承認制）。面白さは利用者の目で判断します |
@@ -825,6 +826,7 @@ AI の章分けのプロンプトにも、「分けやすさを高くしてよ�
 
 ### 仕組み
 - **Azure Speech**（[AzureFastTranscriber.cs](../src/VideoCreator.Core/Asr/AzureFastTranscriber.cs)）：Foundry の接続テストは同じ Azure ホストに合成無音を1秒送り、Speech の検証結果は Foundry の接続とともに保存する。Speech が失敗しても Foundry 自体の保存は妨げない。`PUT /api/settings/ai/speech/source` は個別設定と認証情報を残したまま字幕の接続先を選ぶ。明示的に Foundry を選んだ場合、検証済み接続を失っても別の宛先へ自動で送信しない。個別を選ぶと保存済み Speech、次いで起動設定を使う。接続先を未選択の旧設定では、従来の優先順位（個別保存 → 検証済み Foundry → 起動設定）を保つ。Entra ID は `https://cognitiveservices.azure.com/.default`、キーは `Ocp-Apim-Subscription-Key` を使い、併送しない。個別設定の `POST /api/settings/ai/speech/test` も同じ合成無音を使い、`PUT` は再テストして保存、`DELETE` は個別設定を解除する。LLM 不使用時も利用可能（[Azure の準備](../users-guide/azure-access.md)）。
+- **字幕のモデル（MAI-Transcribe-2）**：spike 24 の A/B（上表）で MAI-Transcribe-2 が標準モデルを上回ったため、既定を `VideoCreator:Asr:Model = "MAI-Transcribe-2"` にした（`standard` で従来の標準モデルに固定）。同じ Fast Transcription API の定義に `enhancedMode{model, modelOptions{timestamps:"word", transcribeStyle:"verbatim"}}` を付ける。逐語は字幕の方針（言いよどみも残す）に合わせた。MAI は `diarization.maxSpeakers` を受け付けないため送らない。MAI の単語は1文字・長さ約80msの固定値なので、`Parse` で単語の終わりを「次の単語の始まり・文の終わり・始まり+0.3秒」の最小値まで延ばす（縮めない）。無音検出との突き合わせで、声のある区間の被覆は 61%→97%、0.3秒以上の間はほぼ残る。対応リージョンは Central India / East US / North Europe / Southeast Asia / West Europe / West US / West US 2（Japan East は 400 "Enhanced mode with model is currently not supported yet."）。最初の書き起こしの前に合成無音1秒で MAI を試し、この 400 なら接続先ごとに記憶して標準モデルで書き起こす。録音そのものが 400/413（2時間・250MB の上限）で拒否された場合も標準モデルで再送する。書き起こしの `Provider` は実際に使ったモデル（`azure-mai-transcribe-2` / `azure-fast-transcription`）。標準モデルに切り替えたときはジョブに警告を出し、MAI に対応した接続先に変えた後は、標準モデルで作ったキャッシュを1回だけ作り直す。接続テストの各手順・設定画面の Speech 欄・「Azure から選択」のリージョン表示・`/api/health` と `/api/settings` の `asr_model` に使うモデルを示す。`run.cmd --check` も MAI の可否を診断する。Azure AI Vision は使っておらず、MAI に画像分析のモデルもないため置き換えの対象はない。
 - **Microsoft Foundry**（[AiConnection.cs](../src/VideoCreator.Core/Selection/AiConnection.cs)）：エンドポイント、チャット用デプロイ名、埋め込み用デプロイ名（任意）、認証方式（Microsoft Entra ID（推奨）/ API キー）、テナント ID（任意）を入力する。エンドポイントは Azure portal・Foundry ポータルのどの形式をコピーしても `…/openai/v1/` に正規化し、`https://` 以外は拒否する。Entra ID のスコープは `https://ai.azure.com/.default`。
 - **接続テスト**：実際の処理と同じ厳密な JSON スキーマでチャットを 1 回呼び、埋め込みのデプロイ名があれば埋め込みも呼ぶ。失敗は実際の応答から分類する（`key_rejected`・`entra_rejected`・`forbidden`・`deployment_not_found`・`endpoint_not_found`・`wrong_model_kind`・`no_structured_output`・`rate_limited`・`timeout`・`unreachable`・`bad_reply` など）。画面では手順ごとの合否・時間・対処を表示し、プロバイダーの原文は折りたたんで表示する。
 - **GitHub Copilot**（[CopilotCatalog](../src/VideoCreator.Core/Selection/AiConnection.cs)）：認証方式は Copilot CLI にサインイン済みの GitHub ユーザー（推奨）か、fine-grained personal access token。SDK から、そのアカウントが使えるモデル、思考レベル（Reasoning Effort）、標準と長いコンテキスト（例：200K / 1M）、料金（100万トークンあたりのクレジット）を取得して表示する。選択肢はモデルごとに変わり、そのモデルが受け付けない思考レベル・Context Size はサーバーでも拒否する。テストでは選んだ設定で実際に 1 回応答を得る。
@@ -847,3 +849,32 @@ AI の章分けのプロンプトにも、「分けやすさを高くしてよ�
 - Foundry のリソースやデプロイの作成は対象外（一覧からの選択か、名前の入力）。一覧の権限表示は参考値。
 - macOS / Linux の OS の資格情報ストア（キーチェーンなど）は未対応。そのため、これらの OS ではキー・トークンを保存しない。
 - 表示する Copilot の料金は SDK が返した値で、請求額を保証しない。
+
+## 22. ショート動画（P12、縦 9:16）をほかのパターンと同時に作る
+
+元動画から YouTube Shorts・TikTok・Instagram Reels 向けの縦長ショートを切り出す。PRD FR-SHORT-01、§8.1。
+
+### 仕組み
+- **プリセット**（[P12.json](../presets/P12.json)、[Preset.cs](../src/VideoCreator.Core/Presets/Preset.cs)）：`"short": true` のパターン。15〜60秒、フックは冒頭2秒以内、teaser のコールドオープン、無音除去 0.5秒、全文字幕、BGM なし、ループ有効。`PresetStore.Validate` は、ショートが 9:16 で上限60秒以下であることを読み込み時に検査する。上限を60秒にしたのは、1分を超えるショートが Content ID の申し立てを受けると全世界でブロックされるため（[YouTube ヘルプ 15424877](https://support.google.com/youtube/answer/15424877)）。TikTok・Reels でも同じ尺で扱える。
+- **オプションの正規化**（`Preset.Apply`）：ショートの場合、利用者の選択に関係なく、向きを `portrait`（1080×1920）にし、前後編分割（`Parts`/`PartMinutes`）・オープニング・クロージング・場面転換カードを外し、ツッコミをテロップにする。冒頭2秒のフックを遅らせる挿入を作らないため。ほかのパターンでは同じインスタンスをそのまま返す。API（ジョブ登録・レイアウト一覧）、`PipelineRunner.GenerateCoreAsync`、`PlanBuilder.BuildAsync` の3か所で適用する。再編集・再計画の経路でも挿入が入らない。
+- **同時選択**（[Api.cs](../src/VideoCreator.App/Api.cs) `StartGeneration`）：`preset_ids` のうちショートは別のグループに分ける（ショートは1つだけ）。グループごとに `Apply` 後のオプションでブランドキット・尺の下限・前後編を検証し、**すべて合格してから**キューに入れる。片方だけ登録されることはない。2件のときは `Job.CompanionJobId` で互いに関連付け、後のジョブは `ReuseAnalysis=true`、見積もりの文字起こし分を 0 にする。キューは1本ずつ順に処理するので、後のジョブは先のジョブが作った書き起こし・解析のキャッシュを使う。先のジョブが失敗した場合は自分で解析する。応答は `{ job_id, cost, companion_job_id, job_ids }`。
+- **生成設定**：`ProjectGenerationSettings.Short`（`off` / `with` / `only`）。主パターン（`preset_id`）にショートは指定できない。
+- **UI**（[app.js](../src/VideoCreator.App/wwwroot/js/app.js)）：パターン一覧の下に「ショート動画」のラジオ（作らない／一緒に作る／ショートだけ）。「ショートだけ」では主パターンの一覧を無効化（`inert`）し、注記を出す。ジョブ画面・候補画面・シリーズ画面には、関連ジョブへのリンクを出す。「この設定から作り直す」はショートとの組み合わせも復元する。
+
+### 検証
+- 自動テスト [ShortPresetTests.cs](../tests/VideoCreator.Tests/ShortPresetTests.cs)：
+  - 16:9・90秒のショートを検証で拒否する。
+  - `Apply` による正規化と、ほかのパターンを変えないこと。
+  - 横長の元動画で「横 16:9」を選んでも、計画は 1080×1920 で挿入がない。
+  - P6＋P12 で関連付いた2件が登録され、短いほうは縦・解析再利用・文字起こし0分。
+  - ショートだけならブランドキットがなくても登録できる。
+  - ブランドキットの不足や尺不足では、どちらのジョブも登録しない。
+  - 生成設定の検証。
+- 実際の書き出しの検証結果は下記。
+- 実際の書き出し（2026-11-19、`spikes/media/talk.mp4`：1920×1080・125秒、Azure の文字起こしと LLM を使用、分離したデータフォルダー）：
+  - P6＋P12 を同時に選び、関連付いた2件が登録された。P12 のログで、書き起こしと解析の再利用を確認した。両方とも候補3つで完了した。
+  - プレビュー（ffprobe）：P6 は 960×540・33〜35秒、P12 は 540×960・17〜28秒。
+  - 最終書き出し（ffprobe）：P6 は 1920×1080・32.9秒、P12 は 1080×1920（H.264/AAC）・20.3秒で、60秒以下。P12 の統合ラウドネスは -14.0 LUFS。抜き出したフレームで縦の画面と字幕を目で確認した。
+- この検証で見つけて直した問題：
+  - 新しいデータフォルダーで P12 を書き出すと失敗した。効果音ライブラリー（`sfx_pop.wav` など）を用意するのは場面転換カード・ツッコミ・BGM がオンのときだけで、ショートでは用意されなかった。レンダラーは見つからない効果音を黙って飛ばすが、書き出しの再現性記録（`RenderProvenance`）がそのファイルのハッシュを取ろうとして失敗した。`PipelineRunner` で、効果音がオンのときは生成時に、計画に効果音があるときは書き出し時にも、ライブラリーを用意するように直した。
+  - QA の尺検査（`QaEngine` の DurationRange）の上限は 180秒だった。ショートでは `Target.Max`（60秒）を上限にして、オープニングなどを含むファイル全体が60秒に収まることを確認する。

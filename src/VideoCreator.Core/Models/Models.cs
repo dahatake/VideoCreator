@@ -48,6 +48,8 @@ public sealed record ProjectGenerationSettings
     public bool Closing { get; init; } = true;
     public bool SceneCards { get; init; }
     public string Orientation { get; init; } = "auto";
+    /// <summary>The Shorts template (Preset.Short): off | with (also made, next to <see cref="PresetId"/>) | only (instead of it).</summary>
+    public string Short { get; init; } = "off";
     public List<string> MaskWords { get; init; } = [];
 }
 
@@ -717,6 +719,8 @@ public sealed record Job
     public List<string> CandidateIds { get; init; } = [];
     /// <summary>The job this one was made from ("別の候補を出す" / "この設定で作り直す"); informational, survives the parent's deletion.</summary>
     public string? DerivedFromJobId { get; init; }
+    /// <summary>The other job started by the same request: a short (Preset.Short) made together with another template, and vice versa.</summary>
+    public string? CompanionJobId { get; init; }
     public Dictionary<string, double> StageSeconds { get; init; } = [];
     public CostEstimate? Cost { get; init; }
     public List<string> Warnings { get; init; } = [];

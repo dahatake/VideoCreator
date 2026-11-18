@@ -14,9 +14,17 @@ Storage, Azure SQL을 만들 필요가 없습니다. 미디어·SQLite·렌더�
 
 | 용도 | 필요한 항목 | Entra ID 이용 역할 |
 |---|---|---|
-| 자막 받아쓰기(필수) | 빠른 전사 지원 지역의 Azure AI Services / Speech, S0, 사용자 지정 하위 도메인 | Cognitive Services Speech User |
+| 자막 받아쓰기(필수) | Azure AI Services / Speech, S0, 사용자 지정 하위 도메인. MAI-Transcribe-2를 사용하려면 지원 지역(아래) 필요. 그 밖의 지역은 표준 모델 | Cognitive Services Speech User |
 | AI 선정·텔롭·게시글 | Azure AI Services / Azure OpenAI, Structured Outputs 지원 채팅 배포 | Cognitive Services OpenAI User |
 | 의미 기반 주제 분할 | 같은 리소스의 임베딩 배포(미설정 시 어휘 기반) | Cognitive Services OpenAI User |
+
+자막 받아쓰기는 기본적으로 Microsoft의 음성 인식 모델 **MAI-Transcribe-2**를 사용합니다.
+Azure Speech의 빠른 전사 API에 `enhancedMode`를 붙여 호출하므로 배포를 만들 필요가 없습니다.
+MAI-Transcribe-2를 사용할 수 있는 지역은 Central India, East US, North Europe, Southeast Asia,
+West Europe, West US, West US 2입니다(2026-11 기준. Japan East는 미지원).
+지원되지 않는 지역이나 2시간·250MB 이상의 녹음에서는 자동으로 표준 모델로 전환하고,
+연결 테스트·설정 화면·작업 경고에 그 사실을 표시합니다. 표준 모델로 고정하려면
+`VideoCreator:Asr:Model`을 `standard`로 설정합니다. 이미지 분석(Azure AI Vision)은 사용하지 않습니다.
 
 **Azure AI Services 리소스 하나를 세 용도로 함께 사용할 수 있습니다.**
 Foundry 프로젝트·Video Indexer·Event Grid·추가 관리 ID는 현재 앱 실행 경로에
@@ -29,7 +37,8 @@ Foundry 프로젝트·Video Indexer·Event Grid·추가 관리 ID는 현재 앱 
 - 테넌트: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - 리소스 그룹: `rg-videocreator-jpe`
 - 리소스: `videocreator-ai-40800`(AIServices / S0 / Japan East)
-- Speech: `https://videocreator-ai-40800.cognitiveservices.azure.com/`
+- 자막용 리소스: `videocreator-mai-9709`(AIServices / S0 / Southeast Asia. MAI-Transcribe-2용으로 2026-11에 추가)
+- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
 - 채팅 배포: `gpt-chat-latest`
 - 임베딩 배포: `text-embedding-3-large`
@@ -168,6 +177,9 @@ Entra 암호나 클라이언트 비밀을 앱에 입력하지 않습니다. 백�
 - 변경은 다음에 시작하는 작업부터 적용됩니다. 이미 실행 중인 작업의 연결은 바꾸지 않습니다.
 - Speech 테스트는 생성과 같은 빠른 전사 API로 **1초의 합성 무음**을 전송합니다.
   사용자 음성은 보내지 않습니다. 인증·연결 검증이며 실제 음성 인식 정확도를 보증하지 않습니다.
+  결과에는 사용할 모델(MAI-Transcribe-2 또는 표준)을 표시합니다.
+- 「표준 모델로 받아씁니다」라고 표시되면 해당 리소스의 지역이 MAI-Transcribe-2를
+  지원하지 않습니다. **Azure에서 선택** 목록에도 지원 여부를 표시합니다.
 - Foundry는 엄격한 JSON Schema 채팅 응답 및 지정한 경우 임베딩 배포를 검증합니다.
 - LLM 미사용 모드에서도 Speech가 필요하므로 Speech 테스트·저장을 사용할 수 있습니다.
 - `401`: 키 및 로컬 인증 정책, 또는 테넌트·토큰을 확인합니다. `403`: 사용자 역할·범위·
@@ -182,4 +194,5 @@ Entra 암호나 클라이언트 비밀을 앱에 입력하지 않습니다. 백�
 공식 근거:
 [Speech RBAC](https://learn.microsoft.com/azure/ai-services/speech-service/role-based-access-control) /
 [빠른 전사](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create) /
+[MAI-Transcribe-2](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe) /
 [Azure OpenAI RBAC](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/role-based-access-control).

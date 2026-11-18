@@ -89,9 +89,10 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     /// <param name="reuseAnalysis">False = the transcript is made again, so it is paid for even when cached.</param>
-    public CostEstimate EstimateCost(SourceAsset main, string scope = "balanced", bool reuseAnalysis = true)
+    /// <param name="transcribedBefore">An earlier job in the queue makes the transcript (a short made together with another template), so it is free here.</param>
+    public CostEstimate EstimateCost(SourceAsset main, string scope = "balanced", bool reuseAnalysis = true, bool transcribedBefore = false)
     {
-        double minutes = main.Media.AudioChannels > 0 && s.Asr != null && !(reuseAnalysis && CachedAnalysis(main).TranscriptCached) ? main.Media.Duration / 60 : 0;
+        double minutes = main.Media.AudioChannels > 0 && s.Asr != null && !transcribedBefore && !(reuseAnalysis && CachedAnalysis(main).TranscriptCached) ? main.Media.Duration / 60 : 0;
         int chars = SelectionService.EstimateSent(main.Media.Duration, scope, s.SelectionCharBudget).chars;
         int inTok = s.Llm == null ? 0 : Pricing.EstimateTokens(chars), outTok = s.Llm == null ? 0 : 2500;
         double jpy = minutes / 60 * s.Pricing.AsrJpyPerHour + inTok / 1e6 * s.Pricing.LlmInJpyPer1M + outTok / 1e6 * s.Pricing.LlmOutJpyPer1M;
@@ -188,7 +189,16 @@ public sealed class PipelineRunner(PipelineServices s)
         if (a.Media.AudioChannels == 0 || asr == null) return new Transcript { Provider = "none", Duration = a.Media.Duration, Language = language };
         var phrases = DictionaryFor(a.ProjectId);
         var file = TranscriptFile(a, phrases);
-        if (Cached(file)) return Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
+        if (Cached(file))
+        {
+            var cached = Json.Deserialize<Transcript>(await File.ReadAllTextAsync(file, ct));
+            // a fallback transcript (region without MAI-Transcribe) is redone once the connection serves MAI
+            bool upgrade = false;
+            if (cached.Provider == AzureFastTranscriber.StandardName && asr is AzureFastTranscriber { Name: AzureFastTranscriber.MaiName } fast)
+                try { upgrade = await fast.ServesMaiAsync(ct); }
+                catch (AsrException) { }   // offline or signed out: the cached transcript is still valid
+            if (!upgrade) return cached;
+        }
         _asrCalls++;
         var tr = await asr.TranscribeAsync(audio, a.Media.Duration, phrases, 4, ct);
         tr = tr with { Language = language };
@@ -258,6 +268,7 @@ public sealed class PipelineRunner(PipelineServices s)
         if (assets.Any(a => !rights.Contains(a.Id))) throw new PipelineException("E-RIGHTS-REQUIRED", "素材の権利確認が完了していません");
         var preset = s.Presets[job.PresetIds[0]];
         if (!preset.Available) throw new PipelineException("E-PRESET-UNAVAILABLE", $"{preset.Name} は未対応です: {preset.UnavailableReason}");
+        job = job with { Options = preset.Apply(job.Options) };
         var warnings = new List<string>();
         var used = new List<SourceAsset> { main };
         if (preset.Planner == "switch")
@@ -277,7 +288,7 @@ public sealed class PipelineRunner(PipelineServices s)
         if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
             throw new PipelineException("E-SOL-INFEASIBLE", $"素材が{preset.Id}の尺の下限（{preset.Target.Min:0.#}秒）より短い");
         if (preset.HasTelop("caption") && main.Media.AudioChannels > 0 && s.Asr == null)
-            throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure AI Speech）が設定されていません。設定を確認してください。");
+            throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure Speech）が設定されていません。設定を確認してください。");
 
         const string proxyMsg = "解析用のプロキシを作成しています";
         bool reuse = _redo == null;
@@ -374,11 +385,14 @@ public sealed class PipelineRunner(PipelineServices s)
         Mark("ingest");
 
         bool trCached = reuse && main.Media.AudioChannels > 0 && s.Asr != null && File.Exists(TranscriptFile(main, DictionaryFor(project.Id)));
-        Stage(JobStatus.Transcribing, 0.15, s.Asr == null ? "書き起こしは無効です" : trCached ? "書き起こしは前回の結果を使います（費用はかかりません）" : "書き起こしています（Azure AI Speech）");
+        Stage(JobStatus.Transcribing, 0.15, s.Asr == null ? "書き起こしは無効です" : trCached ? "書き起こしは前回の結果を使います（費用はかかりません）"
+            : s.Asr.Name == AzureFastTranscriber.MaiName ? "書き起こしています（MAI-Transcribe-2）" : "書き起こしています（Azure AI Speech）");
         Transcript tr;
         try { tr = await TranscriptAsync(main, audio, ct); }
         catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message); }
         if (tr.Words.Count == 0 && main.Media.AudioChannels > 0 && s.Asr != null) warnings.Add("発話が検出されませんでした");
+        if (s.Asr?.Name == AzureFastTranscriber.MaiName && tr.Provider == AzureFastTranscriber.StandardName)
+            warnings.Add("Speech の接続先が MAI-Transcribe-2 に対応していない（リージョン外か、録音が 2 時間・250 MB 以上）ため、標準モデルで書き起こしました");
         // series cuts are placed between sentences: restore sentence ends the recogniser ran together (「…と思います　あともう一個…」)
         if (job.Options.IsSeries) tr = SplitCues.Resegment(tr);
         Mark("transcribe");
@@ -400,7 +414,7 @@ public sealed class PipelineRunner(PipelineServices s)
         BgmTrack? bgm = null;
         IReadOnlyList<BgmTrack>? bgmPool = null;
         var bgmId = PlanBuilder.ResolveBgmId(preset, job.Options);
-        if (s.Audio != null && (job.Options.SceneCards || job.Options.Tsukkomi)) await s.Audio.EnsureAsync(ct);
+        if (s.Audio != null && (job.Options.SceneCards || job.Options.Tsukkomi || job.Options.Sfx)) await s.Audio.EnsureAsync(ct);
         if (job.Options.Bgm == "scene")
         {
             Stage(JobStatus.Analyzing, 0.44, "BGM の音量と曲の勢いを測っています");
@@ -767,6 +781,8 @@ public sealed class PipelineRunner(PipelineServices s)
         var ctx = QaContextFor(plan);
         var persist = renderId == null;
         renderId ??= $"r_{Guid.NewGuid():N}"[..14];
+        // the generated SFX are only made on demand; a plan with SFX but no BGM (e.g. P12) would otherwise render silently without them
+        if (plan.Audio.SfxEnabled && plan.Audio.Sfx.Count > 0 && s.Audio != null) await s.Audio.EnsureAsync(ct);
         if (!preview)
         {
             EnsureCurrentPlan(plan);

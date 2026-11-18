@@ -14,9 +14,17 @@ Storage、Azure SQL は必要ありません。素材・SQLite・描画・顔検
 
 | 用途 | 必要なもの | Entra ID で利用するロール |
 |---|---|---|
-| 字幕の書き起こし（必須） | Fast Transcription 対応リージョンの Azure AI Services / Speech、S0、カスタムサブドメイン | Cognitive Services Speech User |
+| 字幕の書き起こし（必須） | Azure AI Services / Speech、S0、カスタムサブドメイン。MAI-Transcribe-2 を使うには対応リージョン（下記）。それ以外のリージョンは標準モデル | Cognitive Services Speech User |
 | AI 選定・テロップ・投稿文等 | Azure AI Services / Azure OpenAI、Structured Outputs 対応のチャットデプロイ | Cognitive Services OpenAI User |
 | 意味ベースの話題分割 | 同リソースの埋め込みデプロイ（未設定なら語彙ベース） | Cognitive Services OpenAI User |
+
+字幕の書き起こしは、既定で Microsoft の音声認識モデル **MAI-Transcribe-2** を使います。
+Azure Speech の Fast Transcription API に `enhancedMode` を付けて呼ぶため、デプロイの作成は不要です。
+MAI-Transcribe-2 が使えるリージョンは Central India、East US、North Europe、Southeast Asia、
+West Europe、West US、West US 2 です（2026-11 時点。Japan East は未対応）。
+対応外のリージョンや、2 時間・250 MB 以上の録音では、自動で標準モデルに切り替え、
+接続テスト・設定画面・ジョブの警告にその旨を表示します。標準モデルに固定するには
+`VideoCreator:Asr:Model` を `standard` にします。画像分析（Azure AI Vision）は使っていません。
 
 複数用途に対応する **1つの Azure AI Services リソースを共用できます**。
 Foundry のプロジェクト、Video Indexer、Event Grid、追加のマネージド ID は、
@@ -29,7 +37,8 @@ Foundry のプロジェクト、Video Indexer、Event Grid、追加のマネー�
 - テナント: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - リソースグループ: `rg-videocreator-jpe`
 - リソース: `videocreator-ai-40800`（AIServices / S0 / Japan East）
-- Speech: `https://videocreator-ai-40800.cognitiveservices.azure.com/`
+- 字幕用リソース: `videocreator-mai-9709`（AIServices / S0 / Southeast Asia。MAI-Transcribe-2 用に 2026-11 に追加）
+- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
 - チャット: `gpt-chat-latest`
 - 埋め込み: `text-embedding-3-large`
@@ -189,7 +198,9 @@ OS 暗号化を実装していない環境ではキーの保存を拒否しま�
 - 保存後に開始する処理から適用されます。処理中のジョブの接続は切り替えません。
 - Speech のテストは、生成と同じ Fast Transcription API に **合成した1秒の無音**
   を送ります。利用者の音声は送りません。字幕生成と同じ認証・経路の疎通検証であり、
-  実動画の認識精度の保証ではありません。
+  実動画の認識精度の保証ではありません。結果には使うモデル（MAI-Transcribe-2 か標準）を表示します。
+- 「標準モデルで書き起こします」と出る場合は、そのリソースのリージョンが MAI-Transcribe-2 に
+  対応していません。**Azure から選択** の一覧にも対応の有無を表示します。
 - Foundry はチャットの厳密な JSON Schema 応答と、指定時には埋め込みをテストします。
 - LLM 不使用でも Speech は必要です。Speech の接続テスト・保存はこのモードでもできます。
 - `401`: キーの間違い・キー認証無効、またはテナント・トークンを確認します。
@@ -205,4 +216,5 @@ OS 暗号化を実装していない環境ではキーの保存を拒否しま�
 公式根拠:
 [Speech RBAC](https://learn.microsoft.com/azure/ai-services/speech-service/role-based-access-control) /
 [Fast Transcription](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create) /
+[MAI-Transcribe-2](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe) /
 [Azure OpenAI RBAC](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/role-based-access-control)。

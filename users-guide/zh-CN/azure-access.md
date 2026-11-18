@@ -14,9 +14,17 @@ GitHub Copilot 是可选的替代方案，不是需要配置的 Azure 服务。
 
 | 用途 | 必要配置 | Entra ID 使用角色 |
 |---|---|---|
-| 字幕转录（必需） | 支持快速转录的区域中的 Azure AI Services / Speech，S0，自定义子域名 | Cognitive Services Speech User |
+| 字幕转录（必需） | Azure AI Services / Speech，S0，自定义子域名。使用 MAI-Transcribe-2 需要受支持的区域（见下文），其他区域使用标准模型 | Cognitive Services Speech User |
 | AI 筛选、字幕特效、帖子文案 | Azure AI Services / Azure OpenAI，支持 Structured Outputs 的聊天部署 | Cognitive Services OpenAI User |
 | 基于语义的话题分段 | 同一资源中的嵌入部署，未设置时使用词汇检测 | Cognitive Services OpenAI User |
+
+字幕转录默认使用 Microsoft 的语音识别模型 **MAI-Transcribe-2**。
+它通过为 Azure Speech 的快速转录 API 附加 `enhancedMode` 来调用，因此无需创建部署。
+可使用 MAI-Transcribe-2 的区域为 Central India、East US、North Europe、Southeast Asia、
+West Europe、West US、West US 2（截至 2026-11；Japan East 不支持）。
+在不受支持的区域，或录音达到 2 小时 / 250 MB 以上时，会自动切换为标准模型，
+并在连接测试、设置界面和任务警告中提示。若要固定使用标准模型，请将
+`VideoCreator:Asr:Model` 设为 `standard`。不使用图像分析（Azure AI Vision）。
 
 **一个 Azure AI Services 资源可以同时提供上述三种能力。** 当前应用的执行路径
 不需要 Foundry 项目、Video Indexer、Event Grid 或额外的托管标识。也无需删除已有资源。
@@ -28,7 +36,8 @@ GitHub Copilot 是可选的替代方案，不是需要配置的 Azure 服务。
 - 租户：`16b3c013-d300-468d-ac64-7eda0820b6d3`
 - 资源组：`rg-videocreator-jpe`
 - 资源：`videocreator-ai-40800`（AIServices / S0 / Japan East）
-- Speech：`https://videocreator-ai-40800.cognitiveservices.azure.com/`
+- 字幕用资源：`videocreator-mai-9709`（AIServices / S0 / Southeast Asia；2026-11 为 MAI-Transcribe-2 添加）
+- Speech：`https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - Foundry：`https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
 - 聊天部署：`gpt-chat-latest`
 - 嵌入部署：`text-embedding-3-large`
@@ -160,7 +169,10 @@ Microsoft Foundry 资源并进行选择（租户 ID 为空时使用默认登录�
   **删除已保存的连接** 会恢复该连接的启动配置。
 - 变更仅对之后启动的操作生效，不切换正在运行的任务。
 - Speech 测试通过与生成相同的快速转录 API 发送 **一秒合成静音**，不会发送
-  用户音频。这是身份验证和连通性测试，不保证真实视频的语音识别准确率。
+  用户音频。这是身份验证和连通性测试，不保证真实视频的语音识别准确率。结果会显示所用模型
+  （MAI-Transcribe-2 或标准模型）。
+- 如果显示“将使用标准模型转录”，说明该资源所在区域不支持 MAI-Transcribe-2。
+  **从 Azure 选择** 列表中也会显示是否支持。
 - Foundry 测试严格 JSON Schema 聊天输出；若指定嵌入部署，也会测试嵌入。
 - 即使禁用 LLM，Speech 仍然必需，所以 Speech 测试和保存保持可用。
 - `401`：检查密钥及本地身份验证策略，或租户和令牌。`403`：检查对应用户的
@@ -175,4 +187,5 @@ Microsoft Foundry 资源并进行选择（租户 ID 为空时使用默认登录�
 官方依据：
 [Speech RBAC](https://learn.microsoft.com/azure/ai-services/speech-service/role-based-access-control) /
 [快速转录](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create) /
+[MAI-Transcribe-2](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe) /
 [Azure OpenAI RBAC](https://learn.microsoft.com/azure/ai-foundry/openai/how-to/role-based-access-control)。
