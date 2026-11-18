@@ -161,11 +161,15 @@ public static class Api
             local_only = rt.LocalOnly,
             transmission = rt.Transmission,
             copilot_cli = rt.CopilotCli,
-            copilot_model = rt.Options.Llm.CopilotModel,
-            azure_deployment = rt.Options.Llm.Deployment,
-            azure_configured = !string.IsNullOrWhiteSpace(rt.Options.Llm.Endpoint),
+            copilot_model = rt.Copilot.Model,
+            azure_deployment = rt.Foundry?.Deployment ?? rt.Options.Llm.Deployment,
+            azure_configured = rt.Foundry != null,
             asr_configured = rt.Asr != null,
+            foundry = AiConnectionApi.FoundryView(rt),
+            copilot = AiConnectionApi.CopilotView(rt),
+            secret_protection = rt.AiSettings.Protector.Kind,
         }, Json.Options));
+        AiConnectionApi.Map(api);
         api.MapPut("/settings", (Runtime rt, Settings s) =>
         {
             try { rt.SetLlmProvider(s.LlmProvider); return Results.Json(new { llm_provider = rt.LlmProvider }, Json.Options); }

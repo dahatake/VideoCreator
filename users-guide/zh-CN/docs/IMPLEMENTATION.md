@@ -813,3 +813,27 @@ P1/P8无声−6LU，P5主乐0差10，P6−14差18，其他−8/14。旧无场景
 - 限制：自动测用合成声画固定响应，不保证英中韩真实Speech精度、AI自然、母语校译。无自动字幕翻译或混语自动检测。
 ---
 
+
+## 21. AI 连接设置（Microsoft Foundry / GitHub Copilot）
+
+在设置界面的“AI 连接”中，用户输入连接信息，仅在连接测试通过时保存。前提是 Foundry 资源和模型部署已经创建，应用不负责创建。
+
+### 机制
+- **Microsoft Foundry**（[AiConnection.cs](../../../src/VideoCreator.Core/Selection/AiConnection.cs)）：输入端点、聊天部署名、嵌入部署名（可选）、认证方式（Microsoft Entra ID（推荐）/ API 密钥）、租户 ID（可选）。无论从 Azure 门户还是 Foundry 门户复制哪种形式的端点，都会规范化为 `…/openai/v1/`，非 `https://` 一律拒绝。Entra ID 范围为 `https://ai.azure.com/.default`。
+- **连接测试**：用与实际处理相同的严格 JSON 架构调用一次聊天；若填写了嵌入部署名，也调用嵌入。失败根据实际响应分类（`key_rejected`、`entra_rejected`、`forbidden`、`deployment_not_found`、`endpoint_not_found`、`wrong_model_kind`、`no_structured_output`、`rate_limited`、`timeout`、`unreachable`、`bad_reply` 等）。界面按步骤显示是否通过、耗时和对策，提供方的原文折叠显示。
+- **GitHub Copilot**（[CopilotCatalog](../../../src/VideoCreator.Core/Selection/AiConnection.cs)）：以已登录 Copilot CLI 的 GitHub 用户（推荐）或 fine-grained personal access token 认证。从 SDK 获取该账户可用的模型、推理深度（Reasoning Effort）、标准与长上下文（如 200K / 1M）和价格（每百万令牌的点数）并显示。选项随模型变化，模型不接受的推理深度和 Context Size 在服务端同样拒绝。测试时用所选设置实际获取一次回复。
+- **保存**（[AiSettingsStore.cs](../../../src/VideoCreator.App/AiSettingsStore.cs)）：`{DataDir}/ai-settings.json`。优先于 appsettings.json，“删除已保存的连接”后恢复为 appsettings.json 的设置。在 Windows 上，API 密钥和令牌用 DPAPI（CurrentUser、应用专用熵）加密。其他 Windows 用户或其他电脑无法解密，此时要求重新输入。无法使用操作系统加密的环境中，以 `secret_storage_unavailable` 拒绝保存密钥和令牌（PRD NFR-SEC-02）。无密钥认证可以保存。
+- **机密处理**：`GET /api/settings` 不含凭据，只返回 `has_api_key`、`has_token`。密钥栏留空进行测试或保存时使用已保存的密钥，但仅用于保存时的同一主机（不发送到其他主机）。从错误详情中去除令牌。切换到 Entra ID 时删除已保存的密钥。不使用 LLM 模式下也不发送连接测试（`local_only`）。
+- API：`POST /api/settings/ai/foundry/test`、`PUT`/`DELETE /api/settings/ai/foundry`、`POST /api/settings/ai/copilot/models`、`POST /api/settings/ai/copilot/test`、`PUT`/`DELETE /api/settings/ai/copilot`（[AiConnectionApi.cs](../../../src/VideoCreator.App/AiConnectionApi.cs)）。测试或保存失败时返回 HTTP 422 及各步骤结果。
+
+### 验证
+- 自动测试 [AiConnectionTests.cs](../../../tests/VideoCreator.Tests/AiConnectionTests.cs)（28 项）：端点规范化与拒绝、假服务器收到的 API 密钥标头和路径、根据提供方实际错误正文分类、按模型校验推理深度和 Context Size、文件中不留明文也不留 base64、设置 API 不返回机密、已保存的密钥不发送到其他主机、测试未通过则不保存、无法加密的环境不保存密钥和令牌、UI 发送的 `github_token` 能到达连接。
+- 真实 Azure（2026-11-18，`videocreator-ai-40800`，`disableLocalAuth=true`）：Entra ID 通过（聊天和嵌入）。假密钥为 `key_rejected`，不存在的部署为 `deployment_not_found`，把嵌入部署用于聊天为 `wrong_model_kind`，均根据实际响应正文分类。保存后的 `ai-settings.json` 不含机密。
+- 真实 GitHub Copilot：以已登录用户获取到 25 个模型。用 `claude-sonnet-5.5`、推理深度 `low` 和 1M 测试并保存。不支持的推理深度以 `copilot_model` 拒绝，无效令牌为 `copilot_auth`。此次验证发现并修复了 snake_case 命名规则把 `GitHubToken` 变成 `git_hub_token`、导致 UI 的 `github_token` 被忽略的缺陷。
+- 真实 Edge（Playwright）：用日语和英语打开设置界面，确认了已保存值的显示、认证方式切换、选项随模型变化，以及从界面进行的 Foundry 连接测试通过。axe 发现输入框没有名称并已修复（`fluent-text-input` 只把默认插槽中的文字作为内部输入框的名称）。
+- 单选按钮无障碍：[ui/src/fluent.js](../../../ui/src/fluent.js) 将 Fluent 的角色、选中状态、禁用状态和组方向同步到宿主属性。仅使用 `ElementInternals` 时，Edge 无障碍树中没有角色，axe 也报告 `aria-allowed-attr`；没有排除任何检查。切换 Context Size 时只更新价格，保留单选按钮焦点。[ui/verify-radio-accessibility.mjs](../../../ui/verify-radio-accessibility.mjs)（`node ui/verify-radio-accessibility.mjs`）在四种语言下验证整个设置界面 axe 违规为零、浏览器公开的名称及选中/禁用状态、方向键和 Home/End 操作、跳过禁用选项，以及模型切换后的动态选项。API 使用固定响应，不使用凭据或外部服务。
+
+### 限制
+- 不包括创建 Foundry 资源或部署，也不获取部署列表（部署名需手动输入）。
+- 暂不支持 macOS / Linux 的操作系统凭据存储（如钥匙串），因此这些系统上不保存密钥和令牌。
+- 显示的 Copilot 价格是 SDK 返回的值，不保证实际计费。

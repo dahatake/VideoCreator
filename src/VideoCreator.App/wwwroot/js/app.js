@@ -47,7 +47,8 @@ async function api(path, opts = {}) {
   const r = await fetch(path, init);
   const text = await r.text();
   const data = text ? JSON.parse(text) : null;
-  if (!r.ok) { const e = new Error(data?.error?.message ?? r.statusText); e.code = data?.error?.code; e.detail = data?.error?.detail; e.status = r.status; throw e; }
+  // opts.accept: error statuses whose body is a result to show (e.g. a failed connection test), not an error to throw
+  if (!r.ok && !(opts.accept ?? []).includes(r.status)) { const e = new Error(data?.error?.message ?? r.statusText); e.code = data?.error?.code; e.detail = data?.error?.detail; e.status = r.status; throw e; }
   return data;
 }
 
@@ -155,7 +156,7 @@ function transmissionCompact(s) {
   const asr = t.asr_endpoint ? trUi('m055', [esc(t.asr_endpoint), off]) : trUi('m056');
   return `<p class="caption send-to"><b>${trUi('m051')}</b> ${llm}／${asr}</p>`;
 }
-async function openSettings() {
+async function openSettings(flash = null) {
   const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
   const local = s.local_only ? trUi('m057') : '';
   const choices = [
@@ -184,10 +185,13 @@ async function openSettings() {
     </fluent-radio-group>
     <p class="caption">${trUi('m073')}</p>
     <fluent-divider style="margin:16px 0"></fluent-divider>
+    ${aiConnectionsSection(s, flash)}
+    <fluent-divider style="margin:16px 0"></fluent-divider>
     ${projectsDirSection(pd)}
     <fluent-divider style="margin:16px 0"></fluent-divider>
     <dl class="facts"><dt>${trUi('m074')}</dt><dd id="app-version">${esc(h.version)}</dd><dt>${trUi('m075')}</dt><dd>${esc(h.informational_version)}</dd><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>${trUi('m076')}</dt><dd>${esc(h.missing_filters.join(', ') || trUi('m041'))}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? trUi('m071'))}</dd><dt>${trUi('m077')}</dt><dd>${h.presets}</dd></dl>`;
   wireProjectsDir(pd);
+  wireAiConnections(s, flash);
   $('#llm')?.addEventListener('change', async () => {
     const radios = $$('#llm fluent-radio');
     const value = radios.find(r => r.checked)?.value;
@@ -285,6 +289,225 @@ function wireProjectsDir(pd) {
     } catch (e) { $('#pdirMsg').innerHTML = errorBar(e); }
     finally { clearInterval(tick); row.hidden = true; controls.forEach(c => { c.disabled = false; }); }
   };
+}
+
+// ---------------- settings: AI connections (enter → test → save; secrets never come back from the server) ----------------
+const aiStamp = (t) => t ? formatDate(t, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+const aiTokens = (n) => n == null ? '' : n >= 1e6 ? `${+(n / 1e6).toFixed(n % 1e6 ? 1 : 0)}M` : `${Math.round(n / 1000)}K`;
+const aiCredits = (v) => v == null ? '—' : String(+v.toFixed(2));
+function aiSource(v) {
+  return v.source === 'app' ? trUi('ai.sourceApp', [aiStamp(v.tested_at)]) : v.source === 'config' ? trUi('ai.sourceConfig') : trUi('ai.sourceNone');
+}
+function aiEffortName(e) {
+  return { none: trUi('ai.e.none'), minimal: trUi('ai.e.minimal'), low: trUi('ai.e.low'), medium: trUi('ai.e.medium'), high: trUi('ai.e.high'), xhigh: trUi('ai.e.xhigh'), max: trUi('ai.e.max') }[e] ?? e;
+}
+// Codes from AiDiagnostics.Classify / AiConnectionApi; free-text messages (input validation) go through serverText.
+function aiDiagnosisText(d, deployment) {
+  if (!d) return '';
+  const known = {
+    local_only: trUi('ai.d.local_only'), copilot_cli: trUi('ai.d.copilot_cli'), entra_signin: trUi('ai.d.entra_signin'), bad_reply: trUi('ai.d.bad_reply'),
+    timeout: trUi('ai.d.timeout'), unreachable: trUi('ai.d.unreachable'), key_rejected: trUi('ai.d.key_rejected'), forbidden: trUi('ai.d.forbidden'),
+    entra_rejected: trUi('ai.d.entra_rejected'), deployment_not_found: trUi('ai.d.deployment_not_found', [deployment ?? '']), endpoint_not_found: trUi('ai.d.endpoint_not_found'),
+    no_structured_output: trUi('ai.d.no_structured_output'), wrong_model_kind: trUi('ai.d.wrong_model_kind'), rate_limited: trUi('ai.d.rate_limited'),
+    service_error: trUi('ai.d.service_error'), copilot_auth: trUi('ai.d.copilot_auth'), copilot_failed: trUi('ai.d.copilot_failed'), failed: trUi('ai.d.failed'),
+    secret_storage_unavailable: trUi('ai.d.secret_storage_unavailable'),
+  }[d.code];
+  if (known) return known;
+  if (/^http_\d+$/.test(d.code)) return trUi('ai.d.http', [d.code.slice(5)]);
+  return serverText(d.message);
+}
+function aiResultBar(r, names, deployments = {}) {
+  const failed = r.steps.find(st => !st.ok);
+  const d = failed?.diagnosis ?? r.diagnosis;
+  const steps = r.steps.map(st => `<li><span class="${st.ok ? 'pass' : 'fail'}" aria-hidden="true">${st.ok ? '✓' : '✗'}</span> ${esc(names[st.id] ?? st.id)}: ${st.ok ? trUi('ai.stepOk') : trUi('ai.stepFailed')} <span class="caption">(${(st.ms / 1000).toFixed(1)} s)</span></li>`).join('');
+  return `<fluent-message-bar intent="${r.ok ? 'success' : 'error'}" layout="multiline">
+    <b>${r.ok ? trUi('ai.testOk') : trUi('ai.testFailed')}</b>${steps ? `<ul class="notes">${steps}</ul>` : ''}
+    ${d ? `<p>${esc(aiDiagnosisText(d, deployments[failed?.id]))}</p>${d.detail ? `<details><summary class="caption">${trUi('ai.detail')}</summary><p class="caption ai-detail">${esc(d.detail)}</p></details>` : ''}` : ''}
+  </fluent-message-bar>`;
+}
+// fluent-text-input names its shadow <input> only from its own default slot (a host aria-label or fluent-field label does not reach it)
+function aiInput(id, label, value, extra = '', help = '') {
+  return `<fluent-text-input id="${id}" value="${esc(value ?? '')}" ${extra}>${label}</fluent-text-input>${help ? `<p class="caption" id="${id}Help">${help}</p>` : ''}`;
+}
+function aiConnectionsSection(s, flash) {
+  const f = s.foundry ?? { source: 'none', auth: 'entra' }, c = s.copilot ?? { source: 'config', auth: 'user' };
+  const blocked = s.local_only ? info(trUi('ai.d.local_only'), 'warning') : '';
+  const buttons = (p, saved) => `<div class="row">
+      <fluent-button id="${p}Test" type="button" ${s.local_only ? 'disabled' : ''}>${trUi('ai.test')}</fluent-button>
+      <fluent-button id="${p}Save" type="button" appearance="primary" ${s.local_only ? 'disabled' : ''}>${trUi('ai.save')}</fluent-button>
+      ${saved ? `<fluent-button id="${p}Forget" type="button" appearance="subtle">${trUi('ai.forget')}</fluent-button>` : ''}
+    </div>
+    <div id="${p}Result" aria-live="polite"></div>`;
+  return `<h3 id="aiConnTitle" style="margin:0 0 4px">${trUi('ai.title')}</h3>
+    <p class="caption">${trUi('ai.intro')}</p>
+    ${s.secret_protection === 'dpapi' ? `<p class="caption">${trUi('ai.protectDpapi')}</p>` : info(trUi('ai.protectNone'), 'warning')}
+    <div id="aiFlash" tabindex="-1" aria-live="polite">${flash ?? ''}</div>
+    <details class="setgroup" id="aiFoundry" ${s.llm_provider === 'azure-openai' || f.source === 'none' ? 'open' : ''}>
+      <summary><h3>Microsoft Foundry</h3><span class="caption group-sum">${esc(aiSource(f))}</span></summary>
+      <div class="stack setgroup-body">
+        <p class="caption">${esc(aiSource(f))}</p>${blocked}
+        ${aiInput('fEndpoint', trUi('ai.f.endpoint'), f.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
+        ${aiInput('fDeployment', trUi('ai.f.deployment'), f.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}
+        ${aiInput('fEmbedding', trUi('ai.f.embedding'), f.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}
+        <p class="caption" id="fAuthLabel">${trUi('ai.f.auth')}</p>
+        <fluent-radio-group id="fAuth" orientation="vertical" aria-labelledby="fAuthLabel" value="${f.auth === 'key' ? 'key' : 'entra'}">
+          ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
+          ${field(trUi('ai.f.key'), '<fluent-radio slot="input" value="key"></fluent-radio>')}
+        </fluent-radio-group>
+        <div id="fEntraBox" class="stack">${aiInput('fTenant', trUi('ai.f.tenant'), f.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}</div>
+        <div id="fKeyBox" class="stack">${aiInput('fKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${f.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
+          f.api_key_unreadable ? trUi('ai.secretUnreadable') : f.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
+        ${buttons('f', f.source === 'app')}
+      </div>
+    </details>
+    <details class="setgroup" id="aiCopilot" ${s.llm_provider === 'copilot' ? 'open' : ''}>
+      <summary><h3>GitHub Copilot</h3><span class="caption group-sum">${esc(aiSource(c))}${c.login ? ` · ${esc(c.login)}` : ''}</span></summary>
+      <div class="stack setgroup-body">
+        <p class="caption">${esc(aiSource(c))}${c.login ? ` · ${trUi('ai.c.account', [esc(c.login)])}` : ''}</p>${blocked}
+        ${!s.copilot_cli ? info(trUi('ai.d.copilot_cli'), 'warning') : ''}
+        <p class="caption" id="cAuthLabel">${trUi('ai.c.auth')}</p>
+        <fluent-radio-group id="cAuth" orientation="vertical" aria-labelledby="cAuthLabel" value="${c.auth === 'token' ? 'token' : 'user'}">
+          ${field(trUi('ai.c.user'), '<fluent-radio slot="input" value="user"></fluent-radio>')}
+          ${field(trUi('ai.c.token'), '<fluent-radio slot="input" value="token"></fluent-radio>')}
+        </fluent-radio-group>
+        <div id="cTokenBox" class="stack">${aiInput('cToken', trUi('ai.c.tokenLabel'), '', `type="password" autocomplete="new-password" spellcheck="false" ${c.has_token ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
+          c.token_unreadable ? trUi('ai.secretUnreadable') : c.has_token ? trUi('ai.c.tokenKeep') : trUi('ai.c.tokenHelp'))}</div>
+        <div class="row" style="align-items:center"><fluent-button id="cLoad" type="button" ${s.local_only || !s.copilot_cli ? 'disabled' : ''}>${trUi('ai.c.load')}</fluent-button><span class="caption" id="cAccount" aria-live="polite"></span></div>
+        <label class="caption">${trUi('ai.c.model')} <select class="native" id="cModel"></select></label>
+        <div id="cOptions" class="stack"></div>
+        ${buttons('c', c.source === 'app')}
+      </div>
+    </details>`;
+}
+function wireAiConnections(s, flash) {
+  if (!$('#aiFoundry')) return;
+  const f = s.foundry ?? {}, c = s.copilot ?? {};
+  const radio = (id) => $$(`#${id} fluent-radio`).find(r => r.checked)?.value;
+  const busy = (prefix, on) => [`#${prefix}Test`, `#${prefix}Save`, `#${prefix}Forget`, '#cLoad', '#settings-close'].map(x => $(x)).filter(Boolean)
+    .forEach(b => { b.disabled = on || (s.local_only && b.id !== 'settings-close' && !b.id.endsWith('Forget')) || (b.id === 'cLoad' && !s.copilot_cli); });
+  if (flash) setTimeout(() => $('#aiFlash')?.focus(), 0);
+
+  // ----- Foundry -----
+  const fAuthSync = () => { const key = radio('fAuth') === 'key'; $('#fKeyBox').hidden = !key; $('#fEntraBox').hidden = key; };
+  $('#fAuth').addEventListener('change', fAuthSync); fAuthSync();
+  const fBody = () => ({ endpoint: $('#fEndpoint').value, deployment: $('#fDeployment').value, embedding_deployment: $('#fEmbedding').value,
+    auth: radio('fAuth') ?? 'entra', tenant_id: $('#fTenant').value, api_key: $('#fKey').value });
+  const fNames = { chat: trUi('ai.step.chat'), embedding: trUi('ai.step.embedding') };
+  const fRun = async (save) => {
+    const body = fBody();
+    busy('f', true); $('#fResult').innerHTML = info(trUi('ai.testing'));
+    try {
+      const r = await api(save ? '/api/settings/ai/foundry' : '/api/settings/ai/foundry/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
+      const result = r.test ?? r;
+      if (save && result.ok) { $('#fKey').value = ''; await aiAfterSave(info(trUi('ai.savedFoundry', [result.endpoint ?? '']), 'success')); return; }
+      $('#fResult').innerHTML = aiResultBar(result, fNames, { chat: body.deployment, embedding: body.embedding_deployment })
+        + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
+    } catch (e) { $('#fResult').innerHTML = errorBar(e); }
+    finally { busy('f', false); }
+  };
+  $('#fTest').addEventListener('click', () => fRun(false));
+  $('#fSave').addEventListener('click', () => fRun(true));
+  $('#fForget')?.addEventListener('click', async () => {
+    if (!confirm(trUi('ai.forgetConfirm', ['Microsoft Foundry']))) return;
+    busy('f', true);
+    try { await api('/api/settings/ai/foundry', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Microsoft Foundry']))); }
+    catch (e) { $('#fResult').innerHTML = errorBar(e); busy('f', false); }
+  });
+
+  // ----- GitHub Copilot -----
+  let models = null;
+  const chosen = { model: c.model ?? '', effort: c.reasoning_effort ?? '', tier: c.context_tier ?? 'default' };
+  const cAuthSync = () => { $('#cTokenBox').hidden = radio('cAuth') !== 'token'; };
+  const model = () => models?.find(m => m.id === chosen.model);
+  const renderModels = () => {
+    const list = models ?? [];
+    const opts = [`<option value="">${trUi('ai.c.modelDefault')}</option>`,
+      ...list.map(m => `<option value="${esc(m.id)}">${esc(m.name)}${m.multiplier != null ? ` · ×${esc(m.multiplier)}` : ''}</option>`)];
+    if (chosen.model && !list.some(m => m.id === chosen.model))
+      opts.push(`<option value="${esc(chosen.model)}">${esc(chosen.model)}${models ? ` ${trUi('ai.c.unavailable')}` : ''}</option>`);
+    $('#cModel').innerHTML = opts.join('');
+    $('#cModel').value = chosen.model;
+    renderOptions();
+  };
+  const renderPrices = (m) => {
+    const p = chosen.tier === 'long_context' ? m.long_context_prices : m.prices;
+    return p ? `<details class="ai-prices"><summary class="caption">${trUi('ai.c.prices', [chosen.tier === 'long_context' ? aiTokens(m.long_context_tokens) : aiTokens(m.default_context_tokens)])}</summary>
+      <dl class="facts"><dt>${trUi('ai.c.pInput')}</dt><dd>${aiCredits(p.input)}</dd><dt>${trUi('ai.c.pOutput')}</dt><dd>${aiCredits(p.output)}</dd>
+      <dt>${trUi('ai.c.pCacheRead')}</dt><dd>${aiCredits(p.cache_read)}</dd><dt>${trUi('ai.c.pCacheWrite')}</dt><dd>${aiCredits(p.cache_write)}</dd>
+      ${m.multiplier != null ? `<dt>${trUi('ai.c.multiplier')}</dt><dd>×${esc(m.multiplier)}</dd>` : ''}</dl>
+      <p class="caption">${trUi('ai.c.pricesNote')}</p></details>` : '';
+  };
+  const renderOptions = () => {
+    const m = model();
+    if (!chosen.model) { $('#cOptions').innerHTML = `<p class="caption">${trUi('ai.c.defaultNote')}</p>`; return; }
+    if (!m) { $('#cOptions').innerHTML = `<p class="caption">${models ? trUi('ai.c.pickAnother') : trUi('ai.c.loadFirst')}</p>`; return; }
+    if (!m.reasoning_efforts.includes(chosen.effort)) chosen.effort = '';
+    if (chosen.tier === 'long_context' && m.long_context_tokens == null) chosen.tier = 'default';
+    const efforts = m.reasoning_efforts.length ? `<p class="caption" id="cEffortLabel">${trUi('ai.c.effort')}</p>
+      <fluent-radio-group id="cEffort" orientation="horizontal" aria-labelledby="cEffortLabel" value="${esc(chosen.effort)}">
+        ${field(m.default_reasoning_effort ? trUi('ai.c.effortDefault', [esc(aiEffortName(m.default_reasoning_effort))]) : trUi('ai.c.effortAuto'), '<fluent-radio slot="input" value=""></fluent-radio>')}
+        ${m.reasoning_efforts.map(e => field(esc(aiEffortName(e)), `<fluent-radio slot="input" value="${esc(e)}"></fluent-radio>`)).join('')}
+      </fluent-radio-group>` : `<p class="caption">${trUi('ai.c.noEffort')}</p>`;
+    const tiers = m.long_context_tokens != null ? `<p class="caption" id="cTierLabel">${trUi('ai.c.context')}</p>
+      <fluent-radio-group id="cTier" orientation="horizontal" aria-labelledby="cTierLabel" value="${esc(chosen.tier)}">
+        ${field(trUi('ai.c.tierDefault', [aiTokens(m.default_context_tokens)]), '<fluent-radio slot="input" value="default"></fluent-radio>')}
+        ${field(trUi('ai.c.tierLong', [aiTokens(m.long_context_tokens)]), '<fluent-radio slot="input" value="long_context"></fluent-radio>')}
+      </fluent-radio-group>` : `<p class="caption">${trUi('ai.c.contextFixed', [aiTokens(m.default_context_tokens) || '—'])}</p>`;
+    $('#cOptions').innerHTML = efforts + tiers + `<div id="cPrices">${renderPrices(m)}</div>`;
+    $('#cEffort')?.addEventListener('change', () => { chosen.effort = radio('cEffort') ?? ''; });
+    $('#cTier')?.addEventListener('change', () => {
+      chosen.tier = radio('cTier') ?? 'default';
+      // Keep the focused radio in place when navigating with arrow keys.
+      $('#cPrices').innerHTML = renderPrices(m);
+    });
+  };
+  const cBody = () => ({ auth: radio('cAuth') ?? 'user', github_token: $('#cToken').value, model: chosen.model || null,
+    reasoning_effort: chosen.model ? chosen.effort || null : null, context_tier: chosen.model ? chosen.tier : null });
+  const loadModels = async () => {
+    busy('c', true); $('#cAccount').textContent = trUi('ai.c.loading');
+    try {
+      const r = await api('/api/settings/ai/copilot/models', { method: 'POST', body: cBody(), accept: [422] });
+      if (!r.account) { $('#cAccount').textContent = ''; $('#cResult').innerHTML = aiResultBar(r, {}); return; }
+      if (!r.account.authenticated) { models = null; $('#cAccount').textContent = ''; $('#cResult').innerHTML = aiResultBar({ ok: false, steps: [], diagnosis: { code: 'copilot_auth', message: '', detail: r.account.message } }, {}); return; }
+      models = r.models;
+      $('#cAccount').textContent = trUi('ai.c.account', [r.account.login ?? '?']) + (r.account.host ? ` (${r.account.host})` : '') + ' · ' + trUi('ai.c.count', [models.length]);
+      $('#cResult').innerHTML = '';
+      renderModels();
+    } catch (e) { $('#cAccount').textContent = ''; $('#cResult').innerHTML = errorBar(e); }
+    finally { busy('c', false); }
+  };
+  $('#cAuth').addEventListener('change', () => { cAuthSync(); models = null; $('#cAccount').textContent = ''; renderModels(); });
+  cAuthSync(); renderModels();
+  $('#cModel').addEventListener('change', () => { chosen.model = $('#cModel').value; chosen.effort = ''; chosen.tier = 'default'; renderOptions(); });
+  $('#cLoad').addEventListener('click', loadModels);
+  // listing models starts the Copilot CLI, so do it only once the user opens this section
+  const autoLoad = () => { if ($('#aiCopilot').open && models === null && !s.local_only && s.copilot_cli && (radio('cAuth') !== 'token' || c.has_token || $('#cToken').value)) loadModels(); };
+  $('#aiCopilot').addEventListener('toggle', autoLoad); autoLoad();
+  const cNames = { auth: trUi('ai.step.auth'), model: trUi('ai.step.model'), chat: trUi('ai.step.chat') };
+  const cRun = async (save) => {
+    busy('c', true); $('#cResult').innerHTML = info(trUi('ai.testingCopilot'));
+    try {
+      const r = await api(save ? '/api/settings/ai/copilot' : '/api/settings/ai/copilot/test', { method: save ? 'PUT' : 'POST', body: cBody(), accept: [422] });
+      const result = r.test ?? r;
+      if (save && result.ok) { $('#cToken').value = ''; await aiAfterSave(info(trUi('ai.savedCopilot', [result.login ?? '?']), 'success')); return; }
+      $('#cResult').innerHTML = aiResultBar(result, cNames) + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
+    } catch (e) { $('#cResult').innerHTML = errorBar(e); }
+    finally { busy('c', false); }
+  };
+  $('#cTest').addEventListener('click', () => cRun(false));
+  $('#cSave').addEventListener('click', () => cRun(true));
+  $('#cForget')?.addEventListener('click', async () => {
+    if (!confirm(trUi('ai.forgetConfirm', ['GitHub Copilot']))) return;
+    busy('c', true);
+    try { await api('/api/settings/ai/copilot', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['GitHub Copilot']))); }
+    catch (e) { $('#cResult').innerHTML = errorBar(e); busy('c', false); }
+  });
+}
+// The provider choices, their availability and the transmission notice all depend on the saved connections, so re-render the dialog.
+async function aiAfterSave(flash) {
+  await openSettings(flash);
+  await refreshProvider();
+  if ($('#transmission')) $('#transmission').innerHTML = transmissionCompact(await api('/api/settings'));
 }
 
 // ---------------- routes ----------------

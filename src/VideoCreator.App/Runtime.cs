@@ -17,8 +17,10 @@ public sealed class Runtime
 {
     readonly AppOptions _o;
     readonly ILogger _log;
-    readonly Lazy<TokenCredential> _cred = new(() => new DefaultAzureCredential(new DefaultAzureCredentialOptions { ExcludeInteractiveBrowserCredential = true }));
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, TokenCredential> _creds = new();
     readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(30) };
+    TokenCredential Credential(string? tenantId) => _creds.GetOrAdd(tenantId ?? "", t => FoundryAuth.DefaultCredential(t.Length == 0 ? null : t));
+    public Func<string?, TokenCredential> CredentialFor => Credential;
 
     public FFmpeg Ff { get; }
     public Store Store { get; }
@@ -26,6 +28,12 @@ public sealed class Runtime
     public string LlmProvider { get; private set; }
     public bool LocalOnly => _o.LocalOnly;
     public AppOptions Options => _o;
+    public AiSettingsStore AiSettings { get; internal set; }
+    /// <summary>The Foundry connection in use: the one saved in the settings screen, else appsettings.json (Entra ID). Null = not configured.</summary>
+    public FoundryConnection? Foundry => AiSettings.Load().Foundry is { } f ? f.ToConnection(AiSettings)
+        : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment);
+    public CopilotConnection Copilot => AiSettings.Load().Copilot is { } c ? c.ToConnection(AiSettings) : new CopilotConnection(Model: _o.Llm.CopilotModel);
+    public string CopilotWorkDir => Path.Combine(_o.ResolvedDataDir, "copilot");
 
     public AudioLibrary Audio { get; }
     public FaceService Faces { get; }
@@ -45,7 +53,9 @@ public sealed class Runtime
         Store = new Store(Path.Combine(o.ResolvedDataDir, "videocreator.db"));
         var presetsDir = o.PresetsDir ?? FindUp("presets") ?? throw new DirectoryNotFoundException("presets folder not found");
         Presets = PresetStore.LoadDirectory(presetsDir).ToDictionary(p => p.Id);
-        LlmProvider = o.LocalOnly ? "none" : o.Llm.Provider;
+        AiSettings = new AiSettingsStore(Path.Combine(o.ResolvedDataDir, "ai-settings.json"), AiSettingsStore.DefaultProtector());
+        var saved = AiSettings.Load().Provider;
+        LlmProvider = o.LocalOnly ? "none" : saved is "azure-openai" or "copilot" or "none" ? saved : o.Llm.Provider;
     }
 
     static string? FindUp(string name)
@@ -59,16 +69,38 @@ public sealed class Runtime
     {
         if (LocalOnly && provider != "none") throw new InvalidOperationException("LLM不使用モードでは選定用の AI（LLM）を使えません。字幕のための音声は ASR に送信します");
         if (provider is not ("azure-openai" or "copilot" or "none")) throw new ArgumentException("provider must be azure-openai | copilot | none");
-        if (provider == "azure-openai" && string.IsNullOrWhiteSpace(_o.Llm.Endpoint)) throw new InvalidOperationException("Microsoft Foundry のエンドポイント（VideoCreator:Llm:Endpoint）が設定されていません。scripts/setup.ps1 を実行してください");
+        if (provider == "azure-openai" && Foundry == null) throw new InvalidOperationException("Microsoft Foundry の接続が設定されていません。設定の「AI の接続」で Microsoft Foundry を入力し、接続テストをして保存してください");
         if (provider == "copilot" && CopilotCli == null) throw new InvalidOperationException("GitHub Copilot CLI が見つかりません。winget install GitHub.Copilot でインストールしてください");
         LlmProvider = provider;
+        AiSettings.Update(s => s with { Provider = provider });
     }
 
+    public void SaveFoundry(FoundryConnection c, DateTimeOffset testedAt)
+    {
+        var keep = AiSettings.Load().Foundry;
+        // switching to Entra ID deletes the stored key; an empty key field keeps the stored one
+        var key = c.UsesKey ? (string.IsNullOrWhiteSpace(c.ApiKey) ? keep?.ApiKeyProtected : AiSettings.Protect(c.ApiKey)) : null;
+        AiSettings.Update(s => s with { Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt) });
+    }
+
+    public void SaveCopilot(CopilotConnection c, string? login, DateTimeOffset testedAt)
+    {
+        var keep = AiSettings.Load().Copilot;
+        var token = c.Auth == "token" ? (string.IsNullOrWhiteSpace(c.GitHubToken) ? keep?.TokenProtected : AiSettings.Protect(c.GitHubToken)) : null;
+        AiSettings.Update(s => s with { Copilot = new SavedCopilot(c.Auth, token, c.Model, c.ReasoningEffort, c.ContextTier, login, testedAt) });
+    }
+
+    public IHighlightSelector FoundrySelector(FoundryConnection c, TimeSpan? timeout = null) =>
+        new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout);
+
+    public ITextEmbedder FoundryEmbedder(FoundryConnection c, TimeSpan? timeout = null) =>
+        new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
+
     public ITranscriber? Asr => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), _cred.Value, _http, _o.Asr.Locale);
+        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), Credential(null), _http, _o.Asr.Locale);
 
     public ITranscriber? AsrForLanguage(string language) => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), _cred.Value, _http, language);
+        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), Credential(null), _http, language);
 
     public string? CopilotCli => _o.Llm.CopilotCliPath ?? CopilotSelector.FindInstalledCli();
 
@@ -87,21 +119,24 @@ public sealed class Runtime
 
     public string? LlmDestination => LlmProvider switch
     {
-        "azure-openai" when Uri.TryCreate(_o.Llm.Endpoint, UriKind.Absolute, out var llmEndpoint) => Origin(llmEndpoint),
+        "azure-openai" when Foundry is { } f && TryEndpoint(f) is { } llmEndpoint => Origin(llmEndpoint),
         "copilot" => "GitHub Copilot",
         _ => null,
     };
 
+    static Uri? TryEndpoint(FoundryConnection f) { try { return FoundryEndpoint.Normalize(f.Endpoint); } catch (ArgumentException) { return null; } }
+
+    /// <summary>Null when the provider is off or its stored connection cannot be used (e.g. a key saved by another Windows user).</summary>
     public IHighlightSelector? Llm => LlmProvider switch
     {
-        "azure-openai" when !string.IsNullOrWhiteSpace(_o.Llm.Endpoint) => new AzureOpenAISelector(new Uri(_o.Llm.Endpoint), _o.Llm.Deployment, _cred.Value),
-        "copilot" when CopilotCli != null => new CopilotSelector(CopilotCli, Path.Combine(_o.ResolvedDataDir, "copilot"), _o.Llm.CopilotModel),
+        "azure-openai" when Foundry is { } f && TryEndpoint(f) != null && (!f.UsesKey || f.ApiKey != null) => FoundrySelector(f),
+        "copilot" when CopilotCli != null && (Copilot is var c && (c.Auth != "token" || c.GitHubToken != null)) => new CopilotSelector(CopilotCli, CopilotWorkDir, Copilot),
         _ => null,
     };
 
     /// <summary>Meaning-level topic detection; same Microsoft Foundry resource as the chat model, so nothing new leaves the machine's configured destination.</summary>
-    public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && !string.IsNullOrWhiteSpace(_o.Llm.Endpoint) && !string.IsNullOrWhiteSpace(_o.Llm.EmbeddingDeployment)
-        ? new AzureOpenAIEmbedder(new Uri(_o.Llm.Endpoint), _o.Llm.EmbeddingDeployment, _cred.Value) : null;
+    public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && Foundry is { } f && TryEndpoint(f) != null && !string.IsNullOrWhiteSpace(f.EmbeddingDeployment) && (!f.UsesKey || f.ApiKey != null)
+        ? FoundryEmbedder(f) : null;
 
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {

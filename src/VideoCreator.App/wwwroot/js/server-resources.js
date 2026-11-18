@@ -199,6 +199,20 @@ export const serverMessages = [
   ['00:00 から・3つ以上・各10秒以上', 'Starts 00:00; at least 3 chapters, at least 10 s each', '00:00 开始，至少 3 章，每章至少 10 秒', '00:00 시작·3개 이상·각 10초 이상'],
   ['≥ 90% で話者とカメラが一致', 'Speaker and camera match ≥90%', '说话人与机位匹配 ≥90%', '화자·카메라 ≥90% 일치'],
   ['≤ 60分（TikTok のアップロード上限）', '≤60 min (TikTok upload limit)', '≤60 分钟（TikTok 上传上限）', '≤60분(TikTok 업로드 한도)'],
+  ["エンドポイントを入力してください（例: https://<リソース名>.cognitiveservices.azure.com/）","Enter the endpoint (for example https://<resource>.cognitiveservices.azure.com/).","请输入终结点（例如 https://<资源名>.cognitiveservices.azure.com/）。","엔드포인트를 입력하세요(예: https://<리소스 이름>.cognitiveservices.azure.com/)."],
+  ["エンドポイントの形式が正しくありません（例: https://<リソース名>.cognitiveservices.azure.com/）","The endpoint format is not valid (for example https://<resource>.cognitiveservices.azure.com/).","终结点格式不正确（例如 https://<资源名>.cognitiveservices.azure.com/）。","엔드포인트 형식이 올바르지 않습니다(예: https://<리소스 이름>.cognitiveservices.azure.com/)."],
+  ["エンドポイントは https:// で始まる必要があります（キーやトークンを暗号化せずに送らないため）","The endpoint must start with https:// so keys and tokens are never sent unencrypted.","终结点必须以 https:// 开头（以免未加密地发送密钥或令牌）。","엔드포인트는 https://로 시작해야 합니다(키나 토큰을 암호화 없이 보내지 않기 위해)."],
+  ["エンドポイントにユーザー名やクエリ（?以降）は含めないでください。キーは「API キー」欄に入力します","Do not include a user name or query (after ?) in the endpoint. Enter the key in the API key field.","终结点中请勿包含用户名或查询（? 之后的内容）。密钥请输入到“API 密钥”栏。","엔드포인트에 사용자 이름이나 쿼리(? 이후)를 포함하지 마세요. 키는 “API 키” 칸에 입력합니다."],
+  ["チャット用モデルのデプロイ名を入力してください（Foundry ポータルの「デプロイ」に表示される名前）","Enter the chat model deployment name (as shown under Deployments in the Foundry portal).","请输入聊天模型的部署名称（Foundry 门户“部署”中显示的名称）。","채팅 모델 배포 이름을 입력하세요(Foundry 포털의 “배포”에 표시되는 이름)."],
+  ["テナント ID は GUID（例: 72f988bf-…）か、ドメイン名（例: contoso.onmicrosoft.com）で入力してください","Enter the tenant ID as a GUID (for example 72f988bf-…) or a domain name (for example contoso.onmicrosoft.com).","请以 GUID（例如 72f988bf-…）或域名（例如 contoso.onmicrosoft.com）输入租户 ID。","테넌트 ID는 GUID(예: 72f988bf-…) 또는 도메인 이름(예: contoso.onmicrosoft.com)으로 입력하세요."],
+  ["保存した API キーをこの Windows ユーザーでは読めません。キーを入力し直してください","This Windows user cannot read the saved API key. Enter the key again.","当前 Windows 用户无法读取已保存的 API 密钥。请重新输入密钥。","현재 Windows 사용자는 저장된 API 키를 읽을 수 없습니다. 키를 다시 입력하세요."],
+  ["エンドポイントが変わったため、保存した API キーは使いません。キーを入力してください","The endpoint changed, so the saved API key is not used. Enter the key.","终结点已更改，因此不会使用已保存的 API 密钥。请输入密钥。","엔드포인트가 바뀌어 저장된 API 키를 사용하지 않습니다. 키를 입력하세요."],
+  ["API キーを入力してください（Azure portal の「キーとエンドポイント」）","Enter the API key (from Keys and Endpoint in the Azure portal).","请输入 API 密钥（Azure 门户“密钥和终结点”）。","API 키를 입력하세요(Azure Portal의 “키 및 엔드포인트”)."],
+  ["保存したトークンをこの Windows ユーザーでは読めません。トークンを入力し直してください","This Windows user cannot read the saved token. Enter the token again.","当前 Windows 用户无法读取已保存的令牌。请重新输入令牌。","현재 Windows 사용자는 저장된 토큰을 읽을 수 없습니다. 토큰을 다시 입력하세요."],
+  ["GitHub トークンを入力してください（Copilot Requests 権限のある fine-grained personal access token）","Enter a GitHub token (a fine-grained personal access token with the Copilot Requests permission).","请输入 GitHub 令牌（具有 Copilot Requests 权限的细粒度个人访问令牌）。","GitHub 토큰을 입력하세요(Copilot Requests 권한이 있는 세분화된 개인 액세스 토큰)."],
+  ["この OS では API キーとトークンを暗号化して保存できないため、保存しません。Microsoft Entra ID またはサインイン済みの GitHub ユーザーを選んでください","This OS cannot store API keys and tokens encrypted, so they are not saved. Choose Microsoft Entra ID or the signed-in GitHub user.","此操作系统无法加密保存 API 密钥和令牌，因此不会保存。请选择 Microsoft Entra ID 或已登录的 GitHub 用户。","이 OS에서는 API 키와 토큰을 암호화해 저장할 수 없어 저장하지 않습니다. Microsoft Entra ID 또는 로그인된 GitHub 사용자를 선택하세요."],
+  ["思考レベルと Context Size は、モデルを選んだときだけ指定できます","Reasoning effort and context size can be set only when a model is chosen.","只有选择模型时才能指定思考级别和上下文大小。","사고 수준과 컨텍스트 크기는 모델을 선택했을 때만 지정할 수 있습니다."],
+  ["Microsoft Foundry の接続が設定されていません。設定の「AI の接続」で Microsoft Foundry を入力し、接続テストをして保存してください","No Microsoft Foundry connection is set up. Enter it under AI connections in Settings, test it and save.","尚未设置 Microsoft Foundry 连接。请在设置的“AI 连接”中输入 Microsoft Foundry，测试连接后保存。","Microsoft Foundry 연결이 설정되지 않았습니다. 설정의 “AI 연결”에서 Microsoft Foundry를 입력하고 연결 테스트 후 저장하세요."],
 ];
 
 // Anchored diagnostic grammars. Captures such as filenames and quoted media words are not translated.
@@ -253,4 +267,8 @@ export const serverPatterns = [
   [/^([\d.]+)分$/, ['{0}分', '{0} min', '{0} 分钟', '{0}분']],
   [/^表示 ([\d.]+) 秒(.*)$/, ['表示 {0} 秒{1}', 'Display {0} s{1}', '显示 {0} 秒{1}', '{0}초 표시{1}']],
   [/^一度に AI で直す上限（(\d+) 件）を超えました。もう一度「Copilotで自動修復」を押すと続きを直します$/, ['一度の上限（{0} 件）を超えました。再度実行してください。', 'AI limit of {0} findings reached. Run auto-repair again to continue.', '已达 AI 单次 {0} 项上限，请再次自动修复以继续。', 'AI 한 번에 {0}개 한도입니다. 자동 복구를 다시 실행하세요.']],
+  [/^モデル「(.+)」はこのアカウントでは使えません。モデル一覧を読み込み直してください$/, ["モデル「{0}」はこのアカウントでは使えません。モデル一覧を読み込み直してください","Model “{0}” is not available to this account. Load the models again.","此账户无法使用模型“{0}”。请重新加载模型列表。","이 계정에서는 모델 “{0}”을(를) 사용할 수 없습니다. 모델 목록을 다시 불러오세요."]],
+  [/^(.+) は思考レベルを指定できません$/, ["{0} は思考レベルを指定できません","{0} has no reasoning effort setting.","{0} 无法指定思考级别。","{0}은(는) 사고 수준을 지정할 수 없습니다."]],
+  [/^(.+) の思考レベルは (.+) から選んでください$/, ["{0} の思考レベルは {1} から選んでください","Choose a reasoning effort for {0} from {1}.","请从 {1} 中选择 {0} 的思考级别。","{0}의 사고 수준은 {1} 중에서 선택하세요."]],
+  [/^(.+) は長いコンテキスト（Long context）に対応していません$/, ["{0} は長いコンテキスト（Long context）に対応していません","{0} does not support long context.","{0} 不支持长上下文（Long context）。","{0}은(는) 긴 컨텍스트(Long context)를 지원하지 않습니다."]],
 ];

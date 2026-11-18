@@ -808,3 +808,27 @@ AI の章分けのプロンプトにも、「分けやすさを高くしてよ�
 - `EditPlan.language` に作成時の言語を保存する。日本語・英語は M PLUS 1p、中国語は Noto Sans CJK SC、韓国語は Noto Sans CJK KR。OFLのフォントとライセンスを `scripts/get-tools.ps1` が取得する。必要なCJKフォントがない場合は書き出しを明示的に失敗させ、OSの代替フォントに依存しない。
 - 検証は [LocalizationTests.cs](../tests/VideoCreator.Tests/LocalizationTests.cs)：APIの永続化と不正値、Speech要求の言語、言語別キャッシュ、単語・空白・伏せ字保持、AIプロンプト、ASS/SRT、libassの実描画と字形欠落、長い英語・中国語・韓国語字幕の安全領域の実測、MP4プレビュー。非日本語の幅推定は幅広の英字も考慮し、描画と顔回避レイアウトで同じフォント調整を使う。文書構造・網羅性・リンクは `node scripts/verify-localized-docs.mjs` で検査する。
 - 制約：この自動テストは合成映像・音声と固定応答を使う。英語・中国語・韓国語の実発話のSpeech認識精度、AI文案の自然さ、ネイティブ話者による翻訳校閲を保証するものではない。字幕の自動翻訳や異なる音声言語が混在する動画の自動言語判定は対象外。
+
+## 21. AI の接続設定（Microsoft Foundry / GitHub Copilot）
+
+設定画面の「AI の接続」で、利用者が接続情報を入力し、接続テストに合格した場合だけ保存する。Foundry のリソースとモデルのデプロイは作成済みが前提で、アプリからは作らない。
+
+### 仕組み
+- **Microsoft Foundry**（[AiConnection.cs](../src/VideoCreator.Core/Selection/AiConnection.cs)）：エンドポイント、チャット用デプロイ名、埋め込み用デプロイ名（任意）、認証方式（Microsoft Entra ID（推奨）/ API キー）、テナント ID（任意）を入力する。エンドポイントは Azure portal・Foundry ポータルのどの形式をコピーしても `…/openai/v1/` に正規化し、`https://` 以外は拒否する。Entra ID のスコープは `https://ai.azure.com/.default`。
+- **接続テスト**：実際の処理と同じ厳密な JSON スキーマでチャットを 1 回呼び、埋め込みのデプロイ名があれば埋め込みも呼ぶ。失敗は実際の応答から分類する（`key_rejected`・`entra_rejected`・`forbidden`・`deployment_not_found`・`endpoint_not_found`・`wrong_model_kind`・`no_structured_output`・`rate_limited`・`timeout`・`unreachable`・`bad_reply` など）。画面では手順ごとの合否・時間・対処を表示し、プロバイダーの原文は折りたたんで表示する。
+- **GitHub Copilot**（[CopilotCatalog](../src/VideoCreator.Core/Selection/AiConnection.cs)）：認証方式は Copilot CLI にサインイン済みの GitHub ユーザー（推奨）か、fine-grained personal access token。SDK から、そのアカウントが使えるモデル、思考レベル（Reasoning Effort）、標準と長いコンテキスト（例：200K / 1M）、料金（100万トークンあたりのクレジット）を取得して表示する。選択肢はモデルごとに変わり、そのモデルが受け付けない思考レベル・Context Size はサーバーでも拒否する。テストでは選んだ設定で実際に 1 回応答を得る。
+- **保存**（[AiSettingsStore.cs](../src/VideoCreator.App/AiSettingsStore.cs)）：`{DataDir}/ai-settings.json`。appsettings.json より優先し、「保存した接続を削除」で appsettings.json の設定に戻る。API キー・トークンは Windows では DPAPI（CurrentUser、アプリ固有のエントロピー）で暗号化する。別の Windows ユーザー・別の PC では復号できず、その場合は再入力を求める。OS の暗号化を使えない環境では、キー・トークンの保存を `secret_storage_unavailable` で拒否する（PRD NFR-SEC-02）。キーレス認証は保存できる。
+- **秘密の扱い**：`GET /api/settings` には資格情報を含めず、`has_api_key`・`has_token` だけを返す。キー欄を空のままテスト・保存すると保存済みのキーを使うが、保存したときと同じホストに対してだけ使う（別のホストへ送らない）。エラー詳細からはトークンを取り除く。Entra ID に切り替えると保存済みのキーを削除する。LLM不使用モードでは接続テストも送信しない（`local_only`）。
+- API：`POST /api/settings/ai/foundry/test`、`PUT`/`DELETE /api/settings/ai/foundry`、`POST /api/settings/ai/copilot/models`、`POST /api/settings/ai/copilot/test`、`PUT`/`DELETE /api/settings/ai/copilot`（[AiConnectionApi.cs](../src/VideoCreator.App/AiConnectionApi.cs)）。テストまたは保存の失敗は HTTP 422 で、手順ごとの結果を返す。
+
+### 検証
+- 自動テスト [AiConnectionTests.cs](../tests/VideoCreator.Tests/AiConnectionTests.cs)（28 件）：エンドポイントの正規化と拒否、偽のサーバーで受けた API キーのヘッダーとパス、プロバイダーの実際のエラー本文からの分類、モデルごとの思考レベル・Context Size の検証、ファイルに平文も base64 も残らないこと、設定 API が秘密を返さないこと、別のホストへ保存済みのキーを送らないこと、テストに不合格なら保存しないこと、暗号化できない環境ではキー・トークンを保存しないこと、UI が送る `github_token` が接続に届くこと。
+- 実 Azure（2026-11-18、`videocreator-ai-40800`、`disableLocalAuth=true`）：Entra ID は合格（チャットと埋め込み）。ダミーのキーは `key_rejected`、存在しないデプロイは `deployment_not_found`、埋め込みのデプロイをチャットに指定すると `wrong_model_kind`。いずれも実際の応答本文で分類した。保存後の `ai-settings.json` に秘密は含まれない。
+- 実 GitHub Copilot：サインイン済みユーザーで 25 モデルを取得。`claude-sonnet-5.5` の思考レベル `low` と 1M でテストして保存した。対応しない思考レベルは `copilot_model` で拒否し、無効なトークンは `copilot_auth`。この検証で、snake_case の命名規則により `GitHubToken` が `git_hub_token` になり、UI の `github_token` が無視される不具合を見つけて直した。
+- 実 Edge（Playwright）：日本語・英語で設定画面を開き、保存済みの値の表示、認証方式の切り替え、モデルごとの選択肢の変化、画面からの Foundry 接続テストの合格を確認した。axe では、入力欄に名前がない問題を見つけて直した（`fluent-text-input` は既定スロットの文字だけを内部の入力欄の名前にする）。
+- ラジオのアクセシビリティ：[ui/src/fluent.js](../ui/src/fluent.js) で Fluent の役割・選択状態・無効状態・グループの向きをホスト属性にも同期する。`ElementInternals` だけでは Edge のアクセシビリティツリーに役割が出ず、axe の `aria-allowed-attr` にも違反していたためで、検査の除外はしていない。Context Size の切り替えでは料金表示だけを更新し、ラジオのフォーカスを失わない。[ui/verify-radio-accessibility.mjs](../ui/verify-radio-accessibility.mjs)（`node ui/verify-radio-accessibility.mjs`）は4言語で設定画面全体の axe 違反ゼロ、ブラウザーが公開する名前・選択状態・無効状態、矢印・Home/End操作、無効な選択肢のスキップ、モデル変更後の動的選択肢を検証する。API は固定応答で、資格情報や外部サービスは使わない。
+
+### 制約
+- Foundry のリソースやデプロイの作成、デプロイ一覧の取得は対象外（デプロイ名は入力する）。
+- macOS / Linux の OS の資格情報ストア（キーチェーンなど）は未対応。そのため、これらの OS ではキー・トークンを保存しない。
+- 表示する Copilot の料金は SDK が返した値で、請求額を保証しない。

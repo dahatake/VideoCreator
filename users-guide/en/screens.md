@@ -302,6 +302,7 @@ While exporting: composition, loudness, QA, related-file creation. Afterwards:
 |---|---|
 | Foundry/Copilot/no LLM | Highlight selection; immediate server change. Close is not Save |
 | Unavailable | Missing endpoint/CLI, forced no-LLM startup |
+| AI connections | Enter Foundry (endpoint, deployments, key or Entra ID) and GitHub Copilot (sign-in, model, reasoning effort, context); only settings that pass **Test connection** are saved. Keys/tokens are DPAPI-encrypted and never returned to the screen or API; they cannot be saved outside Windows |
 | Destinations | Audio/text/authentication; no LLM ≠ no ASR |
 | Current storage/count | New-project location, existing count |
 | New storage/choose folder | Not DB/cache DataDir |

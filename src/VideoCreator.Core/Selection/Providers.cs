@@ -17,10 +17,13 @@ public sealed class AzureOpenAISelector : IHighlightSelector
     public string Model { get; }
 
     public AzureOpenAISelector(Uri v1Endpoint, string deployment, TokenCredential credential)
+        : this(v1Endpoint, deployment, new BearerTokenPolicy(credential, FoundryAuth.Scope)) { }
+
+    /// <summary>Entra ID (<see cref="BearerTokenPolicy"/>) or API key (<see cref="FoundryAuth.Policy"/>).</summary>
+    public AzureOpenAISelector(Uri v1Endpoint, string deployment, AuthenticationPolicy auth, TimeSpan? timeout = null)
     {
         Model = deployment;
-        _client = new ChatClient(deployment, new BearerTokenPolicy(credential, "https://ai.azure.com/.default"),
-            new OpenAIClientOptions { Endpoint = v1Endpoint, NetworkTimeout = TimeSpan.FromMinutes(3) });
+        _client = new ChatClient(deployment, auth, new OpenAIClientOptions { Endpoint = v1Endpoint, NetworkTimeout = timeout ?? TimeSpan.FromMinutes(3) });
     }
 
     public async Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct)
@@ -40,10 +43,24 @@ public sealed class AzureOpenAISelector : IHighlightSelector
 }
 
 /// <summary>GitHub Copilot SDK driving the OS-installed Copilot CLI (verified in spikes/06-copilot-sdk.cs).</summary>
-public sealed class CopilotSelector(string cliPath, string workDir, string? model = null) : IHighlightSelector
+public sealed class CopilotSelector(string cliPath, string workDir, CopilotConnection? connection = null) : IHighlightSelector
 {
+    readonly CopilotConnection _c = connection ?? new();
+    public CopilotSelector(string cliPath, string workDir, string? model) : this(cliPath, workDir, new CopilotConnection(Model: model)) { }
+
     public string Name => "github-copilot";
-    public string Model => model ?? "copilot-default";
+    public string Model => _c.Model ?? "copilot-default";
+
+    /// <summary>Signed-in user (stored OAuth / gh) or only the explicit token — never a token from the environment when one is given.</summary>
+    public static CopilotClientOptions ClientOptions(string cliPath, string workDir, CopilotConnection c) => new()
+    {
+        Connection = RuntimeConnection.ForStdio(cliPath),
+        WorkingDirectory = workDir,
+        GitHubToken = c.Auth == "token" ? (string.IsNullOrWhiteSpace(c.GitHubToken) ? throw new ArgumentException("GitHub トークンを入力してください") : c.GitHubToken.Trim()) : null,
+        UseLoggedInUser = c.Auth != "token",
+    };
+
+    public static ContextTier? Tier(string? tier) => tier switch { "long_context" => ContextTier.LongContext, "default" => ContextTier.Default, _ => null };
 
     public static string? FindInstalledCli()
     {
@@ -61,11 +78,13 @@ public sealed class CopilotSelector(string cliPath, string workDir, string? mode
     async Task<List<string>> AskAsync(string prompt, CancellationToken ct)
     {
         Directory.CreateDirectory(workDir);
-        await using var client = new CopilotClient(new CopilotClientOptions { Connection = RuntimeConnection.ForStdio(cliPath), WorkingDirectory = workDir });
+        await using var client = new CopilotClient(ClientOptions(cliPath, workDir, _c));
         await client.StartAsync(ct);
         await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Model = model,
+            Model = _c.Model,
+            ReasoningEffort = _c.ReasoningEffort,
+            ContextTier = Tier(_c.ContextTier),
             OnPermissionRequest = PermissionHandler.ApproveAll,
             AvailableTools = [],   // pure text generation; the agent gets no shell/file tools
         }, ct);

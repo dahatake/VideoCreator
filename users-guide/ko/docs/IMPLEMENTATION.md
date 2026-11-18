@@ -811,3 +811,27 @@ AI 프롬프트도 「직전 행이 완결·질문이며 다음 행이 앞말을
 - 제약: 자동 테스트는 합성 영상·음성·고정 응답을 사용합니다. 영어·중국어·한국어 실제 발화의 Speech 인식 정확도·AI 문안 자연스러움·원어민 번역 교열을 보장하지 않습니다. 자막 자동 번역·여러 음성 언어가 섞인 영상의 자동 언어 판정은 범위 밖입니다.
 ---
 
+
+## 21. AI 연결 설정(Microsoft Foundry / GitHub Copilot)
+
+설정 화면의 「AI 연결」에서 사용자가 연결 정보를 입력하고, 연결 테스트를 통과한 경우에만 저장한다. Foundry 리소스와 모델 배포는 이미 만들어져 있다고 전제하며, 앱에서 만들지 않는다.
+
+### 구조
+- **Microsoft Foundry**([AiConnection.cs](../../../src/VideoCreator.Core/Selection/AiConnection.cs)): 엔드포인트, 채팅 배포 이름, 임베딩 배포 이름(선택), 인증 방식(Microsoft Entra ID(권장) / API 키), 테넌트 ID(선택)를 입력한다. Azure portal·Foundry 포털의 어떤 형식을 복사해도 `…/openai/v1/`로 정규화하며 `https://` 이외는 거부한다. Entra ID 범위는 `https://ai.azure.com/.default`.
+- **연결 테스트**: 실제 처리와 같은 엄격한 JSON 스키마로 채팅을 1회 호출하고, 임베딩 배포 이름이 있으면 임베딩도 호출한다. 실패는 실제 응답에서 분류한다(`key_rejected`·`entra_rejected`·`forbidden`·`deployment_not_found`·`endpoint_not_found`·`wrong_model_kind`·`no_structured_output`·`rate_limited`·`timeout`·`unreachable`·`bad_reply` 등). 화면에는 단계별 합격 여부·시간·대처를 표시하고, 공급자의 원문은 접어서 표시한다.
+- **GitHub Copilot**([CopilotCatalog](../../../src/VideoCreator.Core/Selection/AiConnection.cs)): Copilot CLI에 로그인한 GitHub 사용자(권장) 또는 fine-grained personal access token으로 인증한다. SDK에서 해당 계정이 쓸 수 있는 모델, 추론 깊이(Reasoning Effort), 표준·긴 컨텍스트(예: 200K / 1M), 요금(100만 토큰당 크레딧)을 가져와 표시한다. 선택지는 모델마다 달라지며, 모델이 받지 않는 추론 깊이·Context Size는 서버에서도 거부한다. 테스트에서는 선택한 설정으로 실제 응답을 1회 받는다.
+- **저장**([AiSettingsStore.cs](../../../src/VideoCreator.App/AiSettingsStore.cs)): `{DataDir}/ai-settings.json`. appsettings.json보다 우선하며, 「저장한 연결 삭제」로 appsettings.json 설정으로 돌아간다. API 키·토큰은 Windows에서 DPAPI(CurrentUser, 앱 고유 엔트로피)로 암호화한다. 다른 Windows 사용자·다른 PC에서는 복호화할 수 없으며, 그 경우 다시 입력을 요청한다. OS 암호화를 쓸 수 없는 환경에서는 키·토큰 저장을 `secret_storage_unavailable`로 거부한다(PRD NFR-SEC-02). 키 없는 인증은 저장할 수 있다.
+- **비밀 처리**: `GET /api/settings`는 자격 증명을 포함하지 않고 `has_api_key`·`has_token`만 반환한다. 키 칸을 비운 채 테스트·저장하면 저장된 키를 쓰지만, 저장했을 때와 같은 호스트에만 사용한다(다른 호스트로 보내지 않음). 오류 세부 정보에서 토큰을 제거한다. Entra ID로 바꾸면 저장된 키를 삭제한다. LLM 미사용 모드에서는 연결 테스트도 보내지 않는다(`local_only`).
+- API: `POST /api/settings/ai/foundry/test`, `PUT`/`DELETE /api/settings/ai/foundry`, `POST /api/settings/ai/copilot/models`, `POST /api/settings/ai/copilot/test`, `PUT`/`DELETE /api/settings/ai/copilot`([AiConnectionApi.cs](../../../src/VideoCreator.App/AiConnectionApi.cs)). 테스트 또는 저장 실패는 HTTP 422로 단계별 결과를 반환한다.
+
+### 검증
+- 자동 테스트 [AiConnectionTests.cs](../../../tests/VideoCreator.Tests/AiConnectionTests.cs)(28건): 엔드포인트 정규화와 거부, 가짜 서버가 받은 API 키 헤더와 경로, 공급자의 실제 오류 본문에서의 분류, 모델별 추론 깊이·Context Size 검증, 파일에 평문도 base64도 남지 않음, 설정 API가 비밀을 반환하지 않음, 저장된 키를 다른 호스트로 보내지 않음, 테스트 불합격 시 저장하지 않음, 암호화할 수 없는 환경에서는 키·토큰을 저장하지 않음, UI가 보내는 `github_token`이 연결에 도달함.
+- 실제 Azure(2026-11-18, `videocreator-ai-40800`, `disableLocalAuth=true`): Entra ID 합격(채팅과 임베딩). 더미 키는 `key_rejected`, 없는 배포는 `deployment_not_found`, 임베딩 배포를 채팅에 지정하면 `wrong_model_kind`. 모두 실제 응답 본문으로 분류했다. 저장 후 `ai-settings.json`에 비밀은 없다.
+- 실제 GitHub Copilot: 로그인한 사용자로 25개 모델을 가져왔다. `claude-sonnet-5.5`를 추론 깊이 `low`와 1M으로 테스트하고 저장했다. 지원하지 않는 추론 깊이는 `copilot_model`로 거부하고, 잘못된 토큰은 `copilot_auth`. 이 검증에서 snake_case 명명 규칙으로 `GitHubToken`이 `git_hub_token`이 되어 UI의 `github_token`이 무시되는 결함을 찾아 고쳤다.
+- 실제 Edge(Playwright): 일본어·영어로 설정 화면을 열어 저장된 값 표시, 인증 방식 전환, 모델별 선택지 변화, 화면에서의 Foundry 연결 테스트 합격을 확인했다. axe에서 입력 칸에 이름이 없는 문제를 찾아 고쳤다(`fluent-text-input`은 기본 슬롯의 문자만 내부 입력 칸의 이름으로 삼는다).
+- 라디오 접근성: [ui/src/fluent.js](../../../ui/src/fluent.js)에서 Fluent의 역할·선택 상태·비활성 상태·그룹 방향을 호스트 속성에도 동기화한다. `ElementInternals`만으로는 Edge 접근성 트리에 역할이 표시되지 않고 axe의 `aria-allowed-attr` 위반도 발생했기 때문이며, 검사 제외는 사용하지 않는다. Context Size를 바꾸면 가격 표시만 갱신하여 라디오의 포커스를 유지한다. [ui/verify-radio-accessibility.mjs](../../../ui/verify-radio-accessibility.mjs)(`node ui/verify-radio-accessibility.mjs`)는 4개 언어의 설정 화면 전체에서 axe 위반 0건, 브라우저가 공개하는 이름·선택 상태·비활성 상태, 화살표·Home/End 조작, 비활성 항목 건너뛰기, 모델 변경 후 동적 선택지를 검증한다. API는 고정 응답이며 자격 증명이나 외부 서비스를 사용하지 않는다.
+
+### 제약
+- Foundry 리소스나 배포 생성, 배포 목록 조회는 대상 외(배포 이름은 입력한다).
+- macOS / Linux의 OS 자격 증명 저장소(키체인 등)는 미지원. 따라서 이들 OS에서는 키·토큰을 저장하지 않는다.
+- 표시하는 Copilot 요금은 SDK가 반환한 값이며 청구액을 보장하지 않는다.
