@@ -4,6 +4,7 @@ public sealed class AppOptions
 {
     public const string Section = "VideoCreator";
     public int Port { get; set; } = 8765;
+    public bool AllowPortFallback { get; set; }
     public string? DataDir { get; set; }
     public string? ProjectsDir { get; set; }
     public string? FfmpegBin { get; set; }

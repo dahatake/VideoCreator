@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -57,6 +59,49 @@ public sealed class VersionTests
             Assert.NotEmpty(health.GetProperty("ffmpeg").GetString()!);
             Assert.Equal(JsonValueKind.Array, health.GetProperty("missing_filters").ValueKind);
             Assert.True(health.GetProperty("presets").GetInt32() > 0);
+        }
+        finally
+        {
+            store?.Dispose();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Kestrel_uses_an_alternate_loopback_port_only_when_the_requested_port_is_occupied(bool occupied)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vc-port-" + Guid.NewGuid().ToString("N"));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        if (!occupied)
+            listener.Stop();
+
+        Store? store = null;
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            await using var app = factory.WithWebHostBuilder(b =>
+            {
+                b.UseSetting("VideoCreator:Port", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                b.UseSetting("VideoCreator:AllowPortFallback", "true");
+                b.UseSetting("VideoCreator:DataDir", Path.Combine(root, "data"));
+                b.UseSetting("VideoCreator:ProjectsDir", Path.Combine(root, "projects"));
+                b.UseSetting("VideoCreator:OpenBrowser", "false");
+                b.UseSetting("VideoCreator:LocalOnly", "true");
+                b.UseSetting("VideoCreator:Asr:Provider", "none");
+            });
+            app.UseKestrel();
+            using var http = app.CreateClient();
+            store = app.Services.GetRequiredService<Runtime>().Store;
+            var address = http.BaseAddress;
+            Assert.NotNull(address);
+            Assert.Equal("127.0.0.1", address.Host);
+            Assert.Equal(!occupied, address.Port == port);
+            var health = await http.GetFromJsonAsync<JsonElement>("/api/health", TestContext.Current.CancellationToken);
+            Assert.Equal(AppVersion.Version, health.GetProperty("version").GetString());
         }
         finally
         {

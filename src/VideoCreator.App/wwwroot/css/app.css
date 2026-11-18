@@ -366,8 +366,15 @@ details.help p { margin: var(--s4) 0 0; }
 @media (prefers-reduced-motion: reduce) { .role-opt, .role-opt * { animation: none !important; transition: none !important; } }
 @media (forced-colors: active) { .role-opt[aria-checked="true"] { outline: 2px solid Highlight; outline-offset: -2px; } .role-ico .role-rec { fill: CanvasText; } }
 
+/* settings dialog: 65vw (the 60-70% band), never narrower than the Fluent default 600px nor wider than the
+   Bootstrap modal-xl 1140px, and always inside the viewport (16px gutters) so 200% zoom never scrolls sideways.
+   Help text keeps a readable measure (WCAG 1.4.8: 80 characters, about 40 CJK glyphs) while inputs use the full width. */
+#settings-dialog::part(dialog) { width: min(calc(100vw - 32px), clamp(600px, 65vw, 1140px)); max-width: none; }
+#settings-body p { max-width: min(80ch, 40em); }
+#settings-body select.native { max-width: 100%; }
+#settings-body fluent-text-input { width: 100%; max-width: none; }
+
 /* settings: AI connections */
-#aiFoundry fluent-text-input, #aiCopilot fluent-text-input { width: 100%; max-width: none; }
 .ai-detail { overflow-wrap: anywhere; font-family: Consolas, ui-monospace, monospace; }
 .ai-prices .facts { margin: var(--s4) 0; }
 

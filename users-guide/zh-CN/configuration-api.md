@@ -74,6 +74,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | Speech 连接 | PUT / DELETE `/settings/ai/speech` | PUT 使用相同请求重新测试，通过才保存；失败返回 422。DELETE 删除已保存连接及密钥并恢复启动配置 |
 | Foundry 连接 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | 相同身份验证字段加上 `deployment`、可选的 `embedding_deployment`。测试聊天与嵌入；强制禁用 LLM 时不可测试或保存 |
 | Azure 资源列表 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`（可省略）。用当前登录的 Entra ID 读取 ARM，返回 `subscriptions`、`accounts`（`endpoint`、`speech`、`foundry`、`key_auth_disabled`、`custom_domain`、`can_transcribe`/`can_chat`/`can_embed`；无法读取权限时为 `null`）和 `issues`（无法列出的订阅）。不读取密钥。失败返回 422（`arm_unauthorized`/`arm_forbidden`/`entra_signin` 等） |
+| 设置草稿 | GET `/settings/drafts`；PUT/DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 设置界面中未应用的输入。GET 只返回有草稿的部分。PUT 去除字符串首尾空白，空值存为 null，超过 2048 字符返回 422，丢弃范围外的枚举值，并返回带 `updated_at` 的草稿。不含密钥/令牌字段。DELETE 返回 204（未知部分返回 404）。草稿不会用于连接，保存、删除或更改保存位置成功后删除 |
 | Azure 部署列表 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`。返回 `deployments`（`name`、`model`、`chat`、`embeddings`、`provisioning_state`）。非 Cognitive Services 的 ID 在发送请求前返回 422（`invalid_input`） |
 | 保存位置 | GET `/settings/projects-dir` | path、source、configured_path、数量、迁移进度 |
 | 保存位置 | POST `/settings/projects-dir/plan` | 预检查 `{"path":"D:\\Videos\\VideoCreator","move":true}` |
@@ -92,7 +93,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 音频 | GET `/bgm?project_id=...` | 曲库和项目曲目，每首有 `analysis`（lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term） |
 | 音频 | POST `/projects/{id}/bgm` | multipart，file（可多个，最多 20）、权利确认 `rights_confirmed`。注册时测量曲目。201 `{tracks, skipped}`（无法读取或不足 5 秒的曲目在 skipped 中附原因） |
 | 音频 | DELETE `/projects/{id}/bgm/{bgmId}` | 移除注册并删除文件。编辑计划使用中返回 409 `E-BGM-IN-USE` |
-| OS | POST `/dialogs/folder` | `{"initial_path":"..."}`，取消返回 `{"path":null}` |
+| OS | POST `/dialogs/folder` | `{"initial_path":"...","title":"..."}`（`title` 可省略，对话框标题）。对话框显示在最前面，取消返回 `{"path":null}` |
 | 卡片 | POST `/projects/{id}/scene-cards` | asset_id **或** brand_path，count 2～6（默认 4），不可同时指定二者 |
 | 卡片 | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}`，后续生成使用图像 |
 | 卡片 | GET `/projects/{id}/scene-cards/{index}` | 提取图像（索引从 0 开始） |

@@ -30,14 +30,16 @@ public sealed class FolderPickerTests : IDisposable
         Assert.Contains("DirectUIHWND", classes);           // Explorer-style IFileOpenDialog
         Assert.Contains("Breadcrumb Parent", classes);      // address bar
         Assert.Equal(FolderPicker.Title, TextOf(dialog));
-        Assert.True(await EventuallyAsync(() => (GetWindowLongPtr(dialog, -20) & 0x8) != 0), "dialog should be topmost");
+        Assert.True(await EventuallyAsync(() => IsInFront(dialog)), "dialog should be the foreground window with no normal window above it");
+        Assert.Equal(0, GetWindowLongPtr(dialog, -20) & 0x8); // not pinned above other apps once it is in front
         await Assert.ThrowsAsync<InvalidOperationException>(() => picker.PickAsync(null, Ct));
         SendMessage(GetDlgItem(dialog, 1), 0x00F5, 0, 0); // BM_CLICK on the select button
         Assert.Equal(_dir, await pick.WaitAsync(TimeSpan.FromSeconds(15), Ct), ignoreCase: true);
 
-        // User cancel returns null and the gate is released again.
-        pick = picker.PickAsync(Path.Combine(_dir, "missing"), Ct);
+        // User cancel returns null and the gate is released again; a caller title replaces the default.
+        pick = picker.PickAsync(Path.Combine(_dir, "missing"), "Choose the projects folder", Ct);
         dialog = await FindDialogAsync();
+        Assert.Equal("Choose the projects folder", TextOf(dialog));
         PostMessage(dialog, 0x0010, 0, 0); // WM_CLOSE == Cancel
         Assert.Null(await pick.WaitAsync(TimeSpan.FromSeconds(15), Ct));
 
@@ -85,6 +87,20 @@ public sealed class FolderPickerTests : IDisposable
         return condition();
     }
 
+    // Foreground, and every visible window enumerated before it (z-order, top first) is a topmost one such as the taskbar.
+    static bool IsInFront(nint dialog)
+    {
+        if (GetForegroundWindow() != dialog) return false;
+        var above = true;
+        EnumWindows((hwnd, _) =>
+        {
+            if (hwnd == dialog) return false;
+            if (IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20) & 0x8) == 0) above = false;
+            return above;
+        }, 0);
+        return above;
+    }
+
     static HashSet<string> Descendants(nint hwnd)
     {
         var set = new HashSet<string>();
@@ -101,6 +117,7 @@ public sealed class FolderPickerTests : IDisposable
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, out int pid);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll")] static extern bool IsWindow(nint hwnd);
+    [DllImport("user32.dll")] static extern nint GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(nint hwnd, StringBuilder name, int max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(nint hwnd, StringBuilder text, int max);
     [DllImport("user32.dll")] static extern nint GetDlgItem(nint hwnd, int id);

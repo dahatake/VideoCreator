@@ -72,6 +72,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | Speech接続 | PUT / DELETE `/settings/ai/speech` | PUTは同じ要求形式で再テストし、合格時のみ保存。不合格は422。DELETEは保存した接続・キーを削除して起動設定へ戻す |
 | Foundry接続 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | Speechと同じ認証欄に `deployment`・任意の `embedding_deployment` を追加。チャットと指定時の埋め込みを検証。LLM不使用固定ではテスト・保存不可 |
 | Azureリソース一覧 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`（省略可）。サインイン中の Entra ID で ARM を読み、`subscriptions`・`accounts`（`endpoint`・`speech`・`foundry`・`key_auth_disabled`・`custom_domain`・`can_transcribe`/`can_chat`/`can_embed`。権限を読めなければ `null`）・`issues`（読めなかったサブスクリプション）を返す。キーは読まない。失敗は422（`arm_unauthorized`/`arm_forbidden`/`entra_signin` 等） |
+| 設定の下書き | GET `/settings/drafts`／PUT・DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 設定画面の未適用の入力。GETは下書きのある節だけを返す。PUTは文字列を前後空白除去・空はnull・2048字超は422、範囲外の列挙値は捨てて保存し `updated_at` を付けて返す。キー・トークンの欄は持たない。DELETEは204（不明な節は404）。下書きは接続に使われず、保存・削除・保存先の変更が成功すると消える |
 | Azureデプロイ一覧 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`。`deployments`（`name`・`model`・`chat`・`embeddings`・`provisioning_state`）を返す。Cognitive Services 以外のIDは送信前に422（`invalid_input`） |
 | 保存先 | GET `/settings/projects-dir` | path、source、configured_path、件数、移動進捗 |
 | 保存先 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` の事前確認 |
@@ -95,7 +96,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 音 | POST `/bgm/shared` | multipart。`/projects/{id}/bgm` と同じ形式で、アプリのデータフォルダーの `bgm` に保存 |
 | 音 | DELETE `/bgm/shared/{bgmId}` | アプリ共通から外す（ファイルも削除）。どのプロジェクトでも編集計画で使っていると 409 `E-BGM-IN-USE` |
 | 音 | POST `/projects/{id}/bgm/{bgmId}/share` | プロジェクトの曲をアプリ共通にする（同じ id のまま、ファイルをアプリのデータフォルダーへ移動）。同じ名前の共通曲があると 409 `E-BGM-EXISTS` |
-| OS | POST `/dialogs/folder` | `{"initial_path":"..."}`。取消は `{"path":null}` |
+| OS | POST `/dialogs/folder` | `{"initial_path":"...","title":"..."}`（`title` は省略可、ダイアログの見出し）。ダイアログは最前面に表示。取消は `{"path":null}` |
 | カード | POST `/projects/{id}/scene-cards` | asset_id **か** brand_path、count 2〜6（既定4）。両方指定不可 |
 | カード | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}`。以後の生成で画像を使用 |
 | カード | GET `/projects/{id}/scene-cards/{index}` | 抽出画像（0始まり） |

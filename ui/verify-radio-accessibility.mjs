@@ -42,6 +42,7 @@ try {
         Object.assign(settings, request.postDataJSON());
         writes.push(request.postDataJSON());
       }
+      if (url.pathname.startsWith('/api/settings/drafts/')) return route.fulfill({ json: request.postDataJSON() ?? {} });
       if (url.pathname === '/api/settings/ai/copilot/test') {
         writes.push(request.postDataJSON());
         return route.fulfill({ json: { ok: true, steps: [] } });
@@ -51,6 +52,7 @@ try {
         '/api/health': { version: 'test', informational_version: 'fixture', missing_filters: [], presets: 0, llm_provider: settings.llm_provider, asr: 'none' },
         '/api/projects': [],
         '/api/settings/projects-dir': { source: 'default', path: 'C:\\Videos', projects: 0 },
+        '/api/settings/drafts': {},
         '/api/settings/ai/copilot/models': {
           account: { authenticated: true, login: 'fixture' },
           models: [

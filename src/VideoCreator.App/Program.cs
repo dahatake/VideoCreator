@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using Microsoft.Extensions.Configuration.Json;
 using VideoCreator.App;
 
@@ -26,11 +28,45 @@ var options = builder.Configuration.GetSection(AppOptions.Section).Get<AppOption
 builder.Services.AddSingleton(options);
 
 // NFR-SEC-01: loopback only. No authentication by design (single local user).
+var endpoint = new IPEndPoint(IPAddress.Loopback, options.Port);
 builder.WebHost.ConfigureKestrel(k =>
 {
-    k.Listen(IPAddress.Loopback, options.Port);
+    k.Listen(endpoint);
     k.Limits.MaxRequestBodySize = 64 * 1024 * 1024;   // the upload endpoint lifts this per request
 });
+var usedFallbackPort = false;
+if (options.AllowPortFallback && endpoint.Port != 0)
+{
+    builder.Services.Configure<SocketTransportOptions>(transport =>
+    {
+        var bind = transport.CreateBoundListenSocket;
+        transport.CreateBoundListenSocket = address =>
+        {
+            if (!ReferenceEquals(address, endpoint))
+                return bind(address);
+
+            var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                socket.Bind(endpoint);
+                return socket;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                socket.Dispose();
+                // Bind the actual listening socket to port 0: no probe-and-release race.
+                var fallback = bind(new IPEndPoint(IPAddress.Loopback, 0));
+                usedFallbackPort = true;
+                return fallback;
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        };
+    });
+}
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = VideoCreator.Json.Options.PropertyNamingPolicy;
@@ -96,7 +132,12 @@ _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg
 }
 app.Lifetime.ApplicationStarted.Register(() =>
 {
-    var url = $"http://127.0.0.1:{options.Port}/";
+    var address = app.Urls.FirstOrDefault(address => address.StartsWith("http://127.0.0.1:", StringComparison.Ordinal));
+    if (address is null)
+        return;
+    var url = address.TrimEnd('/') + "/";
+    if (usedFallbackPort)
+        app.Logger.LogWarning("Port {Port} is already in use; using {Url} instead", options.Port, url);
     app.Logger.LogInformation("VideoCreator {Version} is running at {Url}", AppVersion.InformationalVersion, url);
     if (userSettings != null)
         app.Logger.LogInformation("User settings file: {Path} ({State})", userSettings, File.Exists(userSettings) ? "loaded" : "not found; using bundled defaults");

@@ -35,6 +35,7 @@ const deployments = [
 ];
 try {
   await page.route('**/api/settings', route => route.fulfill({ json: settings }));
+  await page.route('**/api/settings/drafts**', route => route.fulfill(route.request().method() === 'GET' ? { json: {} } : { status: 204 }));
   await page.route('**/api/settings/ai/azure/resources', route => { calls.push(['resources', route.request().postDataJSON()]); return route.fulfill({ json: catalog }); });
   await page.route('**/api/settings/ai/azure/deployments', route => { calls.push(['deployments', route.request().postDataJSON()]); return route.fulfill({ json: { deployments } }); });
   await page.goto(base);

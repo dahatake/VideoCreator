@@ -74,6 +74,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | Speech 연결 | PUT / DELETE `/settings/ai/speech` | PUT은 같은 요청으로 재테스트하고 통과 시 저장. 실패는 422. DELETE는 저장 연결·키를 삭제하고 시작 설정 복원 |
 | Foundry 연결 | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | 같은 인증 필드에 `deployment` 및 선택적 `embedding_deployment` 추가. 채팅·임베딩 검증. LLM 미사용 고정이면 테스트·저장 불가 |
 | Azure 리소스 목록 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`(생략 가능). 로그인한 Entra ID로 ARM을 읽어 `subscriptions`, `accounts`(`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`. 권한을 읽지 못하면 `null`), `issues`(나열하지 못한 구독)를 반환. 키는 읽지 않음. 실패 시 422(`arm_unauthorized`/`arm_forbidden`/`entra_signin` 등) |
+| 설정 초안 | GET `/settings/drafts`, PUT·DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 설정 화면의 적용 전 입력. GET은 초안이 있는 항목만 반환. PUT은 문자열 앞뒤 공백 제거, 빈 값은 null, 2048자 초과는 422, 범위 밖 열거값은 버리고 `updated_at`을 붙여 반환. 키·토큰 필드는 없음. DELETE는 204(알 수 없는 항목은 404). 초안은 연결에 사용되지 않으며 저장·삭제·저장 위치 변경 성공 시 삭제 |
 | Azure 배포 목록 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. `deployments`(`name`, `model`, `chat`, `embeddings`, `provisioning_state`) 반환. Cognitive Services 이외의 ID는 요청 전에 422(`invalid_input`) |
 | 저장 위치 | GET `/settings/projects-dir` | path, source, configured_path, 건수, 이동 진행률 |
 | 저장 위치 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` 사전 확인 |
@@ -92,7 +93,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 소리 | GET `/bgm?project_id=...` | 라이브러리·프로젝트 곡. 각 곡의 `analysis`(lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term) |
 | 소리 | POST `/projects/{id}/bgm` | multipart. file(복수 가능, 최대 20), 권리 확인 `rights_confirmed`. 등록 시 곡 측정. 201 `{tracks, skipped}`(읽지 못하거나 5초 미만인 곡은 skipped에 이유) |
 | 소리 | DELETE `/projects/{id}/bgm/{bgmId}` | 등록 해제(파일도 삭제). 편집 계획에서 사용 중이면 409 `E-BGM-IN-USE` |
-| OS | POST `/dialogs/folder` | `{"initial_path":"..."}`. 취소는 `{"path":null}` |
+| OS | POST `/dialogs/folder` | `{"initial_path":"...","title":"..."}`(`title`은 생략 가능, 대화 상자 제목). 대화 상자는 맨 앞에 표시. 취소는 `{"path":null}` |
 | 카드 | POST `/projects/{id}/scene-cards` | asset_id **또는** brand_path, count 2~6(기본 4). 둘 다 지정 불가 |
 | 카드 | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}`. 이후 생성에서 이미지 사용 |
 | 카드 | GET `/projects/{id}/scene-cards/{index}` | 추출 이미지(0부터 시작) |

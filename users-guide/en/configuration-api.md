@@ -74,6 +74,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 | Speech connection | PUT / DELETE `/settings/ai/speech` | PUT repeats the test with the same body and saves only on success; failure is 422. DELETE removes saved connection/key and restores startup configuration |
 | Foundry connection | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | Same authentication fields plus `deployment` and optional `embedding_deployment`. Tests chat/embeddings; blocked when LLM-disabled mode is forced |
 | Azure resource list | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}` (optional). Reads ARM with the signed-in Entra ID identity and returns `subscriptions`, `accounts` (`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`; `null` when permissions cannot be read) and `issues` (subscriptions that could not be listed). Never reads keys. Failures return 422 (`arm_unauthorized`/`arm_forbidden`/`entra_signin`, etc.) |
+| Settings drafts | GET `/settings/drafts`; PUT/DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | Unapplied Settings input. GET returns only sections with a draft. PUT trims text, stores empty as null, returns 422 above 2048 characters, drops out-of-range enum values, and returns the draft with `updated_at`. No key/token fields. DELETE returns 204 (404 for an unknown section). Drafts are never used for connections and are removed when save, forget or location change succeeds |
 | Azure deployment list | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. Returns `deployments` (`name`, `model`, `chat`, `embeddings`, `provisioning_state`). Non-Cognitive Services IDs get 422 (`invalid_input`) before any request |
 | Storage | GET `/settings/projects-dir` | path, source, configured_path, counts, move progress |
 | Storage | POST `/settings/projects-dir/plan` | Preflight `{"path":"D:\\Videos\\VideoCreator","move":true}` |
@@ -92,7 +93,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 | Audio | GET `/bgm?project_id=...` | Library/project tracks; `analysis` (lufs, lra, start, end, bpm, onset_rate, brightness, energy, short_term) |
 | Audio | POST `/projects/{id}/bgm` | Multipart file(s), max 20; `rights_confirmed`. Analyze on registration. 201 `{tracks, skipped}`; unreadable / <5-second tracks skipped with reasons |
 | Audio | DELETE `/projects/{id}/bgm/{bgmId}` | Unregister and delete file; 409 `E-BGM-IN-USE` when referenced |
-| OS | POST `/dialogs/folder` | `{"initial_path":"..."}`; cancel `{"path":null}` |
+| OS | POST `/dialogs/folder` | `{"initial_path":"...","title":"..."}` (`title` optional, dialog heading). The dialog opens in front; cancel `{"path":null}` |
 | Cards | POST `/projects/{id}/scene-cards` | asset_id **or** brand_path (exclusive), count 2–6, default 4 |
 | Cards | PUT `/projects/{id}/scene-cards/settings` | `{"make":true}` enables images for future generation |
 | Cards | GET `/projects/{id}/scene-cards/{index}` | Extracted image, zero-based |

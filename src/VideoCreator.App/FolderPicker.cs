@@ -11,6 +11,8 @@ namespace VideoCreator.App;
 public interface IFolderPicker
 {
     Task<string?> PickAsync(string? initialPath, CancellationToken ct);
+    /// <summary>Same as <see cref="PickAsync(string?, CancellationToken)"/> with a caller-specific window title (null = the default title).</summary>
+    Task<string?> PickAsync(string? initialPath, string? title, CancellationToken ct) => PickAsync(initialPath, ct);
 }
 
 /// <summary>
@@ -28,8 +30,11 @@ public sealed class FolderPicker : IFolderPicker
 #endif
     readonly SemaphoreSlim _gate = new(1);
 
-    public async Task<string?> PickAsync(string? initialPath, CancellationToken ct)
+    public Task<string?> PickAsync(string? initialPath, CancellationToken ct) => PickAsync(initialPath, null, ct);
+
+    public async Task<string?> PickAsync(string? initialPath, string? title, CancellationToken ct)
     {
+        title = string.IsNullOrWhiteSpace(title) ? Title : new string(title.Trim().Where(ch => !char.IsControl(ch)).Take(200).ToArray());
 #if WINDOWS
         if (!OperatingSystem.IsWindows())
 #else
@@ -43,14 +48,14 @@ public sealed class FolderPicker : IFolderPicker
         {
             string? path;
 #if WINDOWS
-            var session = new DialogSession(initialPath);
+            var session = new DialogSession(initialPath, title);
             var thread = new Thread(session.Run) { IsBackground = true, Name = "FolderPicker" };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             using (ct.Register(session.Cancel))
                 path = await session.Completion; // release the gate only after the dialog has really closed
 #else
-            path = await PickOnMacAsync(initialPath, ct);
+            path = await PickOnMacAsync(initialPath, title, ct);
 #endif
             ct.ThrowIfCancellationRequested();
             if (path != null && (!Path.IsPathFullyQualified(path) || !Directory.Exists(path)))
@@ -74,11 +79,11 @@ public sealed class FolderPicker : IFolderPicker
         "end run",
     ];
 
-    static async Task<string?> PickOnMacAsync(string? initialPath, CancellationToken ct)
+    static async Task<string?> PickOnMacAsync(string? initialPath, string title, CancellationToken ct)
     {
         var start = new ProcessStartInfo("/usr/bin/osascript") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var line in MacScript) { start.ArgumentList.Add("-e"); start.ArgumentList.Add(line); }
-        start.ArgumentList.Add(Title);
+        start.ArgumentList.Add(title);
         start.ArgumentList.Add(ExistingDirectory(initialPath) ?? "");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("フォルダー選択画面を開けませんでした");
         var stdout = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
@@ -116,7 +121,7 @@ public sealed class FolderPicker : IFolderPicker
         }
     }
 
-    sealed class DialogSession(string? initialPath)
+    sealed class DialogSession(string? initialPath, string title)
     {
         readonly TaskCompletionSource<string?> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         volatile bool _cancelled;
@@ -133,25 +138,27 @@ public sealed class FolderPicker : IFolderPicker
                 EnsureUiInitialized();
                 if (_cancelled) { _done.TrySetResult(null); return; }
 
-                // A transparent topmost owner on the cursor's screen keeps the dialog in front of the browser.
+                // A transparent owner on the cursor's screen places the dialog on the screen the user is looking at.
                 var screen = WinForms.Screen.FromPoint(WinForms.Cursor.Position).WorkingArea;
                 using var owner = new WinForms.Form
                 {
-                    FormBorderStyle = WinForms.FormBorderStyle.None, ShowInTaskbar = false, TopMost = true,
+                    FormBorderStyle = WinForms.FormBorderStyle.None, ShowInTaskbar = false,
                     StartPosition = WinForms.FormStartPosition.Manual, Opacity = 0, Size = new(1, 1),
                     Location = new(screen.Left + screen.Width / 2, screen.Top + screen.Height / 2),
                 };
                 using var dialog = new WinForms.FolderBrowserDialog
                 {
-                    Description = Title, UseDescriptionForTitle = true, ShowNewFolderButton = false,
+                    Description = title, UseDescriptionForTitle = true, ShowNewFolderButton = false,
                     AutoUpgradeEnabled = true, ClientGuid = ClientId, AddToRecent = false,
                 };
                 if (ExistingDirectory(initialPath) is { } initial) dialog.SelectedPath = initial;
                 owner.Show();
                 owner.Activate();
-                // Owned dialogs do not reliably inherit TopMost; raise the dialog itself once it exists.
+                // The browser owns the foreground (the click came from it), so this background process must
+                // take it explicitly once the dialog exists; retry briefly because the dialog appears asynchronously.
                 using var raise = new WinForms.Timer { Interval = 50 };
-                raise.Tick += (_, _) => { if (NativeMethods.RaiseDialog(NativeMethods.GetCurrentThreadId())) raise.Stop(); };
+                var attempts = 0;
+                raise.Tick += (_, _) => { if (NativeMethods.RaiseDialog(NativeMethods.GetCurrentThreadId()) || ++attempts >= 60) raise.Stop(); };
                 raise.Start();
                 var result = _cancelled ? WinForms.DialogResult.Cancel : dialog.ShowDialog(owner);
                 _done.TrySetResult(result == WinForms.DialogResult.OK ? dialog.SelectedPath : null);
@@ -187,6 +194,10 @@ public sealed class FolderPicker : IFolderPicker
         [DllImport("user32.dll")] static extern bool IsWindowVisible(nint hwnd);
         [DllImport("user32.dll")] static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(nint hwnd);
+        [DllImport("user32.dll")] static extern nint GetForegroundWindow();
+        [DllImport("user32.dll")] static extern bool BringWindowToTop(nint hwnd);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint hwnd, nint processId);
+        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint attach, uint attachTo, bool on);
 
         static bool IsDialog(nint hwnd)
         {
@@ -201,19 +212,34 @@ public sealed class FolderPicker : IFolderPicker
             return true;
         }, 0);
 
+        /// <summary>True once the visible dialog is the foreground window.</summary>
         public static bool RaiseDialog(uint threadId)
         {
-            var raised = false;
+            nint dialog = 0;
             EnumThreadWindows(threadId, (hwnd, _) =>
             {
                 if (!IsDialog(hwnd) || !IsWindowVisible(hwnd)) return true;
-                const uint NoSizeNoMove = 0x0001 | 0x0002;
-                SetWindowPos(hwnd, -1 /* HWND_TOPMOST */, 0, 0, 0, 0, NoSizeNoMove);
-                SetForegroundWindow(hwnd); // best effort; Windows may only flash the taskbar button
-                raised = true;
+                dialog = hwnd;
                 return false;
             }, 0);
-            return raised;
+            if (dialog == 0) return false;
+            if (GetForegroundWindow() == dialog) return true;
+
+            // Windows' foreground lock refuses SetForegroundWindow from a background process; sharing the
+            // foreground thread's input state for the call is the documented way around it.
+            var foreground = GetWindowThreadProcessId(GetForegroundWindow(), 0);
+            var attached = foreground != 0 && foreground != threadId && AttachThreadInput(threadId, foreground, true);
+            try
+            {
+                // TOPMOST then NOTOPMOST lifts the dialog (and its owner) above other apps without pinning it there.
+                const uint NoSizeNoMove = 0x0001 | 0x0002;
+                SetWindowPos(dialog, -1 /* HWND_TOPMOST */, 0, 0, 0, 0, NoSizeNoMove);
+                SetWindowPos(dialog, -2 /* HWND_NOTOPMOST */, 0, 0, 0, 0, NoSizeNoMove);
+                BringWindowToTop(dialog);
+                SetForegroundWindow(dialog);
+            }
+            finally { if (attached) AttachThreadInput(threadId, foreground, false); }
+            return GetForegroundWindow() == dialog;
         }
     }
 #endif

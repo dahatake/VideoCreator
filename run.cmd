@@ -71,8 +71,8 @@ if not "%RC%"=="0" (
 )
 echo Starting VideoCreator and opening its URL in your default web browser...
 echo Close this window or press Ctrl+C to stop.
-rem Open the configured URL only after the app is listening, using its ApplicationStarted handler.
-dotnet run --project src\VideoCreator.App -c Release --no-build --no-launch-profile -- --VideoCreator:OpenBrowser=true
+rem Open the actual listening URL, even if the configured port is in use.
+dotnet run --project src\VideoCreator.App -c Release --no-build --no-launch-profile -- --VideoCreator:OpenBrowser=true --VideoCreator:AllowPortFallback=true
 set "RC=%errorlevel%"
 if not "%RC%"=="0" (
   echo [ERROR] VideoCreator exited with code %RC%. To diagnose: run.cmd --check

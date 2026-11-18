@@ -156,8 +156,51 @@ function transmissionCompact(s) {
   const asr = t.asr_endpoint ? trUi('m055', [esc(t.asr_endpoint), off]) : trUi('m056');
   return `<p class="caption send-to"><b>${trUi('m051')}</b> ${llm}／${asr}</p>`;
 }
+// ---------------- settings: drafts (unapplied input survives closing the dialog and restarts; never used to connect; keys and tokens are never part of it) ----------------
+const pendingDrafts = {}, draftsOnServer = new Set();
+const draftUrl = (section) => `/api/settings/drafts/${section}`;
+const sameAsSaved = (body, saved) => Object.keys(body).every(k => String(body[k] ?? '').trim() === String(saved[k] ?? '').trim());
+function sendDraft(section, body, keepalive = false) {
+  if (!body && !draftsOnServer.has(section)) return Promise.resolve();
+  if (body) draftsOnServer.add(section); else draftsOnServer.delete(section);
+  if (keepalive) {
+    fetch(draftUrl(section), { method: body ? 'PUT' : 'DELETE', keepalive: true, headers: { 'X-VideoCreator': '1', 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).catch(() => { });
+    return Promise.resolve();
+  }
+  return api(draftUrl(section), body ? { method: 'PUT', body } : { method: 'DELETE' }).catch(() => { });
+}
+// Input equal to what is saved removes the draft, so the "restored" notice appears only for real unapplied changes.
+function queueDraft(section, body, saved, onState) {
+  clearTimeout(pendingDrafts[section]?.timer);
+  const d = pendingDrafts[section] = { body: sameAsSaved(body, saved) ? null : body };
+  onState(d.body !== null);
+  d.timer = setTimeout(() => { if (pendingDrafts[section] === d) delete pendingDrafts[section]; sendDraft(section, d.body); }, 500);
+}
+async function flushDraft(section) {
+  const d = pendingDrafts[section]; if (!d) return;
+  clearTimeout(d.timer); delete pendingDrafts[section];
+  await sendDraft(section, d.body);
+}
+const flushDrafts = () => Promise.all(Object.keys(pendingDrafts).map(flushDraft));
+addEventListener('pagehide', () => Object.keys(pendingDrafts).forEach(k => { const d = pendingDrafts[k]; clearTimeout(d.timer); delete pendingDrafts[k]; sendDraft(k, d.body, true); }));
+function draftNote(section, restoredAt) {
+  const pdir = section === 'projects_dir';
+  const text = restoredAt ? (pdir ? trUi('draft.pdirRestored', [aiStamp(restoredAt)]) : trUi('draft.restored', [aiStamp(restoredAt)])) : (pdir ? trUi('draft.pdirKept') : trUi('draft.kept'));
+  return `<fluent-message-bar intent="info" layout="multiline">${esc(text)}<fluent-button slot="actions" type="button" size="small" data-draft-discard="${section}">${trUi('draft.discard')}</fluent-button></fluent-message-bar>`;
+}
+const draftState = (el, section) => (on) => { if (!$(el)) return; if (!on) $(el).innerHTML = ''; else if (!$(el).firstElementChild) $(el).innerHTML = draftNote(section, null); };
+$('#settings-body').addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-draft-discard]'); if (!b) return;
+  const section = b.dataset.draftDiscard;
+  clearTimeout(pendingDrafts[section]?.timer); delete pendingDrafts[section];
+  b.disabled = true;
+  try { await api(draftUrl(section), { method: 'DELETE' }); await openSettings(); }
+  catch (err) { b.disabled = false; b.closest('fluent-message-bar')?.insertAdjacentHTML('afterend', errorBar(err)); }
+});
 async function openSettings(flash = null) {
-  const s = await api('/api/settings'); const h = await api('/api/health'); const pd = await api('/api/settings/projects-dir');
+  await flushDrafts();
+  const [s, h, pd, dr] = await Promise.all([api('/api/settings'), api('/api/health'), api('/api/settings/projects-dir'), api('/api/settings/drafts')]);
+  draftsOnServer.clear(); Object.keys(dr).forEach(k => draftsOnServer.add(k));
   const local = s.local_only ? trUi('m057') : '';
   const choices = [
     ['azure-openai', `Microsoft Foundry（${s.azure_deployment}）`, [
@@ -185,13 +228,13 @@ async function openSettings(flash = null) {
     </fluent-radio-group>
     <p class="caption">${trUi('m073')}</p>
     <fluent-divider style="margin:16px 0"></fluent-divider>
-    ${aiConnectionsSection(s, flash)}
+    ${aiConnectionsSection(s, flash, dr)}
     <fluent-divider style="margin:16px 0"></fluent-divider>
-    ${projectsDirSection(pd)}
+    ${projectsDirSection(pd, dr.projects_dir)}
     <fluent-divider style="margin:16px 0"></fluent-divider>
     <dl class="facts"><dt>${trUi('m074')}</dt><dd id="app-version">${esc(h.version)}</dd><dt>${trUi('m075')}</dt><dd>${esc(h.informational_version)}</dd><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>${trUi('m076')}</dt><dd>${esc(h.missing_filters.join(', ') || trUi('m041'))}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? trUi('m071'))}</dd><dt>${trUi('m077')}</dt><dd>${h.presets}</dd></dl>`;
   wireProjectsDir(pd);
-  wireAiConnections(s, flash);
+  wireAiConnections(s, flash, dr);
   $('#llm')?.addEventListener('change', async () => {
     const radios = $$('#llm fluent-radio');
     const value = radios.find(r => r.checked)?.value;
@@ -205,17 +248,18 @@ $('#settings-btn').addEventListener('click', () => openSettings().catch(e => {
   $('#settings-body').innerHTML = errorBar(e);
   $('#settings-dialog').show();
 }));
-$('#settings-close').addEventListener('click', () => $('#settings-dialog').hide());
+$('#settings-close').addEventListener('click', () => { flushDrafts(); $('#settings-dialog').hide(); });
 
 // ---------------- settings: projects folder ----------------
 const bytes = (b) => b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : b >= 2 ** 20 ? `${(b / 2 ** 20).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
-function projectsDirSection(pd) {
+function projectsDirSection(pd, draft) {
   const source = { default: trUi('m078'), config: trUi('m079'), app: trUi('m080') }[pd.source] ?? '';
   return `<h3 id="pdirLabel" style="margin:0 0 4px">${trUi('m083')}</h3>
     <p class="caption">${trUi('m084')} <b id="pdirNow">${esc(pd.path)}</b>${trUi('m085', [esc(source), pd.projects])}<br>${trUi('m086')}</p>
-    <div class="row" style="align-items:center"><fluent-text-input id="pdirPath" style="flex:1" placeholder="D:\\Videos\\VideoCreator" aria-label="${trUi('m087')}"></fluent-text-input><fluent-button id="pdirBrowse" type="button">${trUi('m088')}</fluent-button></div>
+    <div id="pdirDraft" aria-live="polite">${draft ? draftNote('projects_dir', draft.updated_at) : ''}</div>
+    <div class="row" style="align-items:center"><fluent-text-input id="pdirPath" style="flex:1" placeholder="D:\\Videos\\VideoCreator" aria-label="${trUi('m087')}" value="${esc(draft?.path ?? '')}"></fluent-text-input><fluent-button id="pdirBrowse" type="button">${trUi('m088')}</fluent-button></div>
     <p class="caption" id="pdirMoveLabel">${trUi('m089')}</p>
-    <fluent-radio-group id="pdirMove" orientation="vertical" aria-labelledby="pdirMoveLabel">
+    <fluent-radio-group id="pdirMove" orientation="vertical" aria-labelledby="pdirMoveLabel" ${draft?.move ? `value="${esc(draft.move)}"` : ''}>
       ${field(trUi('m081'), '<fluent-radio slot="input" value="move"></fluent-radio>')}
       ${field(trUi('m082'), '<fluent-radio slot="input" value="keep"></fluent-radio>')}
     </fluent-radio-group>
@@ -225,15 +269,16 @@ function projectsDirSection(pd) {
     <div id="pdirMsg" aria-live="polite"></div>`;
 }
 function wireProjectsDir(pd) {
-  const choice = () => $$('#pdirMove fluent-radio').find(r => r.checked)?.value;
-  const reset = () => { $('#pdirPlan').innerHTML = ''; };
+  const choice = () => $$('#pdirMove fluent-radio').find(r => r.checked)?.value ?? $('#pdirMove').getAttribute('value') ?? undefined;
+  const draft = () => queueDraft('projects_dir', { path: $('#pdirPath').value ?? '', move: choice() ?? '' }, { path: '', move: '' }, draftState('#pdirDraft', 'projects_dir'));
+  const reset = () => { $('#pdirPlan').innerHTML = ''; draft(); };
   $('#pdirPath').addEventListener('input', reset);
   $('#pdirMove').addEventListener('change', reset);
   $('#pdirBrowse').addEventListener('click', async () => {
     const b = $('#pdirBrowse'); b.disabled = true;
     $('#pdirMsg').innerHTML = info(trUi('m092'));
     try {
-      const r = await api('/api/dialogs/folder', { method: 'POST', body: { initial_path: $('#pdirPath').value || pd.path } });
+      const r = await api('/api/dialogs/folder', { method: 'POST', body: { initial_path: $('#pdirPath').value || pd.path, title: trUi('pdir.pickTitle') } });
       if (r.path != null) { $('#pdirPath').value = r.path; reset(); }
       $('#pdirMsg').innerHTML = r.path == null ? info(trUi('m093')) : '';
     } catch (e) { $('#pdirMsg').innerHTML = errorBar(e); }
@@ -279,8 +324,9 @@ function wireProjectsDir(pd) {
       } catch { }
     }, 500);
     try {
+      await flushDraft('projects_dir');
       const r = await api('/api/settings/projects-dir', { method: 'PUT', body: { path, move } });
-      $('#pdirNow').textContent = r.projects_dir; $('#pdirPlan').innerHTML = ''; $('#pdirPath').value = '';
+      $('#pdirNow').textContent = r.projects_dir; $('#pdirPlan').innerHTML = ''; $('#pdirPath').value = ''; $('#pdirDraft').innerHTML = ''; draftsOnServer.delete('projects_dir');
       const lines = [r.moved ? trUi('m112', [r.moved_items.length, r.documents_updated]) : trUi('m113'), trUi('m114', [r.projects_dir])];
       $('#pdirMsg').innerHTML = info(lines.join(''), r.failed.length ? 'warning' : 'success')
         + (r.failed.length ? `<fluent-message-bar intent="warning" layout="multiline"><b>${trUi('m115')}</b><ul class="notes">${r.failed.map(f => `<li>${esc(f.name)}: ${esc(serverText(f.reason))}</li>`).join('')}</ul>${trUi('m116')}</fluent-message-bar>` : '')
@@ -345,9 +391,13 @@ function azPicker(p, disabled) {
       <div id="${p}PickNote" aria-live="polite"></div>
     </div>`;
 }
-function aiConnectionsSection(s, flash) {
+function aiConnectionsSection(s, flash, dr = {}) {
   const f = s.foundry ?? { source: 'none', auth: 'entra' }, c = s.copilot ?? { source: 'config', auth: 'user' };
   const speech = s.speech ?? { source: 'none', auth: 'entra' };
+  // A restored draft replaces the shown values (not the saved connection); secrets still come only from what is saved.
+  const sv = dr.speech ? { endpoint: dr.speech.endpoint ?? '', auth: dr.speech.auth, tenant_id: dr.speech.tenant_id ?? '' } : speech;
+  const fv = dr.foundry ? { endpoint: dr.foundry.endpoint ?? '', deployment: dr.foundry.deployment ?? '', embedding_deployment: dr.foundry.embedding_deployment ?? '', auth: dr.foundry.auth, tenant_id: dr.foundry.tenant_id ?? '' } : f;
+  const cAuthValue = (dr.copilot?.auth ?? c.auth) === 'token' ? 'token' : 'user';
   const blocked = s.local_only ? info(trUi('ai.d.local_only'), 'warning') : '';
   const buttons = (p, saved, llm = true) => `<div class="row">
       <fluent-button id="${p}Test" type="button" ${s.local_only && llm ? 'disabled' : ''}>${trUi('ai.test')}</fluent-button>
@@ -363,15 +413,16 @@ function aiConnectionsSection(s, flash) {
       <summary><h3>Azure Speech</h3><span class="caption group-sum">${esc(aiSource(speech))}</span></summary>
       <div class="stack setgroup-body">
         <p class="caption">${trUi('ai.s.intro')}</p>
+        <div id="sDraft" aria-live="polite">${dr.speech ? draftNote('speech', dr.speech.updated_at) : ''}</div>
         ${azPicker('s', false)}
-        ${aiInput('sEndpoint', trUi('ai.s.endpoint'), speech.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
+        ${aiInput('sEndpoint', trUi('ai.s.endpoint'), sv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
         <p class="caption" id="sAuthLabel">${trUi('ai.f.auth')}</p>
-        <fluent-radio-group id="sAuth" orientation="vertical" aria-labelledby="sAuthLabel" value="${speech.auth === 'key' ? 'key' : 'entra'}">
+        <fluent-radio-group id="sAuth" orientation="vertical" aria-labelledby="sAuthLabel" value="${sv.auth === 'key' ? 'key' : 'entra'}">
           ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
           ${field(trUi('ai.f.key'), '<fluent-radio slot="input" value="key"></fluent-radio>')}
         </fluent-radio-group>
         <div id="sEntraBox" class="stack">
-          ${aiInput('sTenant', trUi('ai.f.tenant'), speech.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}
+          ${aiInput('sTenant', trUi('ai.f.tenant'), sv.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}
           <p class="caption">${esc(trUi('ai.s.accessHelp'))}</p>
         </div>
         <div id="sKeyBox" class="stack">${aiInput('sKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${speech.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
@@ -383,16 +434,17 @@ function aiConnectionsSection(s, flash) {
       <summary><h3>Microsoft Foundry</h3><span class="caption group-sum">${esc(aiSource(f))}</span></summary>
       <div class="stack setgroup-body">
         <p class="caption">${esc(aiSource(f))}</p>${blocked}
+        <div id="fDraft" aria-live="polite">${dr.foundry ? draftNote('foundry', dr.foundry.updated_at) : ''}</div>
         ${azPicker('f', s.local_only)}
-        ${aiInput('fEndpoint', trUi('ai.f.endpoint'), f.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
-        ${aiInput('fDeployment', trUi('ai.f.deployment'), f.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}
-        ${aiInput('fEmbedding', trUi('ai.f.embedding'), f.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}
+        ${aiInput('fEndpoint', trUi('ai.f.endpoint'), fv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
+        ${aiInput('fDeployment', trUi('ai.f.deployment'), fv.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}
+        ${aiInput('fEmbedding', trUi('ai.f.embedding'), fv.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}
         <p class="caption" id="fAuthLabel">${trUi('ai.f.auth')}</p>
-        <fluent-radio-group id="fAuth" orientation="vertical" aria-labelledby="fAuthLabel" value="${f.auth === 'key' ? 'key' : 'entra'}">
+        <fluent-radio-group id="fAuth" orientation="vertical" aria-labelledby="fAuthLabel" value="${fv.auth === 'key' ? 'key' : 'entra'}">
           ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
           ${field(trUi('ai.f.key'), '<fluent-radio slot="input" value="key"></fluent-radio>')}
         </fluent-radio-group>
-        <div id="fEntraBox" class="stack">${aiInput('fTenant', trUi('ai.f.tenant'), f.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}</div>
+        <div id="fEntraBox" class="stack">${aiInput('fTenant', trUi('ai.f.tenant'), fv.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}</div>
         <div id="fKeyBox" class="stack">${aiInput('fKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${f.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
           f.api_key_unreadable ? trUi('ai.secretUnreadable') : f.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
         ${buttons('f', f.source === 'app')}
@@ -403,8 +455,9 @@ function aiConnectionsSection(s, flash) {
       <div class="stack setgroup-body">
         <p class="caption">${esc(aiSource(c))}${c.login ? ` · ${trUi('ai.c.account', [esc(c.login)])}` : ''}</p>${blocked}
         ${!s.copilot_cli ? info(trUi('ai.d.copilot_cli'), 'warning') : ''}
+        <div id="cDraft" aria-live="polite">${dr.copilot ? draftNote('copilot', dr.copilot.updated_at) : ''}</div>
         <p class="caption" id="cAuthLabel">${trUi('ai.c.auth')}</p>
-        <fluent-radio-group id="cAuth" orientation="vertical" aria-labelledby="cAuthLabel" value="${c.auth === 'token' ? 'token' : 'user'}">
+        <fluent-radio-group id="cAuth" orientation="vertical" aria-labelledby="cAuthLabel" value="${cAuthValue}">
           ${field(trUi('ai.c.user'), '<fluent-radio slot="input" value="user"></fluent-radio>')}
           ${field(trUi('ai.c.token'), '<fluent-radio slot="input" value="token"></fluent-radio>')}
         </fluent-radio-group>
@@ -417,9 +470,9 @@ function aiConnectionsSection(s, flash) {
       </div>
     </details>`;
 }
-function wireAiConnections(s, flash) {
+function wireAiConnections(s, flash, dr = {}) {
   if (!$('#aiFoundry')) return;
-  const f = s.foundry ?? {}, c = s.copilot ?? {};
+  const f = s.foundry ?? {}, c = s.copilot ?? {}, sp = s.speech ?? {};
   // Before fluent-radio-group upgrades, no radio is checked yet: fall back to the server-rendered value.
   const radio = (id) => $$(`#${id} fluent-radio`).find(r => r.checked)?.value ?? $(`#${id}`).getAttribute('value');
   const busy = (prefix, on) => [`#${prefix}Test`, `#${prefix}Save`, `#${prefix}Forget`, '#cLoad', '#settings-close'].map(x => $(x)).filter(Boolean)
@@ -428,10 +481,15 @@ function wireAiConnections(s, flash) {
 
   const sAuthSync = () => { const key = radio('sAuth') === 'key'; $('#sKeyBox').hidden = !key; $('#sEntraBox').hidden = key; };
   $('#sAuth').addEventListener('change', sAuthSync); sAuthSync();
+  const sDraft = () => queueDraft('speech', { endpoint: $('#sEndpoint').value, auth: radio('sAuth') ?? 'entra', tenant_id: $('#sTenant').value },
+    { endpoint: sp.endpoint, auth: sp.auth === 'key' ? 'key' : 'entra', tenant_id: sp.tenant_id }, draftState('#sDraft', 'speech'));
+  ['#sEndpoint', '#sTenant'].forEach(x => $(x).addEventListener('input', sDraft));
+  $('#sAuth').addEventListener('change', sDraft);
   const sRun = async (save) => {
     const body = { endpoint: $('#sEndpoint').value, auth: radio('sAuth') ?? 'entra', tenant_id: $('#sTenant').value, api_key: $('#sKey').value };
     busy('s', true); $('#sResult').innerHTML = info(trUi('ai.testing'));
     try {
+      if (save) await flushDraft('speech');
       const r = await api(save ? '/api/settings/ai/speech' : '/api/settings/ai/speech/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
       const result = r.test ?? r;
       if (save && result.ok) { $('#sKey').value = ''; await aiAfterSave(info(trUi('ai.savedSpeech', [result.endpoint ?? '']), 'success')); return; }
@@ -445,13 +503,17 @@ function wireAiConnections(s, flash) {
   $('#sForget')?.addEventListener('click', async () => {
     if (!confirm(trUi('ai.forgetConfirm', ['Azure Speech']))) return;
     busy('s', true);
-    try { await api('/api/settings/ai/speech', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Azure Speech']))); }
+    try { await flushDraft('speech'); await api('/api/settings/ai/speech', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Azure Speech']))); }
     catch (e) { $('#sResult').innerHTML = errorBar(e); busy('s', false); }
   });
 
   // ----- Foundry -----
   const fAuthSync = () => { const key = radio('fAuth') === 'key'; $('#fKeyBox').hidden = !key; $('#fEntraBox').hidden = key; };
   $('#fAuth').addEventListener('change', fAuthSync); fAuthSync();
+  const fDraft = () => queueDraft('foundry', { endpoint: $('#fEndpoint').value, deployment: $('#fDeployment').value, embedding_deployment: $('#fEmbedding').value, auth: radio('fAuth') ?? 'entra', tenant_id: $('#fTenant').value },
+    { endpoint: f.endpoint, deployment: f.deployment, embedding_deployment: f.embedding_deployment, auth: f.auth === 'key' ? 'key' : 'entra', tenant_id: f.tenant_id }, draftState('#fDraft', 'foundry'));
+  ['#fEndpoint', '#fDeployment', '#fEmbedding', '#fTenant'].forEach(x => $(x).addEventListener('input', fDraft));
+  $('#fAuth').addEventListener('change', fDraft);
   const fBody = () => ({ endpoint: $('#fEndpoint').value, deployment: $('#fDeployment').value, embedding_deployment: $('#fEmbedding').value,
     auth: radio('fAuth') ?? 'entra', tenant_id: $('#fTenant').value, api_key: $('#fKey').value });
   const fNames = { chat: trUi('ai.step.chat'), embedding: trUi('ai.step.embedding') };
@@ -459,6 +521,7 @@ function wireAiConnections(s, flash) {
     const body = fBody();
     busy('f', true); $('#fResult').innerHTML = info(trUi('ai.testing'));
     try {
+      if (save) await flushDraft('foundry');
       const r = await api(save ? '/api/settings/ai/foundry' : '/api/settings/ai/foundry/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
       const result = r.test ?? r;
       if (save && result.ok) { $('#fKey').value = ''; await aiAfterSave(info(trUi('ai.savedFoundry', [result.endpoint ?? '']), 'success')); return; }
@@ -472,7 +535,7 @@ function wireAiConnections(s, flash) {
   $('#fForget')?.addEventListener('click', async () => {
     if (!confirm(trUi('ai.forgetConfirm', ['Microsoft Foundry']))) return;
     busy('f', true);
-    try { await api('/api/settings/ai/foundry', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Microsoft Foundry']))); }
+    try { await flushDraft('foundry'); await api('/api/settings/ai/foundry', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Microsoft Foundry']))); }
     catch (e) { $('#fResult').innerHTML = errorBar(e); busy('f', false); }
   });
 
@@ -519,6 +582,7 @@ function wireAiConnections(s, flash) {
     notes.push(`<p class="caption">${trUi('ai.az.picked')}</p>`);
     note.innerHTML = notes.join('');
     if (p === 'f') { try { await fillDeployments(a); } catch (e) { note.insertAdjacentHTML('beforeend', errorBar(e)); } }
+    (p === 's' ? sDraft : fDraft)();
   };
   const azPick = async (p) => {
     const tenant = $(`#${p}Tenant`).value.trim(), btn = $(`#${p}Pick`), status = $(`#${p}PickStatus`), note = $(`#${p}PickNote`);
@@ -548,12 +612,16 @@ function wireAiConnections(s, flash) {
     $(`#${p}Pick`).addEventListener('click', () => azPick(p));
     $(`#${p}Resource`).addEventListener('change', () => onResource(p));
   }
-  $('#fChatDep').addEventListener('change', () => { $('#fDeployment').value = $('#fChatDep').value; });
-  $('#fEmbDep').addEventListener('change', () => { $('#fEmbedding').value = $('#fEmbDep').value; });
+  $('#fChatDep').addEventListener('change', () => { $('#fDeployment').value = $('#fChatDep').value; fDraft(); });
+  $('#fEmbDep').addEventListener('change', () => { $('#fEmbedding').value = $('#fEmbDep').value; fDraft(); });
 
   // ----- GitHub Copilot -----
   let models = null;
-  const chosen = { model: c.model ?? '', effort: c.reasoning_effort ?? '', tier: c.context_tier ?? 'default' };
+  const cd = dr.copilot;
+  const chosen = cd ? { model: cd.model ?? '', effort: cd.reasoning_effort ?? '', tier: cd.context_tier ?? 'default' }
+    : { model: c.model ?? '', effort: c.reasoning_effort ?? '', tier: c.context_tier ?? 'default' };
+  const cDraft = () => queueDraft('copilot', { auth: radio('cAuth') ?? 'user', model: chosen.model, reasoning_effort: chosen.effort, context_tier: chosen.tier },
+    { auth: c.auth === 'token' ? 'token' : 'user', model: c.model, reasoning_effort: c.reasoning_effort, context_tier: c.context_tier ?? 'default' }, draftState('#cDraft', 'copilot'));
   const cAuthSync = () => { $('#cTokenBox').hidden = radio('cAuth') !== 'token'; };
   const model = () => models?.find(m => m.id === chosen.model);
   const renderModels = () => {
@@ -591,9 +659,10 @@ function wireAiConnections(s, flash) {
         ${field(trUi('ai.c.tierLong', [aiTokens(m.long_context_tokens)]), '<fluent-radio slot="input" value="long_context"></fluent-radio>')}
       </fluent-radio-group>` : `<p class="caption">${trUi('ai.c.contextFixed', [aiTokens(m.default_context_tokens) || '—'])}</p>`;
     $('#cOptions').innerHTML = efforts + tiers + `<div id="cPrices">${renderPrices(m)}</div>`;
-    $('#cEffort')?.addEventListener('change', () => { chosen.effort = radio('cEffort') ?? ''; });
+    $('#cEffort')?.addEventListener('change', () => { chosen.effort = radio('cEffort') ?? ''; cDraft(); });
     $('#cTier')?.addEventListener('change', () => {
       chosen.tier = radio('cTier') ?? 'default';
+      cDraft();
       // Keep the focused radio in place when navigating with arrow keys.
       $('#cPrices').innerHTML = renderPrices(m);
     });
@@ -613,9 +682,9 @@ function wireAiConnections(s, flash) {
     } catch (e) { $('#cAccount').textContent = ''; $('#cResult').innerHTML = errorBar(e); }
     finally { busy('c', false); }
   };
-  $('#cAuth').addEventListener('change', () => { cAuthSync(); models = null; $('#cAccount').textContent = ''; renderModels(); });
+  $('#cAuth').addEventListener('change', () => { cAuthSync(); models = null; $('#cAccount').textContent = ''; renderModels(); cDraft(); });
   cAuthSync(); renderModels();
-  $('#cModel').addEventListener('change', () => { chosen.model = $('#cModel').value; chosen.effort = ''; chosen.tier = 'default'; renderOptions(); });
+  $('#cModel').addEventListener('change', () => { chosen.model = $('#cModel').value; chosen.effort = ''; chosen.tier = 'default'; renderOptions(); cDraft(); });
   $('#cLoad').addEventListener('click', loadModels);
   // listing models starts the Copilot CLI, so do it only once the user opens this section
   const autoLoad = () => { if ($('#aiCopilot').open && models === null && !s.local_only && s.copilot_cli && (radio('cAuth') !== 'token' || c.has_token || $('#cToken').value)) loadModels(); };
@@ -624,6 +693,7 @@ function wireAiConnections(s, flash) {
   const cRun = async (save) => {
     busy('c', true); $('#cResult').innerHTML = info(trUi('ai.testingCopilot'));
     try {
+      if (save) await flushDraft('copilot');
       const r = await api(save ? '/api/settings/ai/copilot' : '/api/settings/ai/copilot/test', { method: save ? 'PUT' : 'POST', body: cBody(), accept: [422] });
       const result = r.test ?? r;
       if (save && result.ok) { $('#cToken').value = ''; await aiAfterSave(info(trUi('ai.savedCopilot', [result.login ?? '?']), 'success')); return; }
@@ -636,7 +706,7 @@ function wireAiConnections(s, flash) {
   $('#cForget')?.addEventListener('click', async () => {
     if (!confirm(trUi('ai.forgetConfirm', ['GitHub Copilot']))) return;
     busy('c', true);
-    try { await api('/api/settings/ai/copilot', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['GitHub Copilot']))); }
+    try { await flushDraft('copilot'); await api('/api/settings/ai/copilot', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['GitHub Copilot']))); }
     catch (e) { $('#cResult').innerHTML = errorBar(e); busy('c', false); }
   });
 }

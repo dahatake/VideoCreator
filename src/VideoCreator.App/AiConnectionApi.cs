@@ -103,11 +103,13 @@ public static class AiConnectionApi
             var (result, conn) = await RunSpeechAsync(rt, req, ct);
             if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
             rt.SaveSpeech(conn, DateTimeOffset.Now);
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Speech);
             return Results.Json(new { test = result, speech = SpeechView(rt) }, Json.Options);
         }).WithSummary("Test, then save the Speech connection only when fast transcription succeeds");
         api.MapDelete("/settings/ai/speech", (Runtime rt) =>
         {
             rt.AiSettings.Update(s => s with { Speech = null });
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Speech);
             return Results.Json(new { speech = SpeechView(rt) }, Json.Options);
         }).WithSummary("Forget the saved Speech connection and key; appsettings.json applies again");
 
@@ -120,11 +122,13 @@ public static class AiConnectionApi
             var (result, conn) = await RunFoundryAsync(rt, req, ct);
             if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
             rt.SaveFoundry(conn with { Endpoint = result.Endpoint! }, DateTimeOffset.Now);
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Foundry);
             return Results.Json(new { test = result, foundry = FoundryView(rt) }, Json.Options);
         }).WithSummary("Test, then save the Microsoft Foundry connection (only when the test passes)");
         api.MapDelete("/settings/ai/foundry", (Runtime rt) =>
         {
             rt.AiSettings.Update(s => s with { Foundry = null });
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Foundry);
             return Results.Json(new { foundry = FoundryView(rt) }, Json.Options);
         }).WithSummary("Forget the saved Foundry connection and its key (appsettings.json applies again)");
 
@@ -155,11 +159,13 @@ public static class AiConnectionApi
             var (result, conn) = await RunCopilotAsync(rt, req, ct);
             if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
             rt.SaveCopilot(conn, result.Login, DateTimeOffset.Now);
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Copilot);
             return Results.Json(new { test = result, copilot = CopilotView(rt) }, Json.Options);
         }).WithSummary("Test, then save the GitHub Copilot connection (only when the test passes)");
         api.MapDelete("/settings/ai/copilot", (Runtime rt) =>
         {
             rt.AiSettings.Update(s => s with { Copilot = null });
+            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Copilot);
             return Results.Json(new { copilot = CopilotView(rt) }, Json.Options);
         }).WithSummary("Forget the saved Copilot connection and its token");
     }

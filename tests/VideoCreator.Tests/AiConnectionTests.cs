@@ -381,6 +381,57 @@ public sealed class AiConnectionTests : IDisposable
     }
 
     [Fact]
+    public async Task Settings_drafts_survive_a_restart_carry_no_secret_are_never_used_and_end_when_saved()
+    {
+        const string secret = "draft-secret-that-must-not-be-kept";
+        const string draftEndpoint = "https://draft-only.cognitiveservices.azure.com/";
+        var ct = TestContext.Current.CancellationToken;
+        await using (var first = App())
+        {
+            using var http = Client(first);
+            var rt = first.Services.GetRequiredService<Runtime>();
+            var before = rt.Speech?.Endpoint;
+            var put = await http.PutAsJsonAsync("/api/settings/drafts/speech", new { endpoint = draftEndpoint, auth = "key", tenant_id = "", api_key = secret }, ct);
+            Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+            (await http.PutAsJsonAsync("/api/settings/drafts/copilot", new { auth = "token", github_token = secret, model = "gpt-5", reasoning_effort = "high", context_tier = "huge" }, ct)).EnsureSuccessStatusCode();
+            (await http.PutAsJsonAsync("/api/settings/drafts/projects_dir", new { path = @"D:\Videos", move = "keep" }, ct)).EnsureSuccessStatusCode();
+            Assert.Equal((HttpStatusCode)422, (await http.PutAsJsonAsync("/api/settings/drafts/foundry", new { endpoint = new string('x', 3000) }, ct)).StatusCode);
+            Assert.Equal(before, rt.Speech?.Endpoint);   // a draft is not a connection
+            Assert.Null(rt.AiSettings.Load().Speech);
+            Assert.All(rt.Store.RawAll(), d => Assert.DoesNotContain(secret, d.Json));
+        }
+
+        using var handler = new SpeechHandler();
+        await using var second = App(speechHandler: handler);
+        second.Services.GetRequiredService<Runtime>().CredentialFactory = _ => new SpeechCredential();
+        using (var http = Client(second))
+        {
+            using (var drafts = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct)))
+            {
+                var root = drafts.RootElement;
+                Assert.Equal(draftEndpoint, root.GetProperty("speech").GetProperty("endpoint").GetString());
+                Assert.Equal("key", root.GetProperty("speech").GetProperty("auth").GetString());
+                Assert.False(root.GetProperty("speech").TryGetProperty("tenant_id", out _));
+                Assert.False(root.GetProperty("speech").TryGetProperty("api_key", out _));
+                Assert.Equal("gpt-5", root.GetProperty("copilot").GetProperty("model").GetString());
+                Assert.False(root.GetProperty("copilot").TryGetProperty("context_tier", out _));   // not a known tier
+                Assert.Equal("keep", root.GetProperty("projects_dir").GetProperty("move").GetString());
+                Assert.False(root.TryGetProperty("foundry", out _));   // rejected as too long
+                Assert.DoesNotContain(secret, root.GetRawText());
+            }
+
+            var saved = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint = "https://speech.cognitiveservices.azure.com/", auth = "entra" }, ct);
+            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await http.DeleteAsync("/api/settings/drafts/copilot", ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.DeleteAsync("/api/settings/drafts/other", ct)).StatusCode);
+            using var after = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct));
+            Assert.False(after.RootElement.TryGetProperty("speech", out _));   // saved → the draft is done
+            Assert.False(after.RootElement.TryGetProperty("copilot", out _));
+            Assert.Equal(JsonValueKind.Object, after.RootElement.GetProperty("projects_dir").ValueKind);
+        }
+    }
+
+    [Fact]
     public async Task Speech_remains_usable_without_an_LLM_and_secret_storage_limitations_are_explicit()
     {
         using var handler = new SpeechHandler();

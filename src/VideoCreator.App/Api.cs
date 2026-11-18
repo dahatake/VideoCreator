@@ -34,7 +34,7 @@ public static class Api
     public sealed record PatchTranscript(List<WordEdit> Edits);
     public sealed record PutBrandKit(List<string>? Paths, bool RightsConfirmed, double? CardSec, bool? Upscale = null);
     /// <summary>Initial directory for the Windows folder selection dialog.</summary>
-    public sealed record PickFolderRequest(string? InitialPath);
+    public sealed record PickFolderRequest(string? InitialPath, string? Title = null);
     /// <summary>Selected absolute directory, or an explicit null when the user cancels.</summary>
     public sealed record PickFolderResponse(
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? Path);
@@ -171,6 +171,7 @@ public static class Api
             secret_protection = rt.AiSettings.Protector.Kind,
         }, Json.Options));
         AiConnectionApi.Map(api);
+        SettingsDrafts.Map(api);
         api.MapPut("/settings", (Runtime rt, Settings s) =>
         {
             try { rt.SetLlmProvider(s.LlmProvider); return Results.Json(new { llm_provider = rt.LlmProvider }, Json.Options); }
@@ -183,9 +184,14 @@ public static class Api
             .WithSummary("Current projects folder, where it comes from (default / config / app) and the progress of a move in flight");
         api.MapPost("/settings/projects-dir/plan", (ProjectsLocation loc, ChangeProjectsDirRequest req) => Results.Json(loc.Plan(req.Path, req.Move), Json.Options))
             .WithSummary("Preview a change of the projects folder (what would move, size, free space, problems); changes nothing");
-        api.MapPut("/settings/projects-dir", async (ProjectsLocation loc, ChangeProjectsDirRequest req, CancellationToken ct) =>
+        api.MapPut("/settings/projects-dir", async (Runtime rt, ProjectsLocation loc, ChangeProjectsDirRequest req, CancellationToken ct) =>
         {
-            try { return Results.Json(await loc.ChangeAsync(req.Path, req.Move, ct), Json.Options); }
+            try
+            {
+                var changed = await loc.ChangeAsync(req.Path, req.Move, ct);
+                SettingsDrafts.Clear(rt.Store, SettingsDrafts.ProjectsDir);
+                return Results.Json(changed, Json.Options);
+            }
             catch (ProjectsBusyException ex) { return Error(409, "E-PROJECTS-BUSY", ex.Message); }
             catch (ArgumentException ex) { return Error(422, "E-VALIDATION", ex.Message); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -636,7 +642,7 @@ public static class Api
         // ---- brand kit: opening / closing videos and scene-card images (one per installation, rights confirmed at registration) ----
         api.MapPost("/dialogs/folder", async (IFolderPicker picker, PickFolderRequest req, CancellationToken ct) =>
         {
-            try { return Results.Json(new PickFolderResponse(await picker.PickAsync(req.InitialPath, ct)), Json.Options); }
+            try { return Results.Json(new PickFolderResponse(await picker.PickAsync(req.InitialPath, req.Title, ct)), Json.Options); }
             catch (PlatformNotSupportedException ex) { return Error(501, "E-FOLDER-PICKER", ex.Message); }
             catch (InvalidOperationException ex) { return Error(409, "E-FOLDER-PICKER", ex.Message); }
             catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or JsonException)
