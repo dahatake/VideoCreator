@@ -27,6 +27,7 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
             b.UseSetting("VideoCreator:Port", "0");
             b.UseSetting("VideoCreator:Asr:Provider", "none");
             b.UseSetting("VideoCreator:Llm:Provider", "none");
+            b.UseSetting("VideoCreator:Llm:Endpoint", "");
         });
         _http = _app.CreateClient();
         _http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
@@ -64,6 +65,8 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
             opening = false,
             closing = true,
             scene_cards = true,
+            make_engage_image = true,
+            engage_image_deployment = "engage-gpt-image",
             mask_words = new[] { "秘密の語" },
         }, ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -83,6 +86,8 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
         Assert.False(saved.Opening);
         Assert.True(saved.Closing);
         Assert.True(saved.SceneCards);
+        Assert.True(saved.MakeEngageImage);
+        Assert.Equal("engage-gpt-image", saved.EngageImageDeployment);
         Assert.Equal(["秘密の語"], saved.MaskWords);
     }
 
@@ -100,6 +105,26 @@ public sealed class ProjectGenerationSettingsTests : IAsyncLifetime
         var project = _app.Services.GetRequiredService<Runtime>().Store.Get<Project>(Kinds.Project, _id);
         Assert.Equal("P4", project!.GenerationSettings.PresetId);
         Assert.Equal("balanced", project.GenerationSettings.Scope);
+        Assert.False(project.GenerationSettings.MakeEngageImage);
+        Assert.False(VideoCreator.Json.Deserialize<JobOptions>("{}").MakeEngageImage);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("gpt-image")]
+    public async Task Image_generation_requires_a_connection_and_deployment_and_opt_out_skips_both(string deployment)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var enabled = await _http.PostAsJsonAsync($"/api/projects/{_id}/jobs",
+            new { preset_ids = new[] { "P4" }, options = new { make_engage_image = true, engage_image_deployment = deployment } }, ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, enabled.StatusCode);
+        var error = await enabled.Content.ReadFromJsonAsync<JsonElement>(ct);
+        Assert.Equal("E-IMAGE-CONFIG", error.GetProperty("error").GetProperty("code").GetString());
+        using var disabled = await _http.PostAsJsonAsync($"/api/projects/{_id}/jobs",
+            new { preset_ids = new[] { "P4" }, options = new { make_engage_image = false } }, ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, disabled.StatusCode);
+        error = await disabled.Content.ReadFromJsonAsync<JsonElement>(ct);
+        Assert.Equal("E-ING-UNSUPPORTED", error.GetProperty("error").GetProperty("code").GetString());
     }
 
     [Fact]

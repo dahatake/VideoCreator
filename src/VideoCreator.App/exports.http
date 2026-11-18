@@ -2,6 +2,20 @@
 @jobId = replace-with-job-id
 @candidateId = replace-with-candidate-id
 @renderId = replace-with-render-id
+@projectId = replace-with-project-id
+
+### Save pattern settings with an optional, separate Viva Engage AI image (default false). Uses the saved Foundry connection.
+PUT {{baseUrl}}/api/projects/{{projectId}}/generation-settings
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"preset_id":"P4","make_engage_image":true,"engage_image_deployment":"gpt-image-1"}
+
+### Generated image and the exact posting text/prompt used (available only when enabled for the source job).
+GET {{baseUrl}}/api/renders/{{renderId}}/files/engage_image
+
+###
+GET {{baseUrl}}/api/renders/{{renderId}}/files/engage_image_prompt
 
 ### Candidates with approval ({at, by, stale}), the latest export status and the last finished export.
 GET {{baseUrl}}/api/jobs/{{jobId}}/candidates
@@ -21,7 +35,7 @@ Content-Type: application/json
 {"approved":false}
 
 ### Export one or more approved candidates: 202 with a render id each. If any cannot be exported nothing starts; the status/code is the first one
-### the single-export route would hit (404 E-NOT-FOUND, 409 E-NOT-APPROVED, 409 E-PLAN-STALE, 422 E-QA-HARDFAIL, 409 E-EXPORT-BUSY), and detail lists each candidate with its own code.
+### the single-export route would hit (404 E-NOT-FOUND, 409 E-NOT-APPROVED, 409 E-PLAN-STALE, 422 E-IMAGE-CONFIG, 422 E-QA-HARDFAIL, 409 E-EXPORT-BUSY), and detail lists each candidate with its own code.
 POST {{baseUrl}}/api/jobs/{{jobId}}/exports
 X-VideoCreator: 1
 Content-Type: application/json
@@ -43,7 +57,6 @@ POST {{baseUrl}}/api/renders/{{renderId}}/cancel
 X-VideoCreator: 1
 
 ### List every pattern (job) of a project: preset names, options, state, candidate / approved / exported counts, busy flag.
-@projectId = replace-with-project-id
 GET {{baseUrl}}/api/projects/{{projectId}}/patterns
 
 ### Delete one pattern: its candidates, edit plans, renders and files. 409 E-JOB-BUSY while it is generating or exporting.

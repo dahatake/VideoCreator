@@ -857,7 +857,8 @@ async function project(id, showSettings = false) {
   const saved = d.project.generation_settings ?? {};
   let selected = saved.preset_id ?? 'P4';
   const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
-    opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [] };
+    opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [],
+    make_engage_image: saved.make_engage_image ?? false, engage_image_deployment: saved.engage_image_deployment ?? '' };
   setSteps(assets.length && allRights ? 1 : 0);
   let estimate = null;
   if (assets.length) try { estimate = await api(`/api/projects/${id}/estimate?preset=${encodeURIComponent(selected)}`); } catch { }
@@ -971,7 +972,19 @@ async function project(id, showSettings = false) {
       </section>
       <section class="card step-col" aria-labelledby="h-pat">
         <h2 id="h-pat">${trUi('m288')}</h2>
-        <div class="grid col-body" id="presets" role="radiogroup" aria-label="${trUi('m289')}">
+        <div class="col-body stack">
+        <section class="stack" aria-labelledby="engage-image-title">
+          <h3 id="engage-image-title">${trUi('engageImage.title')}</h3>
+          <label>${trUi('engageImage.choice')} <select class="native" id="engageImageChoice">
+            <option value="false" ${opts.make_engage_image ? '' : 'selected'}>${trUi('engageImage.off')}</option>
+            <option value="true" ${opts.make_engage_image ? 'selected' : ''}>${trUi('engageImage.on')}</option>
+          </select></label>
+          <label class="stack" id="engageImageDeploymentBox" ${opts.make_engage_image ? '' : 'hidden'}>${trUi('engageImage.deployment')}
+            <input class="native" id="engageImageDeployment" maxlength="200" value="${esc(opts.engage_image_deployment)}" placeholder="gpt-image-1" aria-describedby="engage-image-help">
+          </label>
+          <p class="caption" id="engage-image-help">${trUi('engageImage.help')}</p>
+        </section>
+        <div class="grid" id="presets" role="radiogroup" aria-label="${trUi('m289')}">
           ${presets.map(p => `
             <div class="card selectable preset ${p.available ? '' : 'disabled'} ${p.id === selected ? 'selected' : ''}" style="padding:16px">
               <div class="preset-radio" role="radio" aria-checked="${p.id === selected}" aria-disabled="${!p.available}" tabindex="-1" data-id="${esc(p.id)}">
@@ -982,6 +995,7 @@ async function project(id, showSettings = false) {
               </div>
               <div class="caption">${trUi('m179', [p.examples.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>`).join(' / ')])}</div>
             </div>`).join('')}
+        </div>
         </div>
       </section>
       <section class="card step-col" aria-labelledby="h-gen">
@@ -1358,6 +1372,15 @@ async function project(id, showSettings = false) {
   const scopeRadios = $$('#scopes [role=radio]');
   radioGroup(scopeRadios, (el) => { opts.scope = el.dataset.scope; scopeRadios.forEach(c => { c.classList.toggle('selected', c === el); c.setAttribute('aria-checked', String(c === el)); }); $('#scopeDesc').textContent = scopeLabel[opts.scope][1]; saveOpts(); showCost(); });
   $('#bgm').addEventListener('change', () => { opts.bgm = $('#bgm').value; saveOpts(); });
+  $('#engageImageChoice').addEventListener('change', () => {
+    opts.make_engage_image = $('#engageImageChoice').value === 'true';
+    $('#engageImageDeploymentBox').hidden = !opts.make_engage_image;
+    saveOpts();
+  });
+  $('#engageImageDeployment').addEventListener('input', () => {
+    opts.engage_image_deployment = $('#engageImageDeployment').value.trim();
+    clearTimeout(maskSaveTimer); maskSaveTimer = setTimeout(saveOpts, 250);
+  });
   $('#sfx').addEventListener('change', () => { opts.sfx = $('#sfx').checked; saveOpts(); });
   $('#tsukkomi').addEventListener('change', () => { opts.tsukkomi = $('#tsukkomi').checked; $('#tsukkomiStyle').disabled = !opts.tsukkomi; $('#tsukkomiStyleBox').hidden = !opts.tsukkomi; saveOpts(); });
   $('#orientation').addEventListener('change', async () => {
@@ -1661,6 +1684,7 @@ function patternSummary(j, presets) {
   if (o.scene_cards) bits.push(trUi('m384')); if (o.tsukkomi) bits.push(trUi('m385', [{ telop: trUi('m177'), card: trUi('m325') }[o.tsukkomi_style] ?? trUi('m169')]));
   if (o.orientation === 'portrait') bits.push(trUi('out.portrait')); else if (o.orientation === 'landscape') bits.push(trUi('out.landscape'));
   if (o.mask_words?.length) bits.push(trUi('m386', [o.mask_words.length]));
+  if (o.make_engage_image) bits.push(trUi('engageImage.title'));
   if (j.instruction) bits.push(trUi('m387', [j.instruction]));
   if (o.reuse_analysis === false) bits.push(trUi('m388'));
   return bits.join(' · ');
@@ -1700,7 +1724,8 @@ async function loadPatterns(projectId, presets) {
       await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
         preset_id: x.job.preset_ids[0], scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
         series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
-        opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [] } });
+        opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [],
+        make_engage_image: o.make_engage_image ?? false, engage_image_deployment: o.engage_image_deployment ?? '' } });
       derivedFrom = { project: projectId, job: x.job.id };
       await router();
       $('#gen')?.scrollIntoView({ block: 'center' });
@@ -2592,8 +2617,9 @@ async function exportArtifacts(renderId, box) {
     return;
   }
   if (!box.isConnected) return;
-  const names = { mp4: trUi('m668'), srt: trUi('m669'), ass: trUi('m670'), editplan: trUi('m671'), metadata: trUi('m672'), post: trUi('m673') };
-  const fileUrl = key => `${base}/files/${encodeURIComponent(key)}`;
+  const names = { mp4: trUi('m668'), srt: trUi('m669'), ass: trUi('m670'), editplan: trUi('m671'), metadata: trUi('m672'), post: trUi('m673'),
+    engage_image: trUi('engageImage.artifact'), engage_image_prompt: trUi('engageImage.prompt') };
+  const fileUrl = key => `${base}/files/${encodeURIComponent(key)}${key === 'engage_image' ? `?v=${Date.now()}` : ''}`;
   box.innerHTML = `
     <div class="grid artifact-layout">
       <section class="stack artifact-video">
@@ -2661,7 +2687,7 @@ async function exportArtifacts(renderId, box) {
     }
   }));
   const postBody = $('.post-body', box);
-  const loadPost = () => postPanel(renderId, postBody);
+  const loadPost = () => postPanel(renderId, postBody, false, result.files.some(f => f.key === 'engage_image') ? () => exportArtifacts(renderId, box) : null);
   if (result.files.some(f => f.key === 'post' && f.available)) loadPost();
   else {
     postBody.innerHTML = `<p class="caption">${trUi('m694')}</p><fluent-button class="post-create">${trUi('m695')}</fluent-button>`;
@@ -2675,12 +2701,13 @@ async function exportArtifacts(renderId, box) {
 }
 
 // ---------------- posting texts (YouTube / Viva Engage / chapters) ----------------
-async function postPanel(renderId, box, regenerate = false) {
+async function postPanel(renderId, box, regenerate = false, onRegenerated = null) {
   box.innerHTML = `<p class="caption" role="status">${trUi('m696')}</p>`;
   let k;
   try { k = await api(`/api/renders/${renderId}/post`, regenerate ? { method: 'POST' } : {}); }
   catch (e) { if (box.isConnected) box.innerHTML = errorBar(e); return; }
   if (!box.isConnected) return;
+  if (regenerate && onRegenerated) { await onRegenerated(); return; }
   const block = (key, title, text, limit, hint) => `
     <div class="stack post-block" style="gap:4px">
       <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -2711,7 +2738,7 @@ async function postPanel(renderId, box, regenerate = false) {
   }));
   $('.post-again', box).addEventListener('click', () => {
     box.innerHTML = `<p class="caption" aria-live="polite">${trUi('m711')}</p>`;
-    postPanel(renderId, box, true);
+    postPanel(renderId, box, true, onRegenerated);
   });
 }
 

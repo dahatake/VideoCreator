@@ -35,6 +35,7 @@ public sealed class PipelineServices
     public Func<string, ITranscriber?>? AsrForLanguage { get; init; }
     public IHighlightSelector? Llm { get; init; }
     public ITextEmbedder? Embedder { get; init; }
+    public Func<string, IImageGenerator>? ImageGenerator { get; init; }
     public Pricing Pricing { get; init; } = new();
     public List<string> Dictionary { get; init; } = [];
     public int SelectionCharBudget { get; init; } = SelectionService.DefaultCharBudget;
@@ -900,6 +901,24 @@ public sealed class PipelineRunner(PipelineServices s)
     {
         var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
         return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main, plan.Language), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
+    }
+
+    public async Task<Render> EngageImageAsync(Render render, EditPlan plan, PostKit post, CancellationToken ct)
+    {
+        var options = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options : null;
+        if (options?.MakeEngageImage != true) return render;
+        if (s.ImageGenerator == null || string.IsNullOrWhiteSpace(options.EngageImageDeployment))
+            throw new PipelineException("E-IMAGE-CONFIG", "画像生成用の Microsoft Foundry 接続と GPT Image デプロイ名を設定してください");
+        EnsureCurrentPlan(plan);
+        var path = Path.ChangeExtension(render.Path, ".engage.png");
+        var provenance = await EngageImage.WriteAsync(s.Ff, s.ImageGenerator(options.EngageImageDeployment.Trim()),
+            post.Engage, options.EngageImageDeployment.Trim(), path, ct);
+        var promptPath = Path.ChangeExtension(render.Path, ".engage-image.json");
+        await File.WriteAllTextAsync(promptPath, Json.Serialize(provenance, true), ct);
+        return render with { Outputs = new Dictionary<string, string>(render.Outputs)
+        {
+            ["engage_image"] = path, ["engage_image_prompt"] = promptPath,
+        } };
     }
 
     /// <summary>FR-EXP-03: posting metadata suggestions (LLM when available, otherwise a template).</summary>

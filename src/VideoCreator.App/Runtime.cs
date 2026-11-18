@@ -7,6 +7,7 @@ using VideoCreator.Media;
 using VideoCreator.Pipeline;
 using VideoCreator.Planning;
 using VideoCreator.Presets;
+using VideoCreator.Rendering;
 using VideoCreator.Selection;
 using VideoCreator.Storage;
 
@@ -160,9 +161,23 @@ public sealed class Runtime
     public ITextEmbedder? Embedder => LlmProvider == "azure-openai" && Foundry is { } f && TryEndpoint(f) != null && !string.IsNullOrWhiteSpace(f.EmbeddingDeployment) && (!f.UsesKey || f.ApiKey != null)
         ? FoundryEmbedder(f) : null;
 
+    public string? ImageConfigurationError(bool enabled, string? deployment) => !enabled ? null
+        : LocalOnly ? "LLM不使用モードでは画像生成を使えません"
+        : string.IsNullOrWhiteSpace(deployment) ? "画像生成用の GPT Image デプロイ名を入力してください"
+        : Foundry is not { } f || TryEndpoint(f) == null ? "設定の「AI の接続」で Microsoft Foundry を設定してください（画像生成はこの接続を使用します）"
+        : f.UsesKey && string.IsNullOrWhiteSpace(f.ApiKey) ? "保存した Foundry API キーを読めません。設定画面で入力し直してください"
+        : null;
+
+    IImageGenerator ImageGenerator(string deployment)
+    {
+        if (ImageConfigurationError(true, deployment) is { } error) throw new PipelineException("E-IMAGE-CONFIG", error);
+        var f = Foundry!;
+        return new FoundryImageGenerator(FoundryEndpoint.Normalize(f.Endpoint), deployment, FoundryAuth.Policy(f, Credential), _http);
+    }
+
     public PipelineRunner CreateRunner() => new(new PipelineServices
     {
         Ff = Ff, Store = Store, Presets = Presets, DataDir = _o.ResolvedDataDir, Asr = Asr, AsrForLanguage = AsrForLanguage, Llm = Llm, Embedder = Embedder, Dictionary = _o.Dictionary, SelectionCharBudget = _o.Llm.SingleCallCharBudget,
-        Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces, UpscaleModel = UpscaleModel,
+        Log = s => _log.LogInformation("{Msg}", s), Audio = Audio, Faces = Faces, UpscaleModel = UpscaleModel, ImageGenerator = ImageGenerator,
     });
 }

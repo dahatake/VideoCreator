@@ -30,6 +30,8 @@ public sealed record ProjectWorkflowState
 
 public sealed record ProjectGenerationSettings
 {
+    public bool MakeEngageImage { get; init; }
+    public string EngageImageDeployment { get; init; } = "";
     public string PresetId { get; init; } = "P4";
     public string Scope { get; init; } = "balanced";
     public string Bgm { get; init; } = "auto";
@@ -663,6 +665,8 @@ public sealed record CostEstimate(double AsrMinutes, int LlmInputTokens, int Llm
 /// <summary>User-selectable options for one generation (PRD FR-SEL-10 and §7.9/7.6).</summary>
 public sealed record JobOptions
 {
+    public bool MakeEngageImage { get; init; }
+    public string EngageImageDeployment { get; init; } = "";
     /// <summary>How much of a long transcript is sent to the AI: full | balanced | economy.</summary>
     public string Scope { get; init; } = "balanced";
     /// <summary>auto (preset default) | none | scene (choose per scene from the project's registered tracks, else the library) | library/user track id.</summary>

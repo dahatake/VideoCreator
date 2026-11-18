@@ -104,6 +104,8 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
                     Exports[renderId] = Exports[renderId] with { Progress = 0.95, Step = "投稿用のタイトル・説明文の案を作っています" };
                     var md = await runner.MetadataAsync(cand, plan, ct);
                     var post = await runner.PostKitAsync(cand, plan, ct);
+                    Exports[renderId] = Exports[renderId] with { Progress = 0.97, Step = "投稿用の成果物を作っています（設定時は Viva Engage 画像も生成します）" };
+                    render = await runner.EngageImageAsync(render, plan, post, ct);
                     var mdFile = Path.ChangeExtension(render.Path, ".metadata.md");
                     var postFile = Path.ChangeExtension(render.Path, ".post.json");
                     await File.WriteAllTextAsync(mdFile, md + Planning.PostCopy.Markdown(post), ct);

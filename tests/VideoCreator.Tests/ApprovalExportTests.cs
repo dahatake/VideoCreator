@@ -7,6 +7,8 @@ using VideoCreator.App;
 using VideoCreator.Media;
 using VideoCreator.Models;
 using VideoCreator.Planning;
+using VideoCreator.Rendering;
+using VideoCreator.Selection;
 using VideoCreator.Storage;
 
 namespace VideoCreator.Tests;
@@ -22,6 +24,7 @@ public sealed class ApprovalExportTests : IAsyncLifetime
     static CancellationToken Ct => TestContext.Current.CancellationToken;
     string _project = "";
     const string JobId = "job_appr";
+    readonly ImageHandler _images = new();
 
     public async ValueTask InitializeAsync()
     {
@@ -34,6 +37,8 @@ public sealed class ApprovalExportTests : IAsyncLifetime
             b.UseSetting("VideoCreator:Port", "0");
             b.UseSetting("VideoCreator:Asr:Provider", "none");
             b.UseSetting("VideoCreator:Llm:Provider", "none");
+            b.UseSetting("VideoCreator:Llm:Endpoint", "");
+            b.ConfigureServices(services => services.AddSingleton(new HttpClient(_images)));
         });
         _app.UseKestrel();
         _http = _app.CreateClient();
@@ -94,6 +99,63 @@ public sealed class ApprovalExportTests : IAsyncLifetime
     static string? Code(JsonElement body) => body.GetProperty("error").GetProperty("code").GetString();
 
     [Fact]
+    public async Task Enabled_engage_image_is_generated_from_the_saved_post_by_the_export_queue()
+    {
+        var image = Path.Combine(_root, "model.png");
+        await Rt.Ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=blue:s=1536x1024",
+            "-frames:v", "1", "-threads", "1", image], Ct);
+        _images.Bytes = await File.ReadAllBytesAsync(image, Ct);
+        var job = Rt.Store.Get<Job>(Kinds.Job, JobId)!;
+        Rt.Store.Put(Kinds.Job, JobId, _project, job with { Options = job.Options with { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" } });
+        using (var approved = await ApproveAsync("c1", true)) approved.EnsureSuccessStatusCode();
+        using (var single = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
+        using (var batch = await ExportAsync("c1"))
+        {
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, single.StatusCode);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, batch.StatusCode);
+            Assert.Equal("E-IMAGE-CONFIG", Code(await single.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+            Assert.Equal("E-IMAGE-CONFIG", Code(await batch.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        }
+        Assert.Empty(Q.Exports);
+        Rt.SaveFoundry(new FoundryConnection("https://image.fixture.openai.azure.com/", "unused-chat", null, "key", ApiKey: "test-key"), DateTimeOffset.UtcNow);
+        string rid;
+        using (var exported = await ExportAsync("c1"))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, exported.StatusCode);
+            rid = (await exported.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("exports")[0].GetProperty("render_id").GetString()!;
+        }
+        var until = DateTime.UtcNow.AddMinutes(3);
+        while (Q.Exports[rid].State is "queued" or "rendering" && DateTime.UtcNow < until) await Task.Delay(200, Ct);
+        Assert.True(Q.Exports[rid].State == "done", Q.Exports[rid].Message);
+        var render = Rt.Store.Get<Render>(Kinds.Render, rid)!;
+        var post = Json.Deserialize<PostKit>(await File.ReadAllTextAsync(render.Outputs["post"], Ct));
+        Assert.StartsWith(post.Engage + "\n\n" + EngageImage.Scene, Assert.Single(_images.Prompts));
+        var provenance = Json.Deserialize<EngageImageProvenance>(await File.ReadAllTextAsync(render.Outputs["engage_image_prompt"], Ct));
+        Assert.Equal(post.Engage, provenance.Post);
+        Assert.True(File.Exists(render.Outputs["engage_image"]));
+        Assert.True(File.Exists(render.Outputs["thumb1"]));
+        using var downloaded = await _http.GetAsync($"/api/renders/{rid}/files/engage_image", Ct);
+        Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
+        Assert.Equal("image/png", downloaded.Content.Headers.ContentType!.MediaType);
+    }
+
+    sealed class ImageHandler : HttpMessageHandler
+    {
+        public byte[] Bytes = [];
+        public List<string> Prompts { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.EndsWith("/openai/v1/images/generations", request.RequestUri!.AbsoluteUri);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Prompts.Add(body.RootElement.GetProperty("prompt").GetString()!);
+            return new(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { created = 1, data = new[] { new { b64_json = Convert.ToBase64String(Bytes) } } }),
+            };
+        }
+    }
+
+    [Fact]
     public async Task Approval_is_bound_to_the_plan_and_approved_candidates_export_together()
     {
         var list = await ListAsync();
@@ -105,6 +167,7 @@ public sealed class ApprovalExportTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
             Assert.Equal("E-NOT-APPROVED", Code(await r.Content.ReadFromJsonAsync<JsonElement>(Ct)));
         }
+
         Assert.Empty(Q.Exports);
 
         foreach (var c in new[] { "c1", "c2" })

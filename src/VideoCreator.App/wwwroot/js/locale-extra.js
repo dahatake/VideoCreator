@@ -1,4 +1,12 @@
 export const additional = {
+  'engageImage.title': ['Viva Engage 用の AI 画像', 'AI image for Viva Engage', 'Viva Engage AI 图片', 'Viva Engage AI 이미지'],
+  'engageImage.choice': ['画像作成', 'Image generation', '图片生成', '이미지 생성'],
+  'engageImage.on': ['作成する', 'Generate', '生成', '생성'],
+  'engageImage.off': ['作成しない', 'Do not generate', '不生成', '생성하지 않음'],
+  'engageImage.deployment': ['画像用 GPT Image デプロイ名', 'GPT Image deployment name', 'GPT Image 部署名称', 'GPT Image 배포 이름'],
+  'engageImage.help': ['サムネイルとは別の画像を「6 書き出し」で作成します。1000×200 px・アニメ調。Viva Engage 用の投稿文に「MCと社員が、このトピックについてワクワクしながら話している」を追加して使用します。設定の Microsoft Foundry 接続へ投稿文を送信し、画像生成の追加料金がかかります（概算には含みません）。GPT Image 対応のデプロイが必要です。投稿文を作り直す場合は画像も再生成します。', 'Creates a separate anime-style 1000×200 px image in step 6, not a thumbnail. The Viva Engage post is combined with “An MC and employees excitedly discussing this topic”. Sends the post to the configured Microsoft Foundry connection. Image generation incurs extra charges, excluded from the estimate. Requires a GPT Image deployment. Regenerating the post also regenerates the image.', '在第6步生成独立于缩略图的1000×200 px动漫风格图片。使用Viva Engage帖子并追加“主持人与员工兴奋地讨论这个话题”。帖子将发送至设置中的Microsoft Foundry连接。图片生成另行收费，不计入预估。需要GPT Image部署。重写帖子时也会重新生成图片。', '6단계에서 썸네일과 별도로 1000×200 px 애니메이션 스타일 이미지를 생성합니다. Viva Engage 게시물에 “MC와 직원이 이 주제를 신나게 이야기하는 모습”을 추가합니다. 설정된 Microsoft Foundry 연결로 게시물을 전송하며 예상 비용에 포함되지 않는 추가 요금이 발생합니다. GPT Image 배포가 필요합니다. 게시물 재작성 시 이미지도 다시 생성합니다.'],
+  'engageImage.artifact': ['Viva Engage 用画像（1000×200 px）', 'Viva Engage image (1000×200 px)', 'Viva Engage 图片（1000×200 px）', 'Viva Engage 이미지(1000×200 px)'],
+  'engageImage.prompt': ['Viva Engage 画像の生成プロンプト・出典', 'Viva Engage image prompt / provenance', 'Viva Engage 图片提示词与来源', 'Viva Engage 이미지 프롬프트·출처'],
   'file.none': ['ファイルが選択されていません', 'No file selected', '未选择文件', '선택한 파일 없음'],
   'bgm.errInUse': ['この曲は動画の編集計画で使われています。確認画面で別の曲に変えるか、その動画を削除してから外してください', 'This track is used by a video\'s edit plan. Change it on the review screen or delete that video first.', '此曲目正被视频的编辑计划使用。请先在确认界面更换曲目或删除该视频。', '이 곡은 동영상 편집 계획에서 사용 중입니다. 확인 화면에서 다른 곡으로 바꾸거나 해당 동영상을 삭제한 후 제거하세요.'],
   'bgm.errExists': ['同じ名前の曲がすでにアプリ共通の BGM にあります', 'A track with the same name is already in the app-wide BGM.', '应用通用 BGM 中已有同名曲目。', '같은 이름의 곡이 이미 앱 공통 BGM에 있습니다.'],

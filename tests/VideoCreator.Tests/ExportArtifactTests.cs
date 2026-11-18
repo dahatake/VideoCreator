@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using VideoCreator.App;
 using VideoCreator.Models;
+using VideoCreator.Rendering;
+using VideoCreator.Selection;
 using VideoCreator.Storage;
 
 namespace VideoCreator.Tests;
@@ -19,6 +21,7 @@ public sealed class ExportArtifactTests : IAsyncLifetime
     static CancellationToken Ct => TestContext.Current.CancellationToken;
     EditPlan _plan = null!;
     Render _render = null!;
+    readonly ImageHandler _images = new();
 
     public async ValueTask InitializeAsync()
     {
@@ -31,6 +34,7 @@ public sealed class ExportArtifactTests : IAsyncLifetime
             b.UseSetting("VideoCreator:Port", "0");
             b.UseSetting("VideoCreator:Asr:Provider", "none");
             b.UseSetting("VideoCreator:Llm:Provider", "none");
+            b.ConfigureServices(services => services.AddSingleton(new HttpClient(_images)));
         });
         _app.UseKestrel();
         _http = _app.CreateClient();
@@ -142,6 +146,59 @@ public sealed class ExportArtifactTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Posting_text_regeneration_creates_a_downloadable_image_and_keeps_previous_outputs_on_model_failure()
+    {
+        var source = Path.Combine(_root, "model.png");
+        await Rt.Ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=blue:s=1536x1024",
+            "-frames:v", "1", "-threads", "1", source], Ct);
+        _images.Bytes = await File.ReadAllBytesAsync(source, Ct);
+        Rt.SaveFoundry(new FoundryConnection("https://image.fixture.openai.azure.com/", "unused-chat", null, "key", ApiKey: "test-key"), DateTimeOffset.UtcNow);
+        Rt.Store.Put(Kinds.Project, _plan.ProjectId, null, new Project { Id = _plan.ProjectId, Name = "画像テスト", Directory = _root });
+        Rt.Store.Put(Kinds.Asset, "a", _plan.ProjectId, new SourceAsset
+        {
+            Id = "a", ProjectId = _plan.ProjectId, Path = "not-used.mp4", Sha256 = new string('a', 64), Media = Fixtures.Landscape(),
+        });
+        Rt.Store.Put(Kinds.Job, "j", _plan.ProjectId, new Job
+        {
+            Id = "j", ProjectId = _plan.ProjectId, PresetIds = ["P4"],
+            Options = new() { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" },
+        });
+        Rt.Store.Put(Kinds.Candidate, "c", "j", new Candidate { Id = "c", Rank = 1, Headline = "新しい取り組み", EditPlanId = _plan.EditplanId, Segments = [] });
+        _plan = _plan with { Provenance = new Provenance { JobId = "j", CandidateId = "c" } };
+        Rt.Store.Put(Kinds.EditPlan, _plan.EditplanId, _plan.ProjectId, _plan);
+        var hash = EditPlanFingerprint.Of(_plan);
+        _render = _render with { PlanHash = hash, Qa = _render.Qa.Select(q => q with { PlanHash = hash }).ToList() };
+        Rt.Store.Put(Kinds.Render, _render.Id, _plan.EditplanId, _render);
+        using var created = await _http.PostAsync("/api/renders/r-artifacts/post", null, Ct);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var post = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        var engage = post.GetProperty("engage").GetString();
+        Assert.StartsWith(engage + "\n\n" + EngageImage.Scene, Assert.Single(_images.Prompts));
+        using var image = await _http.GetAsync("/api/renders/r-artifacts/files/engage_image", Ct);
+        Assert.Equal("image/png", image.Content.Headers.ContentType!.MediaType);
+        var bytes = await image.Content.ReadAsByteArrayAsync(Ct);
+        Assert.Equal(1000, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(16, 4)));
+        Assert.Equal(200, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(20, 4)));
+        var provenance = await _http.GetFromJsonAsync<JsonElement>("/api/renders/r-artifacts/files/engage_image_prompt", Ct);
+        Assert.Equal(engage, provenance.GetProperty("post").GetString());
+        Assert.Equal("my-gpt-image", provenance.GetProperty("deployment").GetString());
+        await _http.GetStringAsync("/api/renders/r-artifacts/post", Ct);
+        Assert.Single(_images.Prompts);
+
+        using var regenerated = await _http.PostAsync("/api/renders/r-artifacts/post", null, Ct);
+        Assert.Equal(HttpStatusCode.OK, regenerated.StatusCode);
+        Assert.Equal(2, _images.Prompts.Count);
+        var previousPost = await _http.GetStringAsync("/api/renders/r-artifacts/post", Ct);
+        _images.Fail = true;
+        using var failed = await _http.PostAsync("/api/renders/r-artifacts/post", null, Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        var error = await failed.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("E-IMAGE-GENERATION", error.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(previousPost, await _http.GetStringAsync("/api/renders/r-artifacts/post", Ct));
+        Assert.Equal(bytes, await _http.GetByteArrayAsync("/api/renders/r-artifacts/files/engage_image", Ct));
+    }
+
+    [Fact]
     public async Task Changed_plan_invalidates_all_artifact_surfaces()
     {
         Rt.Store.Put(Kinds.EditPlan, _plan.EditplanId, _plan.ProjectId, _plan with { Audio = _plan.Audio with { SfxEnabled = false } });
@@ -154,5 +211,21 @@ public sealed class ExportArtifactTests : IAsyncLifetime
         }
         using var open = await _http.PostAsync("/api/renders/r-artifacts/open-folder", null, Ct);
         Assert.Equal(HttpStatusCode.Conflict, open.StatusCode);
+    }
+
+    sealed class ImageHandler : HttpMessageHandler
+    {
+        public byte[] Bytes = [];
+        public bool Fail;
+        public List<string> Prompts { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.EndsWith("/openai/v1/images/generations", request.RequestUri!.AbsoluteUri);
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Prompts.Add(body.RootElement.GetProperty("prompt").GetString()!);
+            return Fail
+                ? new(HttpStatusCode.BadRequest) { Content = JsonContent.Create(new { error = new { code = "content_policy_violation", message = "rejected" } }) }
+                : new(HttpStatusCode.OK) { Content = JsonContent.Create(new { created = 1, data = new[] { new { b64_json = Convert.ToBase64String(Bytes) } } }) };
+        }
     }
 }

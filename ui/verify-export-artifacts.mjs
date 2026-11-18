@@ -18,6 +18,12 @@ try {
     '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mediaPath,
   ]);
   const media = await readFile(mediaPath);
+  const imagePath = path.join(temp, 'engage.png');
+  execFileSync(path.join(repo, 'tools', 'ffmpeg', 'bin', 'ffmpeg.exe'), [
+    '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'color=blue:s=1000x200',
+    '-frames:v', '1', '-threads', '1', imagePath,
+  ]);
+  const engageImage = await readFile(imagePath);
   browser = await chromium.launch({ channel: 'msedge', headless: true });
   const page = await browser.newPage({ locale: 'ja-JP', viewport: { width: 1440, height: 1100 } });
   const errors = [], folderRequests = [], postRequests = [], previewRequests = [], artifactRequests = [];
@@ -39,6 +45,10 @@ try {
       { key: 'metadata', path: savedPath(n) + '.metadata.md', available: true, preview_type: 'text' },
       { key: 'editplan', path: savedPath(n) + '.editplan.json', available: true, preview_type: 'text' },
       { key: 'thumb1', path: savedPath(n) + '.png', available: true, preview_type: 'image' },
+      ...(n === 1 ? [
+        { key: 'engage_image', path: savedPath(n) + '.engage.png', available: true, preview_type: 'image' },
+        { key: 'engage_image_prompt', path: savedPath(n) + '.engage-image.json', available: true, preview_type: 'text' },
+      ] : []),
       { key: 'ass', path: savedPath(n) + '.ass', available: false, preview_type: 'text' },
       ...(n < 3 ? [{ key: 'post', path: savedPath(n) + '.post.json', available: true, preview_type: 'text' }] : []),
     ],
@@ -98,6 +108,7 @@ try {
     if (/\/files\/thumb1$/.test(p)) return route.fulfill({
       contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'),
     });
+    if (/\/files\/engage_image$/.test(p)) return route.fulfill({ contentType: 'image/png', body: engageImage });
     if (/^\/api\/media\/r-\d$/.test(p)) {
       const range = request.headers().range?.match(/bytes=(\d+)-(\d*)/);
       if (range) {
@@ -154,12 +165,20 @@ try {
   await page.waitForFunction(() => document.querySelector('.artifact-file[data-key="editplan"]')?.textContent.includes('65,536'));
   check(true, 'Large text previews disclose truncation and link to full files');
   check((await panels.nth(0).locator('.artifact-file[data-key="ass"]').textContent()).includes('見つかりません'), 'Missing sidecar file is explicitly labeled');
-  const thumb = panels.nth(0).locator('.artifact-image');
+  const thumb = panels.nth(0).locator('.artifact-file[data-key="thumb1"] .artifact-image');
   await thumb.scrollIntoViewIfNeeded();
   await page.waitForFunction(() => document.querySelector('.artifact-image')?.naturalWidth > 0);
   check(true, 'Thumbnail preview loads an actual image');
+  const image = panels.nth(0).locator('.artifact-file[data-key="engage_image"]');
+  await image.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => document.querySelector('[data-key="engage_image"] img')?.naturalWidth === 1000);
+  check(await image.locator('img').evaluate(i => i.naturalHeight === 200), 'Separate Viva Engage image displays at its actual 1000×200 dimensions');
+  check((await image.textContent()).includes('Viva Engage'), 'AI image is labeled independently of thumbnails');
+  check((await image.locator('a[download]').getAttribute('href')).startsWith('/api/renders/r-1/files/engage_image?'), 'AI image has its own download');
+  const oldImageUrl = await image.locator('img').getAttribute('src');
   await panels.nth(0).locator('.post-again').click();
   await page.waitForFunction(() => document.querySelector('.post-text')?.value.includes('別の案'));
+  check(await panels.nth(0).locator('[data-key="engage_image"] img').getAttribute('src') !== oldImageUrl, 'Regenerating a post refreshes its associated AI image preview');
   check((await panels.nth(1).locator('.post-text[data-key="youtube"]').inputValue()).includes('保存済み'), 'Regeneration updates only the selected video');
   await page.locator('#batchExport').click();
   await page.waitForFunction(() => document.querySelectorAll('.final-video').length === 3);

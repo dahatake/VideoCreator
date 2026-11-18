@@ -60,7 +60,7 @@ public static class Api
     {
         /// <summary>Order of the single-export checks: a refused batch answers with the first code that any candidate hit.</summary>
         public static readonly (string Code, int Status)[] Precedence =
-            [("E-NOT-FOUND", 404), ("E-NOT-APPROVED", 409), ("E-PLAN-STALE", 409), ("E-QA-HARDFAIL", 422), ("E-EXPORT-BUSY", 409)];
+            [("E-NOT-FOUND", 404), ("E-NOT-APPROVED", 409), ("E-PLAN-STALE", 409), ("E-IMAGE-CONFIG", 422), ("E-QA-HARDFAIL", 422), ("E-EXPORT-BUSY", 409)];
     }
 
     /// <summary>Approval as shown in the UI: <c>stale</c> = approved, but the plan was edited afterwards.</summary>
@@ -328,6 +328,8 @@ public static class Api
                     return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
                 if (!Canvas.Orientations.Contains(settings.Orientation))
                     return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
+                if (settings.EngageImageDeployment is null || settings.EngageImageDeployment.Length > 200)
+                    return Error(422, "E-VALIDATION", "画像デプロイ名は200文字以内で入力してください");
                 p = p with { GenerationSettings = settings };
                 rt.Store.Put(Kinds.Project, id, null, p);
                 return Results.Json(p.GenerationSettings, Json.Options);
@@ -807,6 +809,9 @@ public static class Api
                 if (plan == null) { problems.Add(Problem("E-NOT-FOUND", "編集計画がありません")); continue; }
                 if (c.Approval == null) { problems.Add(Problem("E-NOT-APPROVED", "承認されていません")); continue; }
                 if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) { problems.Add(Problem("E-PLAN-STALE", "承認後に修正されています。もう一度確認して承認してください")); continue; }
+                var imageOptions = plan.Provenance.JobId is { } sourceJobId ? rt.Store.Get<Job>(Kinds.Job, sourceJobId)?.Options : null;
+                if (rt.ImageConfigurationError(imageOptions?.MakeEngageImage == true, imageOptions?.EngageImageDeployment) is { } imageError)
+                { problems.Add(Problem("E-IMAGE-CONFIG", imageError)); continue; }
                 var hard = QaEngine.PlanChecks(runner.QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
                 if (hard.Count > 0) { problems.Add(Problem("E-QA-HARDFAIL", "自動チェックで不合格の項目があります", hard)); continue; }
                 if (q.ActiveExport(plan.EditplanId) is { } active) { problems.Add(Problem("E-EXPORT-BUSY", "書き出し中です", new { render_id = active.RenderId })); continue; }
@@ -1046,6 +1051,9 @@ public static class Api
             var candidate = plan.Provenance.CandidateId is { } cId ? rt.Store.Get<Candidate>(Kinds.Candidate, cId) : null;
             if (candidate?.Approval == null) return Error(409, "E-NOT-APPROVED", "内容を確認し、候補を承認してから書き出してください");
             if (candidate.Approval.PlanHash != EditPlanFingerprint.Of(plan)) return StaleError();
+            var imageOptions = plan.Provenance.JobId is { } jobId ? rt.Store.Get<Job>(Kinds.Job, jobId)?.Options : null;
+            if (rt.ImageConfigurationError(imageOptions?.MakeEngageImage == true, imageOptions?.EngageImageDeployment) is { } imageError)
+                return Error(422, "E-IMAGE-CONFIG", imageError);
             var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
             if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動QAのハード制約に違反しています", hard);
             if (q.ActiveExport(id) is { } active) return Error(409, "E-EXPORT-BUSY", "この動画は書き出し中です。完了を待ってください", new { render_id = active.RenderId });
@@ -1170,16 +1178,26 @@ public static class Api
         string? previous = null;
         if (regenerate && r.Outputs.TryGetValue("post", out var old) && File.Exists(old))
             try { previous = Json.Deserialize<PostKit>(await File.ReadAllTextAsync(old, ct))?.Youtube; } catch (System.Text.Json.JsonException) { }
-        var kit = await rt.CreateRunner().PostKitAsync(cand, plan, ct, previous);
+        var runner = rt.CreateRunner();
+        var kit = await runner.PostKitAsync(cand, plan, ct, previous);
+        Render updated;
+        try { updated = await runner.EngageImageAsync(r, plan, kit, ct); }
+        catch (PipelineException ex) when (ex.Code == "E-PLAN-STALE") { return StaleError(); }
+        catch (PipelineException ex) { return Error(422, ex.Code, ex.Message); }
         var file = Path.ChangeExtension(r.Path, ".post.json");
         await File.WriteAllTextAsync(file, Json.Serialize(kit), ct);
-        if (!r.Outputs.ContainsKey("post"))
-            rt.Store.Atomic(() =>
+        return rt.Store.Atomic<IResult>(() =>
+        {
+            if (Stale(rt, r)) return StaleError();
+            if (rt.Store.Get<Render>(Kinds.Render, id) is { } cur)
             {
-                if (rt.Store.Get<Render>(Kinds.Render, id) is { } cur) rt.Store.Put(Kinds.Render, id, cur.EditplanId, cur with { Outputs = new Dictionary<string, string>(cur.Outputs) { ["post"] = file } });
-                return true;
-            });
-        return Results.Json(kit, Json.Options);
+                var outputs = new Dictionary<string, string>(cur.Outputs);
+                foreach (var (key, path) in updated.Outputs) outputs[key] = path;
+                outputs["post"] = file;
+                rt.Store.Put(Kinds.Render, id, cur.EditplanId, cur with { Outputs = outputs });
+            }
+            return Results.Json(kit, Json.Options);
+        });
     }
 
     static List<Interval> MergedSegments(EditPlan plan)
@@ -1239,6 +1257,10 @@ public static class Api
     static IResult StartGeneration(Runtime rt, JobQueue q, string projectId, List<string> presetIds, string? instruction, List<string> exclude, JobOptions? options = null, string? derivedFrom = null)
     {
         options ??= new JobOptions();
+        if (options.EngageImageDeployment is null || options.EngageImageDeployment.Length > 200)
+            return Error(422, "E-VALIDATION", "画像デプロイ名は200文字以内で入力してください");
+        if (rt.ImageConfigurationError(options.MakeEngageImage, options.EngageImageDeployment) is { } imageError)
+            return Error(422, "E-IMAGE-CONFIG", imageError);
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
         if (!Planning.TsukkomiPlacement.Styles.Contains(options.TsukkomiStyle)) return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
         if (!Canvas.Orientations.Contains(options.Orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
