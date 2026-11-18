@@ -374,8 +374,9 @@ function aiResultBar(r, names, deployments = {}) {
   const failed = r.steps.find(st => !st.ok);
   const d = failed?.diagnosis ?? r.diagnosis;
   const steps = r.steps.map(st => `<li><span class="${st.ok ? 'pass' : 'fail'}" aria-hidden="true">${st.ok ? '✓' : '✗'}</span> ${esc(names[st.id] ?? st.id)}: ${st.ok ? trUi('ai.stepOk') : trUi('ai.stepFailed')} <span class="caption">(${(st.ms / 1000).toFixed(1)} s)</span></li>`).join('');
-  return `<fluent-message-bar intent="${r.ok ? 'success' : 'error'}" layout="multiline">
-    <b>${r.ok ? trUi('ai.testOk') : trUi('ai.testFailed')}</b>${steps ? `<ul class="notes">${steps}</ul>` : ''}
+  const partial = r.ok && failed;
+  return `<fluent-message-bar intent="${partial ? 'warning' : r.ok ? 'success' : 'error'}" layout="multiline">
+    <b>${partial ? trUi('ai.f.sharedSpeechUnavailable') : r.ok ? trUi('ai.testOk') : trUi('ai.testFailed')}</b>${steps ? `<ul class="notes">${steps}</ul>` : ''}
     ${d ? `<p>${esc(aiDiagnosisText(d, deployments[failed?.id]))}</p>${d.detail ? `<details><summary class="caption">${trUi('ai.detail')}</summary><p class="caption ai-detail">${esc(d.detail)}</p></details>` : ''}` : ''}
   </fluent-message-bar>`;
 }

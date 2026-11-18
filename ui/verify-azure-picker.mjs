@@ -41,7 +41,7 @@ try {
   await page.route('**/api/settings/ai/azure/resources', route => { calls.push(['resources', route.request().postDataJSON()]); return route.fulfill({ json: catalog }); });
   let releaseOther;
   const otherPending = new Promise(resolve => { releaseOther = resolve; });
-  let saveFoundry = false;
+  let saveFoundry = false, speechProbeOk = true;
   await page.route('**/api/settings/ai/azure/deployments', async route => {
     const body = route.request().postDataJSON();
     calls.push(['deployments', body]);
@@ -53,7 +53,8 @@ try {
   });
   await page.route('**/api/settings/ai/foundry/test', route => {
     calls.push(['test', route.request().postDataJSON()]);
-    return route.fulfill({ json: { ok: true, steps: [{ id: 'chat', ok: true, ms: 1 }, { id: 'speech', ok: true, ms: 1 }] } });
+    return route.fulfill({ json: { ok: true, steps: [{ id: 'chat', ok: true, ms: 1 },
+      { id: 'speech', ok: speechProbeOk, ms: 1, ...(speechProbeOk ? {} : { diagnosis: { code: 'speech_forbidden' } }) }] } });
   });
   await page.route('**/api/settings/ai/foundry', route => {
     calls.push(['save', route.request().postDataJSON()]);
@@ -130,6 +131,12 @@ try {
     assert.deepEqual(body, selection);
     assert.equal(await page.locator('#sSource').count(), 0, 'test alone does not enable a new source');
   }
+  speechProbeOk = false;
+  await page.locator('#fTest').click();
+  await page.locator('#fResult fluent-message-bar[intent="warning"]').first().waitFor();
+  assert.match(await page.locator('#fResult').innerText(), /Speech を確認できませんでした/);
+  assert.doesNotMatch(await page.locator('#fResult').innerText(), /接続テストに合格しました/);
+  speechProbeOk = true;
 
   await page.locator('#fResource').selectOption(catalog.accounts[1].id);
   await page.locator('#fDeploymentManual').waitFor({ state: 'visible' });
@@ -160,12 +167,18 @@ try {
   await page.locator('#sSeparate').waitFor({ state: 'hidden' });
   assert.deepEqual(calls.at(-1), ['speech-source', { use_foundry: true }]);
   assert.match(await page.locator('#aiSpeech').innerText(), /送信先: https:\/\/ai-both/);
+  const previousSource = await page.locator('#sSource').elementHandle();
   await page.locator('#settings-close').click();
+  await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
   await page.locator('#settings-btn').click();
+  await previousSource.waitForElementState('hidden');
+  await page.waitForFunction(el => !el.isConnected, previousSource);
   await page.locator('#sSource').waitFor();
   assert.equal(await page.locator('#sSource').inputValue(), 'foundry');
   await page.locator('#sSource').selectOption('separate');
+  const sourceRequest = page.waitForRequest(r => r.url().endsWith('/speech/source') && r.postDataJSON()?.use_foundry === false);
   await page.locator('#sSourceSave').click();
+  await sourceRequest;
   await page.locator('#sSeparate').waitFor();
   assert.equal(await page.locator('#sEndpoint').evaluate(el => el.value), 'https://dedicated.cognitiveservices.azure.com/');
   assert.deepEqual(errors, []);
