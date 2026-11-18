@@ -1094,7 +1094,10 @@ async function project(id, showSettings = false) {
                 </fluent-radio-group>
                 <p class="caption" id="cardSkipNote" ${make ? 'hidden' : ''}>${trUi('m264', [made.length ? trUi('m251', [made.length]) : ''])}</p>
                 <div class="stack" id="cardMakeBody" ${make ? '' : 'hidden'}>
-                ${made.length ? `<div class="row" style="flex-wrap:wrap">${made.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="${trUi('card.imageAlt', [i + 1, esc(at(img.source_t))])}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(origin(img))} · ${esc(at(img.source_t))}</figcaption></figure>`).join('')}</div><p class="caption">${trUi('m252', [made.length])}</p>` : ''}
+                ${made.length ? `<div class="row" style="flex-wrap:wrap">${made.map((img, i) => {
+                  const revision = encodeURIComponent(img.path.split(/[\\/]/).at(-2) ?? '');
+                  return `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}?v=${revision}" alt="${trUi('card.imageAlt', [i + 1, esc(at(img.source_t))])}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(origin(img))} · ${esc(at(img.source_t))}</figcaption></figure>`;
+                }).join('')}</div><p class="caption">${trUi('m252', [made.length])}</p>` : ''}
                   <label class="caption">${trUi('m260')}
                     <select class="native" id="cardSource" aria-label="${trUi('m261')}">
                       ${sourceOptions}
