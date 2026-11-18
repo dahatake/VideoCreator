@@ -7,6 +7,7 @@ using VideoCreator.Models;
 using VideoCreator.Pipeline;
 using VideoCreator.Planning;
 using VideoCreator.Rendering;
+using VideoCreator.Selection;
 using VideoCreator.Storage;
 
 namespace VideoCreator.Tests;
@@ -28,9 +29,9 @@ public sealed class EngageImageTests : IDisposable
         Directory.Delete(_root, true);
     }
 
-    PipelineRunner Runner(Func<string, IImageGenerator>? generator) => new(new PipelineServices
+    PipelineRunner Runner(Func<string, IImageGenerator>? generator, IHighlightSelector? llm = null) => new(new PipelineServices
     {
-        Ff = Fixtures.Ff!, Store = _store, Presets = Fixtures.Presets, DataDir = _root, ImageGenerator = generator,
+        Ff = Fixtures.Ff!, Store = _store, Presets = Fixtures.Presets, DataDir = _root, ImageGenerator = generator, Llm = llm,
     });
 
     (Render, EditPlan) Prepare(bool enabled)
@@ -41,10 +42,12 @@ public sealed class EngageImageTests : IDisposable
             Audio = new AudioSpec { Master = "a" }, Provenance = new Provenance { JobId = "j" },
         };
         _store.Put(Kinds.EditPlan, "ep", "p", plan);
-        _store.Put(Kinds.Job, "j", "p", new Job
+        // the plan came from a job generated before the image was switched on: the project's current setting decides at export
+        _store.Put(Kinds.Job, "j", "p", new Job { Id = "j", ProjectId = "p", PresetIds = ["P4"], Options = new() { MakeEngageImage = !enabled } });
+        _store.Put(Kinds.Project, "p", null, new Project
         {
-            Id = "j", ProjectId = "p", PresetIds = ["P4"],
-            Options = new() { MakeEngageImage = enabled, EngageImageDeployment = "my-gpt-image" },
+            Id = "p", Name = "p", Directory = _root,
+            GenerationSettings = new() { MakeEngageImage = enabled, EngageImageDeployment = " my-image-model " },
         });
         var thumb = Path.Combine(_root, "thumb.png");
         File.WriteAllText(thumb, "existing thumbnail");
@@ -56,6 +59,7 @@ public sealed class EngageImageTests : IDisposable
     }
 
     [Theory]
+    [InlineData(1440, 288)]
     [InlineData(1536, 1024)]
     [InlineData(1024, 1536)]
     public async Task Generated_image_uses_exact_post_and_is_a_separate_1000_by_200_png(int width, int height)
@@ -68,16 +72,24 @@ public sealed class EngageImageTests : IDisposable
             "-frames:v", "1", "-threads", "1", source], Ct);
         using var handler = new ImageHandler(await File.ReadAllBytesAsync(source, Ct));
         using var http = new HttpClient(handler);
-        var generator = new FoundryImageGenerator(new Uri("https://images.example/openai/v1/"), "my-gpt-image",
-            ApiKeyAuthenticationPolicy.CreateHeaderApiKeyPolicy(new ApiKeyCredential("test-key"), "api-key"), http);
+        string? deployment = null;
+        var generator = (string name) =>
+        {
+            deployment = name;
+            return new FoundryImageGenerator(new Uri("https://images.example/openai/v1/"), name,
+                ApiKeyAuthenticationPolicy.CreateHeaderApiKeyPolicy(new ApiKeyCredential("test-key"), "api-key"), http);
+        };
         var (render, plan) = Prepare(true);
         var post = new PostKit { Engage = "社内の新しい取り組み\n#共同作業" };
-        var updated = await Runner(_ => generator).EngageImageAsync(render, plan, post, Ct);
+        var llm = new PromptLlm("""{"prompt":"Anime-style wide banner: an MC and employees excitedly talking."}""");
+        var updated = await Runner(generator, llm).EngageImageAsync(render, plan, post, Ct);
+        Assert.Equal("my-image-model", deployment);
         Assert.Equal(1, handler.Calls);
         using var request = JsonDocument.Parse(handler.Body!);
-        Assert.Equal("my-gpt-image", request.RootElement.GetProperty("model").GetString());
-        Assert.Equal("1536x1024", request.RootElement.GetProperty("size").GetString());
-        var prompt = request.RootElement.GetProperty("prompt").GetString();
+        Assert.Equal("my-image-model", request.RootElement.GetProperty("model").GetString());
+        Assert.Equal("1440x288", request.RootElement.GetProperty("size").GetString());
+        Assert.Equal("Anime-style wide banner: an MC and employees excitedly talking.", request.RootElement.GetProperty("prompt").GetString());
+        var prompt = llm.LastUser!;
         Assert.StartsWith(post.Engage + "\n\n" + EngageImage.Scene, prompt);
         Assert.Contains("アニメ調", prompt);
         Assert.Equal("test-key", handler.Key);
@@ -97,6 +109,8 @@ public sealed class EngageImageTests : IDisposable
         var provenance = VideoCreator.Json.Deserialize<EngageImageProvenance>(await File.ReadAllTextAsync(updated.Outputs["engage_image_prompt"], Ct));
         Assert.Equal(post.Engage, provenance.Post);
         Assert.Equal(prompt, provenance.Prompt);
+        Assert.Equal("Anime-style wide banner: an MC and employees excitedly talking.", provenance.ModelPrompt);
+        Assert.Equal("my-image-model", provenance.Deployment);
         Assert.Equal("existing thumbnail", await File.ReadAllTextAsync(updated.Outputs["thumb1"], Ct));
         Assert.DoesNotContain(Directory.GetFiles(_root), f => f.Contains(".source", StringComparison.Ordinal));
     }
@@ -141,6 +155,38 @@ public sealed class EngageImageTests : IDisposable
         var error = await Assert.ThrowsAsync<PipelineException>(() => model.GenerateAsync("prompt", Ct));
         Assert.Equal("E-IMAGE-GENERATION", error.Code);
         Assert.Contains("400", error.Message);
+        Assert.Equal(["1440x288", "1536x1024"], handler.Sizes);
+    }
+
+    [Fact]
+    public async Task Fixed_size_model_that_rejects_the_banner_size_is_retried_at_its_landscape_size()
+    {
+        using var handler = new ImageHandler([7]) { StatusFor = size => size == "1440x288" ? HttpStatusCode.BadRequest : HttpStatusCode.OK };
+        using var http = new HttpClient(handler);
+        var model = new FoundryImageGenerator(new Uri("https://images.example/openai/v1/"), "gpt-image",
+            ApiKeyAuthenticationPolicy.CreateHeaderApiKeyPolicy(new ApiKeyCredential("test"), "api-key"), http);
+        Assert.Equal([7], await model.GenerateAsync("prompt", Ct));
+        Assert.Equal(["1440x288", "1536x1024"], handler.Sizes);
+    }
+
+    [Fact]
+    public async Task Without_a_usable_english_rewrite_the_specified_prompt_is_sent_as_is()
+    {
+        var prompt = EngageImage.Prompt("投稿");
+        Assert.Equal(prompt, await EngageImage.ModelPromptAsync(null, prompt, null, Ct));
+        var logs = new List<string>();
+        Assert.Equal(prompt, await EngageImage.ModelPromptAsync(new PromptLlm("not json"), prompt, logs.Add, Ct));
+        Assert.Equal(prompt, await EngageImage.ModelPromptAsync(new PromptLlm("""{"prompt":" "}"""), prompt, logs.Add, Ct));
+        Assert.Equal(2, logs.Count);
+    }
+
+    sealed class PromptLlm(string json) : IHighlightSelector
+    {
+        public string Name => "fake";
+        public string Model => "fake";
+        public string? LastUser;
+        public Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct) => throw new NotSupportedException();
+        public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct) { LastUser = user; return Task.FromResult(json); }
     }
 
     sealed class ImageHandler(byte[] bytes) : HttpMessageHandler
@@ -148,15 +194,20 @@ public sealed class EngageImageTests : IDisposable
         public int Calls;
         public string? Body, Key;
         public HttpStatusCode Status = HttpStatusCode.OK;
+        public Func<string, HttpStatusCode>? StatusFor;
+        public List<string> Sizes = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
             Body = await request.Content!.ReadAsStringAsync(ct);
             Key = request.Headers.GetValues("api-key").Single();
             Assert.EndsWith("/openai/v1/images/generations", request.RequestUri!.AbsoluteUri);
-            return new(Status)
+            var size = JsonDocument.Parse(Body).RootElement.GetProperty("size").GetString()!;
+            Sizes.Add(size);
+            var status = StatusFor?.Invoke(size) ?? Status;
+            return new(status)
             {
-                Content = Status == HttpStatusCode.OK
+                Content = status == HttpStatusCode.OK
                     ? JsonContent.Create(new { created = 1, data = new[] { new { b64_json = Convert.ToBase64String(bytes) } } })
                     : JsonContent.Create(new { error = new { code = "content_policy_violation", message = "rejected" } }),
             };

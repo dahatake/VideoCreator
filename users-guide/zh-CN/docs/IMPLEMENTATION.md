@@ -152,7 +152,7 @@ ASR 与 LLM 使用同一 Azure 主机，不能只依 IP 或主机名区分。为
 - [TelopGrounding.cs](../../../src/VideoCreator.Core/Planning/TelopGrounding.cs)共用生成编辑依据：区间连续词、数单位对象连续表达、说话人；数字异体正规化但不同符号小数不混，仅词典无效；自动不一致移除记因。
 - 保守词比，不保证所有语义否定专名；未穷识词典外汉字专名。正确改写被拒需贴原话重关联，不用批准绕H11。
 - 生成后检真实尺及求解后重叠；预告正文重叠按集合，不用相同素材灌候选。
-- [Store.Atomic](../../../src/VideoCreator.Core/Storage/Store.cs)保护批准检查预约最终存；正式各ID目录不覆盖，失效移rejected不分发。
+- [Store.Atomic](../../../src/VideoCreator.Core/Storage/Store.cs)保护批准检查预约最终存；正式文件及相关产物保存在项目文件夹的 `Artifact/{render_id}` 下，不覆盖旧输出；失效移入 `rejected` 不分发。
 - 不删旧正式，但无当前hash H11 pass需重批QA导；旧预览可警告看，不把旧QA改新证。
 - 修转写亦令相关计划hash失效，含同素材hash缓存其他项目；相关正在导出拒。旧仍在不误把新有效标失效。
 - 既有的说话人／相机一致性检查和 YouTube 章节检查改为 S-13、S-14，以区别 S-09、S-10。在共享工作期间被另一项工作删除的外部声音事件检测器没有恢复，只移除剩余流水线引用，并保持现有本地笑声检测。
@@ -699,7 +699,7 @@ Project1:nJob，每次候选新Job即模式，旧不消。候选计划导出属J
 
 - GET /api/projects/{id}/patterns列模式名设置状态候选批准已导数是否处理中，在素材模式页“已制作的模式”。
 - “从此配置重做”读配置可改再生成新Job，derived_from_job_id留源；步骤已完成素材、模式、生成、候选、检查修改均可返回。
-- DELETE /api/jobs/{jobId}由JobDeletion删该Job候选计划全部预览正式及exports/render进回收站、preview、rejected/render、QA；保素材权利BGM他Job缓存及项目文件夹。
+- DELETE /api/jobs/{jobId}由JobDeletion删该Job候选计划全部预览正式及Artifact/render（进回收站，也处理旧exports/render）、preview、rejected/render、QA；保素材权利BGM他Job缓存及项目文件夹。
 - 生成导出预览重建中409 E-JOB-BUSY，文件删不了不改DB E-FILE-IN-USE。保存位置指被删Job则回素材模式。
 - [PatternTests.cs](../../../tests/VideoCreator.Tests/PatternTests.cs)验证删一保另素材文件、忙拒、文件不能删不变；真实Edge Playwright测列表继承删除确认步骤链接。
 - 素材角色偏移转写修改会反映既有计划，但不重选候选；需新模式则从配置重做。

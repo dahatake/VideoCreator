@@ -772,7 +772,7 @@ public sealed class PipelineRunner(PipelineServices s)
             var pre = QaEngine.PlanChecks(ctx).Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
             if (pre.Count > 0) throw new QaBlockedException(pre);
         }
-        var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "exports", renderId);
+        var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "Artifact", renderId);
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
         if (!preview) EnsureInside(project.Directory, file);
         var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
@@ -903,16 +903,22 @@ public sealed class PipelineRunner(PipelineServices s)
         return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main, plan.Language), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
     }
 
+    /// <summary>The image is an export artifact, so the project's current [2] setting applies (not the snapshot taken when the plan was generated).</summary>
+    public (bool Enabled, string Deployment) EngageImageSettings(EditPlan plan)
+    {
+        var settings = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)?.GenerationSettings;
+        return (settings?.MakeEngageImage == true, settings?.EngageImageDeployment?.Trim() ?? "");
+    }
+
     public async Task<Render> EngageImageAsync(Render render, EditPlan plan, PostKit post, CancellationToken ct)
     {
-        var options = plan.Provenance.JobId is { } jobId ? s.Store.Get<Job>(Kinds.Job, jobId)?.Options : null;
-        if (options?.MakeEngageImage != true) return render;
-        if (s.ImageGenerator == null || string.IsNullOrWhiteSpace(options.EngageImageDeployment))
-            throw new PipelineException("E-IMAGE-CONFIG", "画像生成用の Microsoft Foundry 接続と GPT Image デプロイ名を設定してください");
+        var (enabled, deployment) = EngageImageSettings(plan);
+        if (!enabled) return render;
+        if (s.ImageGenerator == null || deployment.Length == 0)
+            throw new PipelineException("E-IMAGE-CONFIG", "画像生成用の Microsoft Foundry 接続と画像モデルのデプロイ名を設定してください");
         EnsureCurrentPlan(plan);
         var path = Path.ChangeExtension(render.Path, ".engage.png");
-        var provenance = await EngageImage.WriteAsync(s.Ff, s.ImageGenerator(options.EngageImageDeployment.Trim()),
-            post.Engage, options.EngageImageDeployment.Trim(), path, ct);
+        var provenance = await EngageImage.WriteAsync(s.Ff, s.ImageGenerator(deployment), post.Engage, deployment, path, ct, s.Llm, s.Log);
         var promptPath = Path.ChangeExtension(render.Path, ".engage-image.json");
         await File.WriteAllTextAsync(promptPath, Json.Serialize(provenance, true), ct);
         return render with { Outputs = new Dictionary<string, string>(render.Outputs)

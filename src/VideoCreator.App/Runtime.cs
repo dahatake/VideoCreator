@@ -163,7 +163,7 @@ public sealed class Runtime
 
     public string? ImageConfigurationError(bool enabled, string? deployment) => !enabled ? null
         : LocalOnly ? "LLM不使用モードでは画像生成を使えません"
-        : string.IsNullOrWhiteSpace(deployment) ? "画像生成用の GPT Image デプロイ名を入力してください"
+        : string.IsNullOrWhiteSpace(deployment) ? "画像生成モデル（GPT Image / FLUX）のデプロイ名を入力してください"
         : Foundry is not { } f || TryEndpoint(f) == null ? "設定の「AI の接続」で Microsoft Foundry を設定してください（画像生成はこの接続を使用します）"
         : f.UsesKey && string.IsNullOrWhiteSpace(f.ApiKey) ? "保存した Foundry API キーを読めません。設定画面で入力し直してください"
         : null;

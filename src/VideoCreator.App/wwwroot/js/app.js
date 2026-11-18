@@ -980,7 +980,7 @@ async function project(id, showSettings = false) {
             <option value="true" ${opts.make_engage_image ? 'selected' : ''}>${trUi('engageImage.on')}</option>
           </select></label>
           <label class="stack" id="engageImageDeploymentBox" ${opts.make_engage_image ? '' : 'hidden'}>${trUi('engageImage.deployment')}
-            <input class="native" id="engageImageDeployment" maxlength="200" value="${esc(opts.engage_image_deployment)}" placeholder="gpt-image-1" aria-describedby="engage-image-help">
+            <input class="native" id="engageImageDeployment" maxlength="200" value="${esc(opts.engage_image_deployment)}" placeholder="FLUX-1.1-pro" aria-describedby="engage-image-help">
           </label>
           <p class="caption" id="engage-image-help">${trUi('engageImage.help')}</p>
         </section>

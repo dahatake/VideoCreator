@@ -9,7 +9,7 @@ PUT {{baseUrl}}/api/projects/{{projectId}}/generation-settings
 X-VideoCreator: 1
 Content-Type: application/json
 
-{"preset_id":"P4","make_engage_image":true,"engage_image_deployment":"gpt-image-1"}
+{"preset_id":"P4","make_engage_image":true,"engage_image_deployment":"FLUX-1.1-pro"}
 
 ### Generated image and the exact posting text/prompt used (available only when enabled for the source job).
 GET {{baseUrl}}/api/renders/{{renderId}}/files/engage_image

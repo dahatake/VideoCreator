@@ -105,8 +105,9 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         await Rt.Ff.RunFfmpegCheckedAsync(["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=blue:s=1536x1024",
             "-frames:v", "1", "-threads", "1", image], Ct);
         _images.Bytes = await File.ReadAllBytesAsync(image, Ct);
-        var job = Rt.Store.Get<Job>(Kinds.Job, JobId)!;
-        Rt.Store.Put(Kinds.Job, JobId, _project, job with { Options = job.Options with { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" } });
+        // switched on in [2] after the plan was generated: the export uses the current project setting, without regenerating
+        var project = Rt.Store.Get<Project>(Kinds.Project, _project)!;
+        Rt.Store.Put(Kinds.Project, _project, null, project with { GenerationSettings = project.GenerationSettings with { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" } });
         using (var approved = await ApproveAsync("c1", true)) approved.EnsureSuccessStatusCode();
         using (var single = await _http.PostAsync("/api/editplans/ep1/render", null, Ct))
         using (var batch = await ExportAsync("c1"))
@@ -134,6 +135,10 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal(post.Engage, provenance.Post);
         Assert.True(File.Exists(render.Outputs["engage_image"]));
         Assert.True(File.Exists(render.Outputs["thumb1"]));
+        var artifactDirectory = Path.GetFullPath(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "Artifact")) + Path.DirectorySeparatorChar;
+        Assert.All(new[] { render.Path }.Concat(render.Outputs.Values), path =>
+            Assert.True(Path.GetFullPath(path).StartsWith(artifactDirectory, StringComparison.OrdinalIgnoreCase), path));
+        Assert.All(render.Outputs.Values, path => Assert.True(File.Exists(path), path));
         using var downloaded = await _http.GetAsync($"/api/renders/{rid}/files/engage_image", Ct);
         Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
         Assert.Equal("image/png", downloaded.Content.Headers.ContentType!.MediaType);
@@ -390,7 +395,7 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal("failed", Q.Exports[rid].State);
         Assert.Equal("E-PLAN-STALE", Q.Exports[rid].ErrorCode);
         Assert.Null(Rt.Store.Get<Render>(Kinds.Render, rid));
-        Assert.Empty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "exports"), "*.mp4", SearchOption.AllDirectories));
+        Assert.Empty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "Artifact"), "*.mp4", SearchOption.AllDirectories));
         Assert.NotEmpty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "rejected"), "*.mp4", SearchOption.AllDirectories));
     }
 

@@ -809,8 +809,8 @@ public static class Api
                 if (plan == null) { problems.Add(Problem("E-NOT-FOUND", "編集計画がありません")); continue; }
                 if (c.Approval == null) { problems.Add(Problem("E-NOT-APPROVED", "承認されていません")); continue; }
                 if (c.Approval.PlanHash != EditPlanFingerprint.Of(plan)) { problems.Add(Problem("E-PLAN-STALE", "承認後に修正されています。もう一度確認して承認してください")); continue; }
-                var imageOptions = plan.Provenance.JobId is { } sourceJobId ? rt.Store.Get<Job>(Kinds.Job, sourceJobId)?.Options : null;
-                if (rt.ImageConfigurationError(imageOptions?.MakeEngageImage == true, imageOptions?.EngageImageDeployment) is { } imageError)
+                var image = runner.EngageImageSettings(plan);
+                if (rt.ImageConfigurationError(image.Enabled, image.Deployment) is { } imageError)
                 { problems.Add(Problem("E-IMAGE-CONFIG", imageError)); continue; }
                 var hard = QaEngine.PlanChecks(runner.QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
                 if (hard.Count > 0) { problems.Add(Problem("E-QA-HARDFAIL", "自動チェックで不合格の項目があります", hard)); continue; }
@@ -1051,10 +1051,11 @@ public static class Api
             var candidate = plan.Provenance.CandidateId is { } cId ? rt.Store.Get<Candidate>(Kinds.Candidate, cId) : null;
             if (candidate?.Approval == null) return Error(409, "E-NOT-APPROVED", "内容を確認し、候補を承認してから書き出してください");
             if (candidate.Approval.PlanHash != EditPlanFingerprint.Of(plan)) return StaleError();
-            var imageOptions = plan.Provenance.JobId is { } jobId ? rt.Store.Get<Job>(Kinds.Job, jobId)?.Options : null;
-            if (rt.ImageConfigurationError(imageOptions?.MakeEngageImage == true, imageOptions?.EngageImageDeployment) is { } imageError)
+            var exportRunner = rt.CreateRunner();
+            var image = exportRunner.EngageImageSettings(plan);
+            if (rt.ImageConfigurationError(image.Enabled, image.Deployment) is { } imageError)
                 return Error(422, "E-IMAGE-CONFIG", imageError);
-            var hard = QaEngine.PlanChecks(rt.CreateRunner().QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
+            var hard = QaEngine.PlanChecks(exportRunner.QaContextFor(plan)).Where(x => x.Hard && x.Status == QaStatus.Fail).ToList();
             if (hard.Count > 0) return Error(422, "E-QA-HARDFAIL", "自動QAのハード制約に違反しています", hard);
             if (q.ActiveExport(id) is { } active) return Error(409, "E-EXPORT-BUSY", "この動画は書き出し中です。完了を待ってください", new { render_id = active.RenderId });
             var rank = plan.Provenance.CandidateId is string cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid)?.Rank ?? 1 : 1;

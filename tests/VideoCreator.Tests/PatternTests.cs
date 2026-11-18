@@ -33,8 +33,9 @@ public sealed class PatternTests : IDisposable
         store.Put(Kinds.EditPlan, plan.EditplanId, p.Id, plan);
         store.Put(Kinds.Candidate, "c_" + tag, job.Id, new Candidate { Id = "c_" + tag, Segments = [new Interval(0, 30)], EditPlanId = plan.EditplanId, Approval = new CandidateApproval(DateTimeOffset.Now, "me", "h") });
         var preview = Path.Combine(p.Directory, "previews", $"r_prev_{tag}.mp4");
-        var final = Path.Combine(p.Directory, "exports", "r_fin_" + tag, "out.mp4");
-        Touch(preview); Touch(final); Touch(Path.Combine(p.Directory, "exports", "r_fin_" + tag, "out.srt"));
+        var final = Path.Combine(p.Directory, "Artifact", "r_fin_" + tag, "out.mp4");
+        Touch(preview); Touch(final); Touch(Path.Combine(p.Directory, "Artifact", "r_fin_" + tag, "out.srt"));
+        if (tag == "aaa") Touch(Path.Combine(p.Directory, "exports", "r_fin_aaa", "legacy.mp4"));
         store.Put(Kinds.Render, "r_prev_" + tag, plan.EditplanId, new Render { Id = "r_prev_" + tag, EditplanId = plan.EditplanId, Kind = "preview", Path = preview });
         store.Put(Kinds.Render, "r_fin_" + tag, plan.EditplanId, new Render { Id = "r_fin_" + tag, EditplanId = plan.EditplanId, Kind = "final", Path = final, Outputs = new() { ["srt"] = Path.ChangeExtension(final, ".srt") } });
         Touch(Path.Combine(dataDir, "qa", "r_fin_" + tag, "f.png"));
@@ -84,6 +85,7 @@ public sealed class PatternTests : IDisposable
         Assert.Empty(store.List<Render>(Kinds.Render, a.Plan));
         Assert.False(File.Exists(a.Preview));
         Assert.False(Directory.Exists(Path.GetDirectoryName(a.Final)));
+        Assert.False(Directory.Exists(Path.Combine(p.Directory, "exports", "r_fin_aaa")));
         Assert.False(Directory.Exists(Path.Combine(Data, "qa", "r_fin_aaa")));
 
         // pattern B, the source and the project survive

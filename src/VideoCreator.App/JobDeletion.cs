@@ -7,7 +7,7 @@ public sealed record JobDeletionResult(string JobId, int Documents, int Renders,
 
 /// <summary>
 /// Deletes one generation (パターン) of a project: the job, its candidates, their edit plans and every render of those plans,
-/// with the render files (exports folder to the Recycle Bin, previews, rejected copies) and per-render QA dirs.
+/// with the render files (Artifact and legacy exports folders to the Recycle Bin, previews, rejected copies) and per-render QA dirs.
 /// The project's assets, rights, BGM, other jobs and the shared analysis caches are never touched.
 /// Files go first: a folder that cannot be removed leaves the DB unchanged.
 /// </summary>
@@ -32,6 +32,7 @@ public static class JobDeletion
         {
             foreach (var r in renders)
             {
+                files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "Artifact", r.Id), removeFolder);
                 files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "exports", r.Id), removeFolder);
                 files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "rejected", r.Id), removeFolder);
                 foreach (var f in new[] { r.Path }.Concat(r.Outputs.Values))

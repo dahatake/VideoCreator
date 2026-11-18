@@ -153,7 +153,11 @@ public sealed class ExportArtifactTests : IAsyncLifetime
             "-frames:v", "1", "-threads", "1", source], Ct);
         _images.Bytes = await File.ReadAllBytesAsync(source, Ct);
         Rt.SaveFoundry(new FoundryConnection("https://image.fixture.openai.azure.com/", "unused-chat", null, "key", ApiKey: "test-key"), DateTimeOffset.UtcNow);
-        Rt.Store.Put(Kinds.Project, _plan.ProjectId, null, new Project { Id = _plan.ProjectId, Name = "画像テスト", Directory = _root });
+        Rt.Store.Put(Kinds.Project, _plan.ProjectId, null, new Project
+        {
+            Id = _plan.ProjectId, Name = "画像テスト", Directory = _root,
+            GenerationSettings = new() { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" },
+        });
         Rt.Store.Put(Kinds.Asset, "a", _plan.ProjectId, new SourceAsset
         {
             Id = "a", ProjectId = _plan.ProjectId, Path = "not-used.mp4", Sha256 = new string('a', 64), Media = Fixtures.Landscape(),
@@ -161,7 +165,6 @@ public sealed class ExportArtifactTests : IAsyncLifetime
         Rt.Store.Put(Kinds.Job, "j", _plan.ProjectId, new Job
         {
             Id = "j", ProjectId = _plan.ProjectId, PresetIds = ["P4"],
-            Options = new() { MakeEngageImage = true, EngageImageDeployment = "my-gpt-image" },
         });
         Rt.Store.Put(Kinds.Candidate, "c", "j", new Candidate { Id = "c", Rank = 1, Headline = "新しい取り組み", EditPlanId = _plan.EditplanId, Segments = [] });
         _plan = _plan with { Provenance = new Provenance { JobId = "j", CandidateId = "c" } };
