@@ -25,6 +25,7 @@ UI 표시 언어는 브라우저의 언어 선택으로 저장합니다. 동영�
 | FaceModel / UpscaleModel | 미지정 시 tools의 UltraFace / Real-ESRGAN 모델 |
 | LocalOnly | `false`. `true`이면 LLM 미사용 고정. ASR은 중지하지 않음 |
 | Asr.Provider / Endpoint / Locale | `azure` / 빈 값 / `ja-JP`. Provider가 azure이고 Endpoint가 설정되어 있으면 ASR 활성. 실제 전사 언어에는 프로젝트의 `language`(동영상 언어)를 우선 사용 |
+| Asr.TenantId / Llm.TenantId | 미지정 시 Azure Identity 기본값. Entra ID 테넌트이며 화면에 저장한 각 연결이 우선 |
 | Llm.Provider | `azure-openai`. `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 빈 값 / `gpt-chat-latest`. 본인 배포 이름 설정 |
 | Llm.CopilotCliPath / CopilotModel | 미지정 시 CLI 탐지/기본 모델 |
@@ -44,7 +45,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 설정의 수명
 
-- 화면에서 바꾼 LLM 방식은 Runtime에 반영됩니다. 재시작하면 시작 설정으로 돌아갑니다.
+- LLM 방식 및 Speech/Foundry/Copilot 연결은 `DataDir/ai-settings.json`에 저장되어 재시작 후에도 시작 설정보다 우선합니다. 연결은 테스트 통과 후 저장하며 삭제하면 시작 설정으로 돌아갑니다. 키·토큰은 Windows DPAPI로 암호화하고 미지원 OS에서는 비밀 저장을 거부합니다.
 - 화면에서 바꾼 프로젝트 저장 위치는 Store의 setting에 영구 저장됩니다. 시작 설정보다 우선합니다.
 - 화면에서 선택한 패턴·생성 옵션은 프로젝트별로 Store에 저장하고 재시작 후에도 복원합니다. 생성 시 Job.Options에도 기록합니다.
 - 워크플로의 마지막 표시 단계와 대상 작업·편집 계획·내보내기는 Project.WorkflowState에 저장합니다. 참조가 무효하면 이전 단계로 돌아갑니다.
@@ -69,6 +70,11 @@ dotnet run --project src\VideoCreator.App -c Release
 |---|---|---|
 | 진단 | GET `/health` | FFmpeg·부족 필터·ASR·LLM·모델 등. 설정·탐지이며 클라우드 연결을 보장하지 않음 |
 | 설정 | GET / PUT `/settings` | 읽기/`{"llm_provider":"none"}` 등으로 LLM 전환 |
+| Speech 연결 | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`. auth는 `entra` / `key`이며 키는 `api_key`. 합성 무음 테스트만 하고 저장하지 않음 |
+| Speech 연결 | PUT / DELETE `/settings/ai/speech` | PUT은 같은 요청으로 재테스트하고 통과 시 저장. 실패는 422. DELETE는 저장 연결·키를 삭제하고 시작 설정 복원 |
+| Foundry 연결 | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | 같은 인증 필드에 `deployment` 및 선택적 `embedding_deployment` 추가. 채팅·임베딩 검증. LLM 미사용 고정이면 테스트·저장 불가 |
+| Azure 리소스 목록 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`(생략 가능). 로그인한 Entra ID로 ARM을 읽어 `subscriptions`, `accounts`(`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`. 권한을 읽지 못하면 `null`), `issues`(나열하지 못한 구독)를 반환. 키는 읽지 않음. 실패 시 422(`arm_unauthorized`/`arm_forbidden`/`entra_signin` 등) |
+| Azure 배포 목록 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. `deployments`(`name`, `model`, `chat`, `embeddings`, `provisioning_state`) 반환. Cognitive Services 이외의 ID는 요청 전에 422(`invalid_input`) |
 | 저장 위치 | GET `/settings/projects-dir` | path, source, configured_path, 건수, 이동 진행률 |
 | 저장 위치 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` 사전 확인 |
 | 저장 위치 | PUT `/settings/projects-dir` | 같은 형식으로 실제 변경/이동 |

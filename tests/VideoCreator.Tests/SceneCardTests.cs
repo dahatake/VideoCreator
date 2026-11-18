@@ -207,6 +207,34 @@ public sealed class SceneCardTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Regeneration_replaces_images_only_after_success()
+    {
+        var source = await SourceAsync();
+        Confirm(source);
+        using var created = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards", new { asset_id = source.Id, count = 3 }, Ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = Rt.Store.Get<Project>(Kinds.Project, _id)!;
+        var original = project.SceneCardImages;
+
+        var black = await SourceAsync("black.mp4", black: true);
+        Confirm(black);
+        using var failed = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards",
+            new { asset_id = black.Id, count = 2, replace = true }, Ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        Assert.Equal(original, Rt.Store.Get<Project>(Kinds.Project, _id)!.SceneCardImages);
+        Assert.All(original, image => Assert.True(File.Exists(image.Path)));
+
+        using var replaced = await _http.PostAsJsonAsync($"/api/projects/{_id}/scene-cards",
+            new { asset_id = source.Id, count = 2, replace = true }, Ct);
+        Assert.Equal(HttpStatusCode.Created, replaced.StatusCode);
+        var updated = Rt.Store.Get<Project>(Kinds.Project, _id)!.SceneCardImages;
+        Assert.Equal(2, updated.Count);
+        Assert.All(updated, image => Assert.DoesNotContain(image, original));
+        Assert.All(original, image => Assert.False(File.Exists(image.Path)));
+        Assert.All(updated, image => Assert.True(File.Exists(image.Path)));
+    }
+
+    [Fact]
     public async Task Registered_cards_take_precedence_and_prevent_generation()
     {
         var source = await SourceAsync();

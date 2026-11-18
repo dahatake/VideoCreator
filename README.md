@@ -38,6 +38,7 @@
 | エラー・警告・バックアップ | [トラブルシューティング](users-guide/troubleshooting.md) |
 | 機能詳細・配布版・従来のセットアップ手順 | [詳細概要](users-guide/overview.md) |
 | エンジニアが安全に変更する | [テクニカルリファレンス](users-guide/technical-reference.md) / [設定・API](users-guide/configuration-api.md) |
+| Azureの準備・共有利用者の追加・キー／Entra ID認証 | [Azure の準備と認証](users-guide/azure-access.md) |
 | 検証・ビルド・リリースの根拠 | [検証と保守](users-guide/verification.md) / [詳細概要](users-guide/overview.md) |
 
 画面の表示言語と動画の言語は別です。字幕は自動翻訳されません。動画言語を変えたら新しく候補を生成してください。より詳しい機能、配布、バージョン管理、テスト、構成、セキュリティの説明は、削除せず[詳細概要](users-guide/overview.md)へ移しました。

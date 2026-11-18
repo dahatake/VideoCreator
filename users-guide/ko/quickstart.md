@@ -38,11 +38,17 @@
 
 | 용도 | 준비할 정보·권한 |
 |---|---|
-| 필수: 전사 | 지원 리소스, 사용자 지정 하위 도메인이 있는 엔드포인트 `https://<본인-리소스>.cognitiveservices.azure.com/`, 지원 지역, 사용자의 `Cognitive Services User` 역할 |
+| 필수: 전사 | 지원 리소스, 사용자 지정 하위 도메인이 있는 엔드포인트 `https://<본인-리소스>.cognitiveservices.azure.com/`, 지원 지역, 사용자의 `Cognitive Services Speech User` 역할 |
 | 선택: Microsoft Foundry로 선정 | 지원 모델의 배포 이름, `https://<본인-리소스>.cognitiveservices.azure.com/openai/v1`, `Cognitive Services OpenAI User` 역할 |
 | 선택: Copilot으로 선정 | Copilot 사용 자격과 설치·로그인된 GitHub Copilot CLI |
 
 Azure 서비스는 사용량 기반으로 과금됩니다. 모델명이 아니라 **본인이 만든 배포의 이름**을 설정합니다. 설정 스크립트가 리소스·배포를 생성해 주지는 않습니다.
+
+실행 후 **설정 → AI 연결**에서 Speech와 Foundry를 각각 입력하고 **API 키 /
+Microsoft Entra ID**를 선택하여 테스트·저장할 수 있습니다. 공유 사용자는 RG의 IAM에서
+Speech User / OpenAI User를 부여하고 각 PC에서 같은 테넌트에 로그인합니다.
+키 인증에는 Azure의 로컬 인증 활성화도 필요합니다. 현재 리소스·역할·비용·검증 범위는
+[Azure 접근 설정](azure-access.md)을 확인하세요.
 
 실행 전에 [appsettings.json](../../src/VideoCreator.App/appsettings.json)의 `VideoCreator` 섹션을 본인의 값으로 바꾸세요. 아래는 해당 섹션의 예시이지, 파일 전체를 대체하는 내용이 아닙니다.
 

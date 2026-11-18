@@ -251,7 +251,7 @@ export const translated = `
 249|Create|创建|만들기
 250|Do not create|不创建|만들지 않기
 251|Keep the {0} existing images, but do not use them in candidates.|保留已创建的 {0} 张图片，但不用于候选。|기존 이미지 {0}장은 유지하되 후보에 사용하지 않습니다.
-252|Created {0} images. Used in sequence for transitions; existing images are not overwritten.|已创建 {0} 张，转场时依次使用，不覆盖现有图片。|이미지 {0}장 생성됨. 전환에 순서대로 사용하며 기존 이미지는 덮어쓰지 않습니다.
+252|Created {0} images. Used in sequence for transitions; if recreation fails, the current images are kept.|已创建 {0} 张，转场时依次使用。重新创建失败时会保留当前图片。|이미지 {0}장 생성됨. 전환에 순서대로 사용하며 다시 만들기에 실패하면 현재 이미지를 유지합니다.
 253|(Rights unconfirmed)|（权利未确认）|(권리 미확인)
 254|This project’s source videos|此项目的原视频|이 프로젝트의 원본 영상
 255|Opening|片头|오프닝

@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Azure.Core;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using VideoCreator.App;
+using VideoCreator.Asr;
 using VideoCreator.Selection;
 
 namespace VideoCreator.Tests;
@@ -135,13 +137,14 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Null(store.Reveal("not base64!"));
     }
 
-    WebApplicationFactory<Program> App(bool localOnly = false) => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+    WebApplicationFactory<Program> App(bool localOnly = false, HttpMessageHandler? speechHandler = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
     {
         b.UseSetting("VideoCreator:DataDir", Path.Combine(_root, "data"));
         b.UseSetting("VideoCreator:ProjectsDir", Path.Combine(_root, "projects"));
         b.UseSetting("VideoCreator:OpenBrowser", "false");
         b.UseSetting("VideoCreator:LocalOnly", localOnly ? "true" : "false");
         b.UseSetting("VideoCreator:Llm:Endpoint", "");
+        if (speechHandler != null) b.ConfigureServices(services => services.AddSingleton(new HttpClient(speechHandler)));
     });
 
     static HttpClient Client(WebApplicationFactory<Program> app)
@@ -244,5 +247,277 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Contains("\"local_only\"", await r.Content.ReadAsStringAsync(ct));
         r = await http.PostAsJsonAsync("/api/settings/ai/copilot/test", new { auth = "user" }, ct);
         Assert.Contains("\"local_only\"", await r.Content.ReadAsStringAsync(ct));
+    }
+
+    sealed class SpeechHandler : HttpMessageHandler
+    {
+        public readonly List<(Uri Uri, string? Key, string? Authorization, string Body)> Requests = [];
+        public HttpStatusCode Status = HttpStatusCode.OK;
+        public string Response = """{"durationMilliseconds":1000,"phrases":[]}""";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests.Add((request.RequestUri!, request.Headers.TryGetValues("Ocp-Apim-Subscription-Key", out var keys) ? keys.Single() : null,
+                request.Headers.Authorization?.ToString(), await request.Content!.ReadAsStringAsync(ct)));
+            return new HttpResponseMessage(Status) { Content = new StringContent(Response, Encoding.UTF8, "application/json") };
+        }
+    }
+
+    sealed class SpeechCredential : TokenCredential
+    {
+        public string[]? Scopes;
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        {
+            Scopes = requestContext.Scopes;
+            return ValueTask.FromResult(new AccessToken("speech-test-token", DateTimeOffset.UtcNow.AddHours(1)));
+        }
+    }
+
+    [Theory]
+    [InlineData("key")]
+    [InlineData("entra")]
+    public async Task Speech_probe_uses_exactly_the_selected_authentication_and_the_generation_API(string auth)
+    {
+        using var handler = new SpeechHandler();
+        using var http = new HttpClient(handler);
+        var credential = new SpeechCredential();
+        var endpoint = new Uri("https://speech.cognitiveservices.azure.com/");
+        var transcriber = auth == "key" ? new AzureFastTranscriber(endpoint, "speech-secret", http, "en-US")
+            : new AzureFastTranscriber(endpoint, credential, http, "en-US");
+        var transcript = await transcriber.ProbeAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(transcript.Words);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/speechtotext/transcriptions:transcribe", request.Uri.AbsolutePath);
+        Assert.Equal("?api-version=" + AzureFastTranscriber.ApiVersion, request.Uri.Query);
+        Assert.Contains("connection-test.wav", request.Body);
+        Assert.Contains("audio/wav", request.Body);
+        Assert.Contains("\"locales\":[\"en-US\"]", request.Body);
+        if (auth == "key")
+        {
+            Assert.Equal("speech-secret", request.Key);
+            Assert.Null(request.Authorization);
+            Assert.Null(credential.Scopes);
+        }
+        else
+        {
+            Assert.Null(request.Key);
+            Assert.Equal("Bearer speech-test-token", request.Authorization);
+            Assert.NotNull(credential.Scopes);
+            Assert.Equal(["https://cognitiveservices.azure.com/.default"], credential.Scopes);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://speech.cognitiveservices.azure.com/")]
+    [InlineData("https://user:password@speech.cognitiveservices.azure.com/")]
+    [InlineData("https://speech.cognitiveservices.azure.com/?key=secret")]
+    [InlineData("https://speech.cognitiveservices.azure.com/#secret")]
+    [InlineData("https://speech.cognitiveservices.azure.com/speechtotext")]
+    public void Unsafe_or_non_root_Speech_endpoints_are_rejected(string endpoint) =>
+        Assert.Throws<ArgumentException>(() => SpeechConnection.NormalizeEndpoint(endpoint));
+
+    [Fact]
+    public async Task Speech_tests_before_saving_protects_keys_and_prevents_reuse_on_a_different_destination()
+    {
+        using var handler = new SpeechHandler();
+        await using var app = App(speechHandler: handler);
+        using var http = Client(app);
+        var ct = TestContext.Current.CancellationToken;
+        var rt = app.Services.GetRequiredService<Runtime>();
+        const string endpoint = "https://speech.cognitiveservices.azure.com/";
+        const string secret = "speech-secret-not-for-display";
+        var body = new { endpoint, auth = "key", api_key = secret };
+
+        var test = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
+        Assert.Contains("\"ok\":true", await test.Content.ReadAsStringAsync(ct));
+        Assert.Null(rt.AiSettings.Load().Speech);
+        var saved = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.DoesNotContain(secret, await saved.Content.ReadAsStringAsync(ct));
+        Assert.DoesNotContain(secret, File.ReadAllText(rt.AiSettings.Path));
+        Assert.Equal(secret, rt.Speech!.ApiKey);
+        Assert.Equal("key", rt.Speech.Auth);
+        Assert.Equal("key", new AiSettingsStore(rt.AiSettings.Path, AiSettingsStore.DefaultProtector()).Load().Speech!.Auth);
+        var audioPath = Path.Combine(_root, "generation.flac");
+        await File.WriteAllBytesAsync(audioPath, [1, 2, 3], ct);
+        await rt.AsrForLanguage("ko-KR")!.TranscribeAsync(audioPath, 1, ["project phrase"], 3, ct);
+        Assert.Equal(secret, handler.Requests[^1].Key);
+        Assert.Null(handler.Requests[^1].Authorization);
+        Assert.Contains("\"locales\":[\"ko-KR\"]", handler.Requests[^1].Body);
+        Assert.Contains("project phrase", handler.Requests[^1].Body);
+        Assert.Contains("generation.flac", handler.Requests[^1].Body);
+
+        var count = handler.Requests.Count;
+        foreach (var other in new[] { "https://other.cognitiveservices.azure.com/", "https://speech.cognitiveservices.azure.com:8443/" })
+        {
+            var rejected = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint = other, auth = "key", api_key = "" }, ct);
+            Assert.Equal((HttpStatusCode)422, rejected.StatusCode);
+            Assert.Contains("invalid_input", await rejected.Content.ReadAsStringAsync(ct));
+        }
+        Assert.Equal(count, handler.Requests.Count);
+        var reused = AiConnectionApi.SpeechInput(rt, new(endpoint, "key", null, ""));
+        Assert.Equal(secret, reused.ApiKey);
+
+        handler.Status = HttpStatusCode.Forbidden;
+        handler.Response = """{"error":{"message":"rejected speech-secret-not-for-display"}}""";
+        var failure = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
+        Assert.Equal((HttpStatusCode)422, failure.StatusCode);
+        var failedBody = await failure.Content.ReadAsStringAsync(ct);
+        Assert.Contains("speech_forbidden", failedBody);
+        Assert.DoesNotContain(secret, failedBody);
+        Assert.Equal(secret, rt.Speech.ApiKey);
+
+        rt.SaveSpeech(new SpeechConnection(endpoint, "entra", "16b3c013-d300-468d-ac64-7eda0820b6d3"), DateTimeOffset.Now);
+        Assert.Null(rt.AiSettings.Load().Speech!.ApiKeyProtected);
+        Assert.Null(rt.Speech.ApiKey);
+        Assert.Equal("16b3c013-d300-468d-ac64-7eda0820b6d3", rt.Speech.TenantId);
+        Assert.DoesNotContain(secret, await http.GetStringAsync("/api/settings", ct));
+
+        await http.DeleteAsync("/api/settings/ai/speech", ct);
+        Assert.Null(rt.AiSettings.Load().Speech);
+        Assert.Equal(rt.Options.Asr.Endpoint, rt.Speech!.Endpoint);
+    }
+
+    [Fact]
+    public async Task Speech_remains_usable_without_an_LLM_and_secret_storage_limitations_are_explicit()
+    {
+        using var handler = new SpeechHandler();
+        await using var app = App(localOnly: true, speechHandler: handler);
+        using var http = Client(app);
+        var ct = TestContext.Current.CancellationToken;
+        var rt = app.Services.GetRequiredService<Runtime>();
+        var body = new { endpoint = "https://speech.cognitiveservices.azure.com/", auth = "key", api_key = "speech-secret" };
+        var success = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
+        Assert.Contains("\"ok\":true", await success.Content.ReadAsStringAsync(ct));
+        Assert.Single(handler.Requests);
+        rt.AiSettings = new AiSettingsStore(rt.AiSettings.Path, new NoSecretStorage());
+        var refused = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
+        Assert.Equal((HttpStatusCode)422, refused.StatusCode);
+        Assert.Contains("secret_storage_unavailable", await refused.Content.ReadAsStringAsync(ct));
+        Assert.Null(rt.AiSettings.Load().Speech);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task An_unreadable_Speech_key_does_not_break_Settings_and_fails_transcription_visibly()
+    {
+        await using var app = App();
+        using var http = Client(app);
+        var rt = app.Services.GetRequiredService<Runtime>();
+        rt.AiSettings.Update(s => s with { Speech = new("https://speech.cognitiveservices.azure.com/", "key", null, "unreadable", DateTimeOffset.Now) });
+        using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", TestContext.Current.CancellationToken));
+        Assert.True(settings.RootElement.GetProperty("speech").GetProperty("api_key_unreadable").GetBoolean());
+        var asr = rt.AsrForLanguage("ja-JP");
+        Assert.NotNull(asr);
+        var error = await Assert.ThrowsAsync<AsrException>(() => asr.TranscribeAsync("missing.flac", 1, [], 2, TestContext.Current.CancellationToken));
+        Assert.Contains("Speech の API キー", error.Message);
+    }
+
+    /// <summary>ARM as observed live: an empty first page with a nextLink, rich <c>properties.endpoints</c>, per-scope permissions.</summary>
+    sealed class FakeArm : HttpMessageHandler
+    {
+        public readonly List<(Uri Uri, string? Authorization)> Requests = [];
+        public readonly Dictionary<string, (HttpStatusCode Status, string Body)> Routes = new(StringComparer.OrdinalIgnoreCase);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests.Add((request.RequestUri!, request.Headers.Authorization?.ToString()));
+            var (status, body) = Routes.TryGetValue(request.RequestUri!.PathAndQuery, out var r) ? r : (HttpStatusCode.NotFound, """{"error":{"code":"NotFound","message":"no route"}}""");
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }
+    }
+
+    const string Sub1 = "11111111-1111-1111-1111-111111111111", Sub2 = "22222222-2222-2222-2222-222222222222";
+    static string AccountJson(string sub, string rg, string name, string kind, string? domain, bool disableLocalAuth, params string[] apis) => JsonSerializer.Serialize(new
+    {
+        id = $"/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{name}",
+        name, kind, location = "japaneast",
+        properties = new
+        {
+            endpoint = domain != null ? $"https://{domain}.cognitiveservices.azure.com/" : "https://japaneast.api.cognitive.microsoft.com/",
+            customSubDomainName = domain, disableLocalAuth, provisioningState = "Succeeded",
+            endpoints = apis.ToDictionary(a => a, _ => "https://x/"),
+        },
+    });
+
+    static FakeArm Arm()
+    {
+        var arm = new FakeArm();
+        var accounts = $"/subscriptions/{Sub1}/providers/Microsoft.CognitiveServices/accounts?api-version={AzureResourceCatalog.AccountsApiVersion}";
+        var ai = AccountJson(Sub1, "rg-a", "ai-both", "AIServices", "ai-both", true, "Speech Services Speech to Text v3.2", "OpenAI Language Model Instance API");
+        arm.Routes["/subscriptions?api-version=2022-12-01"] = (HttpStatusCode.OK, $$"""{"value":[{"subscriptionId":"{{Sub1}}","displayName":"Main","state":"Enabled","tenantId":"t"},{"subscriptionId":"{{Sub2}}","displayName":"Locked","state":"Enabled","tenantId":"t"}]}""");
+        arm.Routes[accounts] = (HttpStatusCode.OK, $$"""{"value":[],"nextLink":"https://management.azure.com{{accounts}}&%24skiptoken=p2"}""");
+        arm.Routes[accounts + "&%24skiptoken=p2"] = (HttpStatusCode.OK, $$"""{"value":[{{ai}},{{AccountJson(Sub1, "rg-b", "speech-regional", "SpeechServices", null, false, "Speech Services Speech to Text (Standard)")}},{{AccountJson(Sub1, "rg-c", "vision", "ComputerVision", "vision", true, "Computer Vision")}}],"nextLink":"https://attacker.example.com/steal"}""");
+        arm.Routes[$"/subscriptions/{Sub2}/providers/Microsoft.CognitiveServices/accounts?api-version={AzureResourceCatalog.AccountsApiVersion}"] =
+            (HttpStatusCode.Forbidden, """{"error":{"code":"AuthorizationFailed","message":"no read"}}""");
+        // Speech User only (its real dataActions) on ai-both; nothing readable on speech-regional
+        arm.Routes[$"/subscriptions/{Sub1}/resourceGroups/rg-a/providers/Microsoft.CognitiveServices/accounts/ai-both/providers/Microsoft.Authorization/permissions?api-version=2022-04-01"] =
+            (HttpStatusCode.OK, """{"value":[{"actions":["*/read"],"dataActions":[]},{"actions":[],"dataActions":["Microsoft.CognitiveServices/accounts/SpeechServices/*/transcriptions/action"],"notDataActions":[]},{"actions":[],"dataActions":["Microsoft.CognitiveServices/*"],"notDataActions":["Microsoft.CognitiveServices/accounts/OpenAI/*"]}]}""");
+        arm.Routes[$"/subscriptions/{Sub1}/resourceGroups/rg-a/providers/Microsoft.CognitiveServices/accounts/ai-both/deployments?api-version={AzureResourceCatalog.AccountsApiVersion}"] =
+            (HttpStatusCode.OK, """{"value":[{"name":"emb","sku":{"name":"GlobalStandard"},"properties":{"model":{"name":"text-embedding-3-large","version":"1"},"provisioningState":"Succeeded","capabilities":{"embeddings":"true"}}},{"name":"chat","sku":{"name":"GlobalStandard"},"properties":{"model":{"name":"gpt-4.1","version":"2025-04-14"},"provisioningState":"Succeeded","capabilities":{"chatCompletion":"true","responses":"true"}}}]}""");
+        return arm;
+    }
+
+    [Fact]
+    public async Task Azure_catalog_pages_through_ARM_keeps_only_Speech_or_Foundry_and_reports_effective_permissions()
+    {
+        using var arm = Arm();
+        var credential = new SpeechCredential();
+        var catalog = new AzureResourceCatalog(credential, new HttpClient(arm));
+        var ct = TestContext.Current.CancellationToken;
+
+        var r = await catalog.ListAccountsAsync(ct);
+
+        Assert.NotNull(credential.Scopes);
+        Assert.Equal([AzureResourceCatalog.Scope], credential.Scopes);
+        Assert.Equal(2, r.Subscriptions.Count);
+        Assert.Equal(["ai-both", "speech-regional"], r.Accounts.Select(a => a.Name));   // ComputerVision has no Speech / OpenAI API
+        var ai = r.Accounts[0];
+        Assert.True(ai.Speech && ai.Foundry && ai.KeyAuthDisabled && ai.CustomDomain);
+        Assert.Equal("https://ai-both.cognitiveservices.azure.com/", ai.Endpoint);
+        Assert.Equal((true, false, false), (ai.CanTranscribe, ai.CanChat, ai.CanEmbed));   // notDataActions removes OpenAI
+        var regional = r.Accounts[1];
+        Assert.True(regional.Speech && !regional.Foundry && !regional.CustomDomain);
+        Assert.Null(regional.CanTranscribe);   // permissions unreadable → unknown, not "denied"
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(("Locked", "forbidden"), (issue.Scope, issue.Code));
+        Assert.All(arm.Requests, q => Assert.Equal("management.azure.com", q.Uri.Host));   // the attacker nextLink was not followed
+        Assert.All(arm.Requests, q => Assert.Equal("Bearer speech-test-token", q.Authorization));
+
+        var deployments = await catalog.ListDeploymentsAsync(ai.Id, ct);
+        Assert.Equal(["chat", "emb"], deployments.Select(d => d.Name));
+        Assert.True(deployments[0].Chat && !deployments[0].Embeddings);
+        Assert.True(deployments[1].Embeddings && !deployments[1].Chat);
+        Assert.Equal("gpt-4.1", deployments[0].Model);
+    }
+
+    [Fact]
+    public async Task Azure_catalog_API_uses_the_entered_tenant_and_rejects_resource_ids_outside_Cognitive_Services()
+    {
+        using var arm = Arm();
+        await using var app = App(speechHandler: arm);
+        using var http = Client(app);
+        var ct = TestContext.Current.CancellationToken;
+        var rt = app.Services.GetRequiredService<Runtime>();
+        var tenants = new List<string?>();
+        rt.CredentialFactory = t => { tenants.Add(t); return new SpeechCredential(); };
+
+        var r = await http.PostAsJsonAsync("/api/settings/ai/azure/resources", new { tenant_id = "contoso.onmicrosoft.com" }, ct);
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var doc = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct)))
+        {
+            var first = doc.RootElement.GetProperty("accounts")[0];
+            Assert.Equal("https://ai-both.cognitiveservices.azure.com/", first.GetProperty("endpoint").GetString());
+            Assert.True(first.GetProperty("can_transcribe").GetBoolean());
+            Assert.True(first.GetProperty("key_auth_disabled").GetBoolean());
+        }
+        Assert.Equal(["contoso.onmicrosoft.com"], tenants);
+
+        var sent = arm.Requests.Count;
+        r = await http.PostAsJsonAsync("/api/settings/ai/azure/deployments", new { account_id = $"/subscriptions/{Sub1}/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/x" }, ct);
+        Assert.Equal((HttpStatusCode)422, r.StatusCode);
+        Assert.Contains("\"invalid_input\"", await r.Content.ReadAsStringAsync(ct));
+        Assert.Equal(sent, arm.Requests.Count);
     }
 }

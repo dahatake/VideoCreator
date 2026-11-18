@@ -66,6 +66,10 @@ public sealed class PrdVerificationTests
             http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
             var settings = await http.GetFromJsonAsync<JsonElement>("/api/settings", TestContext.Current.CancellationToken);
             Assert.Equal("none", settings.GetProperty("llm_provider").GetString());
+            Assert.Equal("https://speech.example.invalid/path", settings.GetProperty("speech").GetProperty("endpoint").GetString());
+            Assert.DoesNotContain("fixture-user", settings.GetRawText());
+            Assert.DoesNotContain("fixture-password", settings.GetRawText());
+            Assert.DoesNotContain("fixture-secret", settings.GetRawText());
             Assert.Null(rt.Llm);
             Assert.NotNull(rt.Asr);
             Assert.Equal("false", Environment.GetEnvironmentVariable("AZURE_CORE_COLLECT_TELEMETRY"));

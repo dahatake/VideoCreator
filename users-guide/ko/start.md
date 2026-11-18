@@ -38,6 +38,7 @@ PC에서 영상을 선택하고 편집 패턴을 지정한 뒤 후보를 확인�
 | 오류·경고·백업 | [문제 해결](troubleshooting.md) |
 | 상세 기능·배포 버전·기존 설치 절차 | [상세 개요](overview.md) |
 | 엔지니어의 안전한 사용자 지정 | [기술 참조](technical-reference.md) / [설정·API](configuration-api.md) |
+| Azure 준비·공유 사용자·키 / Entra ID 인증 | [Azure 접근 설정](azure-access.md) |
 | 검증·빌드·릴리스 근거 | [검증 및 유지 관리](verification.md) / [상세 개요](overview.md) |
 
 화면 언어와 영상 언어는 별개입니다. 자막은 자동 번역하지 않습니다. 영상 언어를 바꾸면 후보를 새로 생성하세요. 기능·배포·버전 관리·테스트·구조·보안의 상세 정보는 [상세 개요](overview.md)에 보존했습니다.

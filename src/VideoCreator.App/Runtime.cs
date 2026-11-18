@@ -18,9 +18,13 @@ public sealed class Runtime
     readonly AppOptions _o;
     readonly ILogger _log;
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, TokenCredential> _creds = new();
-    readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(30) };
-    TokenCredential Credential(string? tenantId) => _creds.GetOrAdd(tenantId ?? "", t => FoundryAuth.DefaultCredential(t.Length == 0 ? null : t));
+    readonly HttpClient _http;
+    TokenCredential Credential(string? tenantId) => _creds.GetOrAdd(tenantId ?? "", t => CredentialFactory(t.Length == 0 ? null : t));
     public Func<string?, TokenCredential> CredentialFor => Credential;
+    /// <summary>Entra ID credential per tenant (tests replace it before the first use).</summary>
+    internal Func<string?, TokenCredential> CredentialFactory { get; set; } = FoundryAuth.DefaultCredential;
+    /// <summary>The Azure Speech / Foundry resources the signed-in identity can see, read from Azure Resource Manager.</summary>
+    public AzureResourceCatalog AzureCatalog(string? tenantId) => new(Credential(tenantId), _http);
 
     public FFmpeg Ff { get; }
     public Store Store { get; }
@@ -31,7 +35,9 @@ public sealed class Runtime
     public AiSettingsStore AiSettings { get; internal set; }
     /// <summary>The Foundry connection in use: the one saved in the settings screen, else appsettings.json (Entra ID). Null = not configured.</summary>
     public FoundryConnection? Foundry => AiSettings.Load().Foundry is { } f ? f.ToConnection(AiSettings)
-        : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment);
+        : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment, TenantId: _o.Llm.TenantId);
+    public SpeechConnection? Speech => AiSettings.Load().Speech is { } speech ? speech.ToConnection(AiSettings)
+        : _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint) ? null : new SpeechConnection(_o.Asr.Endpoint, TenantId: _o.Asr.TenantId);
     public CopilotConnection Copilot => AiSettings.Load().Copilot is { } c ? c.ToConnection(AiSettings) : new CopilotConnection(Model: _o.Llm.CopilotModel);
     public string CopilotWorkDir => Path.Combine(_o.ResolvedDataDir, "copilot");
 
@@ -39,9 +45,10 @@ public sealed class Runtime
     public FaceService Faces { get; }
     public string UpscaleModel { get; }
 
-    public Runtime(AppOptions o, ILogger<Runtime> log)
+    public Runtime(AppOptions o, ILogger<Runtime> log, HttpClient? speechHttp = null)
     {
         _o = o; _log = log;
+        _http = speechHttp ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(30) };
         // AzureCliCredential inherits this process setting; token acquisition must not emit CLI telemetry.
         Environment.SetEnvironmentVariable("AZURE_CORE_COLLECT_TELEMETRY", "false", EnvironmentVariableTarget.Process);
         Directory.CreateDirectory(o.ResolvedDataDir);
@@ -90,17 +97,32 @@ public sealed class Runtime
         AiSettings.Update(s => s with { Copilot = new SavedCopilot(c.Auth, token, c.Model, c.ReasoningEffort, c.ContextTier, login, testedAt) });
     }
 
+    public void SaveSpeech(SpeechConnection c, DateTimeOffset testedAt) =>
+        AiSettings.Update(s => s with { Speech = new SavedSpeech(c.Endpoint, c.Auth, c.TenantId, c.UsesKey ? AiSettings.Protect(c.ApiKey) : null, testedAt) });
+
     public IHighlightSelector FoundrySelector(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
     public ITextEmbedder FoundryEmbedder(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
-    public ITranscriber? Asr => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), Credential(null), _http, _o.Asr.Locale);
+    public AzureFastTranscriber SpeechTranscriber(SpeechConnection c, string language) => c.UsesKey
+        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language)
+        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language);
 
-    public ITranscriber? AsrForLanguage(string language) => _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-        ? null : new AzureFastTranscriber(new Uri(_o.Asr.Endpoint), Credential(null), _http, language);
+    public ITranscriber? Asr => AsrForLanguage(_o.Asr.Locale);
+
+    // An unreadable saved key must fail the job, not silently turn speech recognition off.
+    public ITranscriber? AsrForLanguage(string language) => Speech is not { } speech ? null
+        : speech.UsesKey && speech.ApiKey == null ? new UnreadableKeyTranscriber() : SpeechTranscriber(speech, language);
+
+    sealed class UnreadableKeyTranscriber : ITranscriber
+    {
+        public const string Message = "保存した Speech の API キーをこの Windows ユーザーでは読めません。設定画面でキーを入力し直してください";
+        public string Name => "azure-fast-transcription";
+        public Task<VideoCreator.Models.Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) =>
+            throw new AsrException(Message, transient: false);
+    }
 
     public string? CopilotCli => _o.Llm.CopilotCliPath ?? CopilotSelector.FindInstalledCli();
 
@@ -110,10 +132,10 @@ public sealed class Runtime
     public object Transmission => new
     {
         llm_disabled = LlmProvider == "none",
-        asr_endpoint = _o.Asr.Provider == "azure" && Uri.TryCreate(_o.Asr.Endpoint, UriKind.Absolute, out var endpoint)
+        asr_endpoint = Speech is { } speech && Uri.TryCreate(speech.Endpoint, UriKind.Absolute, out var endpoint)
             ? Origin(endpoint) : null,
-        authentication = _o.Asr.Provider == "azure" && !string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-            ? "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）" : null,
+        authentication = Speech is { } connection
+            ? connection.UsesKey ? "API key" : "Microsoft Entra ID（Azure Identity の認証先。音声・書き起こしは送りません）" : null,
         llm_destination = LlmDestination,
     };
 

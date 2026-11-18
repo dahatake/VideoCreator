@@ -38,6 +38,7 @@ If something fails, do not repeatedly regenerate: open [troubleshooting](trouble
 | Errors, warnings and backup | [Troubleshooting](troubleshooting.md) |
 | Detailed features, packaged edition and original setup | [Detailed overview](overview.md) |
 | Customize safely as an engineer | [Technical reference](technical-reference.md) / [Configuration/API](configuration-api.md) |
+| Azure setup, shared users, key / Entra ID authentication | [Azure access](azure-access.md) |
 | Verification, builds and release details | [Verification](verification.md) / [Detailed overview](overview.md) |
 
 Display language and video language are independent. Subtitles are not automatically translated. Generate new candidates after changing video language. The [detailed overview](overview.md) retains the full feature, distribution, versioning, testing, architecture and security information.

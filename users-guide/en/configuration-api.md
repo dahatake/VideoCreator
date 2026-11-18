@@ -25,6 +25,7 @@ Use the `VideoCreator` section of [appsettings.json](../../src/VideoCreator.App/
 | FaceModel / UpscaleModel | If unset, tools UltraFace / Real-ESRGAN |
 | LocalOnly | `false`; `true` forces LLM off, not ASR |
 | Asr.Provider / Endpoint / Locale | `azure` / empty / `ja-JP`; ASR enabled when azure and endpoint set. For app generation, project `language` overrides Locale. |
+| Asr.TenantId / Llm.TenantId | Azure Identity default if unset; tenant for Entra ID. Each UI-saved connection takes precedence |
 | Llm.Provider | `azure-openai`: `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | Empty / `gpt-chat-latest`; use your deployment name |
 | Llm.CopilotCliPath / CopilotModel | CLI autodetection / default model if unset |
@@ -44,7 +45,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 
 ## Setting lifetimes
 
-- UI LLM changes affect Runtime; restart restores startup configuration.
+- UI LLM selection and Speech/Foundry/Copilot connections persist in `DataDir/ai-settings.json` across restart and override startup configuration. Connections save only after a passing test; removing one restores startup configuration. Keys/tokens use Windows DPAPI; unsupported OSes refuse secret storage.
 - UI project-location changes persist in Store settings and override startup configuration.
 - Patterns/generation options persist per project, restore after restart, and are recorded in Job.Options on generation.
 - Last workflow stage/job/edit-plan/export is saved in Project.WorkflowState; invalid references fall back.
@@ -69,6 +70,11 @@ Variables apply to that PowerShell process and its children; reset in a new term
 |---|---|---|
 | Diagnostics | GET `/health` | FFmpeg/missing filters/ASR/LLM/models; configuration/detection, not guaranteed cloud connectivity |
 | Settings | GET / PUT `/settings` | Read / switch LLM, e.g. `{"llm_provider":"none"}` |
+| Speech connection | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`; auth is `entra` or `key` (`api_key`). Synthetic-silence test only; does not save |
+| Speech connection | PUT / DELETE `/settings/ai/speech` | PUT repeats the test with the same body and saves only on success; failure is 422. DELETE removes saved connection/key and restores startup configuration |
+| Foundry connection | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | Same authentication fields plus `deployment` and optional `embedding_deployment`. Tests chat/embeddings; blocked when LLM-disabled mode is forced |
+| Azure resource list | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}` (optional). Reads ARM with the signed-in Entra ID identity and returns `subscriptions`, `accounts` (`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`; `null` when permissions cannot be read) and `issues` (subscriptions that could not be listed). Never reads keys. Failures return 422 (`arm_unauthorized`/`arm_forbidden`/`entra_signin`, etc.) |
+| Azure deployment list | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. Returns `deployments` (`name`, `model`, `chat`, `embeddings`, `provisioning_state`). Non-Cognitive Services IDs get 422 (`invalid_input`) before any request |
 | Storage | GET `/settings/projects-dir` | path, source, configured_path, counts, move progress |
 | Storage | POST `/settings/projects-dir/plan` | Preflight `{"path":"D:\\Videos\\VideoCreator","move":true}` |
 | Storage | PUT `/settings/projects-dir` | Same body; change/move |

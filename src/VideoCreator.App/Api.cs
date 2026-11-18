@@ -38,8 +38,8 @@ public static class Api
     /// <summary>Selected absolute directory, or an explicit null when the user cancels.</summary>
     public sealed record PickFolderResponse(
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? Path);
-    /// <summary>Source — a project video (<c>asset_id</c>) or a registered opening / closing video (<c>brand_path</c>), exactly one — and the target number of distinct images (2–6).</summary>
-    public sealed record GenerateSceneCardsRequest(string? AssetId, int Count = 4, string? BrandPath = null);
+    /// <summary>Source — a project video (<c>asset_id</c>) or registered opening / closing video (<c>brand_path</c>), exactly one — target count (2–6), and whether to replace existing generated images.</summary>
+    public sealed record GenerateSceneCardsRequest(string? AssetId, int Count = 4, string? BrandPath = null, bool Replace = false);
     /// <summary>作る (true) / 作らない (false) for this project's video-extracted scene-card images.</summary>
     public sealed record SceneCardSettingsRequest(bool Make);
     /// <summary>Approve (true) or withdraw the approval of (false) a candidate as it is now.</summary>
@@ -166,6 +166,7 @@ public static class Api
             azure_configured = rt.Foundry != null,
             asr_configured = rt.Asr != null,
             foundry = AiConnectionApi.FoundryView(rt),
+            speech = AiConnectionApi.SpeechView(rt),
             copilot = AiConnectionApi.CopilotView(rt),
             secret_protection = rt.AiSettings.Protector.Kind,
         }, Json.Options));
@@ -654,7 +655,7 @@ public static class Api
             if (req.Count is < 2 or > 6) return Error(422, "E-VALIDATION", "画像の枚数は 2〜6 枚で指定してください");
             try
             {
-                var images = await service.GenerateAsync(project, assetId, brandPath, req.Count, ct);
+                var images = await service.GenerateAsync(project, assetId, brandPath, req.Count, req.Replace, ct);
                 ctx.Response.Headers.Location = $"/api/projects/{Uri.EscapeDataString(id)}";
                 return Results.Json(new { images, message = images.Count < req.Count ? $"類似画像・黒画面を除き、{images.Count} 枚を作成しました" : $"{images.Count} 枚を作成しました" }, Json.Options, statusCode: 201);
             }

@@ -38,11 +38,17 @@ Automatic subtitles use Azure Speech Fast Transcription. Ask your Azure administ
 
 | Purpose | Information/permissions |
 |---|---|
-| Required: transcription | Compatible resource, custom-subdomain endpoint `https://<your-resource>.cognitiveservices.azure.com/`, supported region, user's `Cognitive Services User` role |
+| Required: transcription | Compatible resource, custom-subdomain endpoint `https://<your-resource>.cognitiveservices.azure.com/`, supported region, user's `Cognitive Services Speech User` role |
 | Optional: Foundry selection | Compatible model deployment name, `https://<your-resource>.cognitiveservices.azure.com/openai/v1`, `Cognitive Services OpenAI User` |
 | Optional: Copilot selection | Copilot entitlement and installed, signed-in GitHub Copilot CLI |
 
 Azure is metered. Configure **the deployment name you created**, not a model name. Setup creates neither resources nor deployments.
+
+After launch, **Settings → AI connections** lets you configure Speech and Foundry independently,
+choose **API key / Microsoft Entra ID**, test and save. For shared users, assign Speech User /
+OpenAI User in the resource group's IAM; each user signs in to the same tenant on their PC.
+Keys also require Azure local authentication to be enabled. See [Azure access](azure-access.md)
+for current resource status, roles, costs and the limits of verification.
 
 Before launch, edit the `VideoCreator` section in [appsettings.json](../../src/VideoCreator.App/appsettings.json). This is a section example, not a replacement for the entire file.
 

@@ -36,11 +36,13 @@
 
 | 用途 | 用意する情報・権限 |
 |---|---|
-| 必須：書き起こし | 対応リソース、カスタムサブドメイン付きエンドポイント `https://<自分のリソース>.cognitiveservices.azure.com/`、対応リージョン、利用者の `Cognitive Services User` ロール |
+| 必須：書き起こし | 対応リソース、カスタムサブドメイン付きエンドポイント `https://<自分のリソース>.cognitiveservices.azure.com/`、対応リージョン、利用者の `Cognitive Services Speech User` ロール |
 | 任意：Microsoft Foundryで選定 | 対応するモデルのデプロイ名、`https://<自分のリソース>.cognitiveservices.azure.com/openai/v1`、`Cognitive Services OpenAI User` ロール |
 | 任意：Copilotで選定 | Copilot利用資格と、インストール・サインイン済みGitHub Copilot CLI |
 
 Azureサービスは従量課金です。モデル名ではなく、**自分が作成したデプロイの名前**を設定します。リソース・デプロイはセットアップスクリプトが作成するものではありません。
+
+起動後の **設定 → AI の接続 → Azure Speech / Microsoft Foundry** で、それぞれキー認証か Entra ID 認証を選び、**テストして保存**できます。共有利用者は同じテナントへサインインし、管理者が RG の IAM で上表の利用ロールを付与します。[Azure の準備と認証](azure-access.md)に詳しい手順と、この環境で確認したリソース・未変更項目を記載しています。
 
 起動前に[appsettings.json](../src/VideoCreator.App/appsettings.json)の `VideoCreator` セクションを自分の値へ変更します。以下はそのセクションの例であり、ファイル全体の置き換え用ではありません。
 

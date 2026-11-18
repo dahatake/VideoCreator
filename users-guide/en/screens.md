@@ -302,7 +302,7 @@ While exporting: composition, loudness, QA, related-file creation. Afterwards:
 |---|---|
 | Foundry/Copilot/no LLM | Highlight selection; immediate server change. Close is not Save |
 | Unavailable | Missing endpoint/CLI, forced no-LLM startup |
-| AI connections | Enter Foundry (endpoint, deployments, key or Entra ID) and GitHub Copilot (sign-in, model, reasoning effort, context); only settings that pass **Test connection** are saved. Keys/tokens are DPAPI-encrypted and never returned to the screen or API; they cannot be saved outside Windows |
+| AI connections | Configure Azure Speech (endpoint, key or Entra ID, tenant), Foundry (endpoint, deployments, independent authentication) and GitHub Copilot (sign-in, model, reasoning effort, context). **Test connection** does not save; **Test and save** tests again and persists only on success. Speech remains usable in LLM-disabled mode. Keys/tokens use Windows DPAPI and are never returned; unsupported OSes refuse secret storage. **Choose from Azure** lists the Speech/Foundry resources and deployments available to the signed-in Entra ID identity and fills the boxes (saving still requires a test). See [Azure access](azure-access.md) |
 | Destinations | Audio/text/authentication; no LLM ≠ no ASR |
 | Current storage/count | New-project location, existing count |
 | New storage/choose folder | Not DB/cache DataDir |
@@ -312,7 +312,7 @@ While exporting: composition, loudness, QA, related-file creation. Afterwards:
 | FFmpeg/missing filters/CLI/pattern count | Diagnostics; mask personal CLI paths before sharing |
 | Close | Closes dialog |
 
-AI choice is Runtime-only, restored from startup on restart. UI storage persists in DB, takes precedence. Do not manually move folders back after relocation; see [recovery cautions](troubleshooting.md#storage-and-backups).
+AI choice and connection settings persist in `DataDir/ai-settings.json` across restart, overriding startup configuration. Removing a saved connection restores its startup configuration. UI storage location settings persist in DB and take precedence. Do not manually move folders back after relocation; see [recovery cautions](troubleshooting.md#storage-and-backups).
 
 ![Lower settings: storage/diagnostics, personal paths masked](../images/screen-settings-storage.svg)
 ---

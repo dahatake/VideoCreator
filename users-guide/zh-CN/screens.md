@@ -304,7 +304,7 @@ P11 需将人物视频设为基准素材，将一段录屏设为 Screen 角色�
 |---|---|
 | Microsoft Foundry／GitHub Copilot／不使用 LLM | 亮点筛选方式，修改立即反映服务端，“关闭”不是保存按钮 |
 | 不可用 | 缺端点、无 CLI、启动时强制不使用 LLM 等 |
-| AI 连接 | 输入 Foundry（端点、部署名、密钥或 Entra ID）和 GitHub Copilot（登录、模型、推理深度、上下文），仅保存通过**连接测试**的设置。密钥/令牌经 Windows DPAPI 加密，不会返回到界面或 API；非 Windows 无法保存密钥/令牌 |
+| AI 连接 | 配置 Azure Speech（终结点、密钥或 Entra ID、租户）、Foundry（终结点、部署名、独立身份验证）及 GitHub Copilot（登录、模型、推理深度、上下文）。**测试连接**不保存；**测试并保存**再次测试，通过后才保存。禁用 LLM 时仍可配置 Speech。密钥/令牌经 Windows DPAPI 加密，不返回到界面或 API；不支持的系统拒绝保存秘密。**从 Azure 选择** 可列出当前登录的 Entra ID 可用的 Speech/Foundry 资源和部署，选择后填入输入框（保存仍需测试）。参见 [Azure 访问](azure-access.md) |
 | 发送目标 | 正常音频与文本目标及认证目标，不使用 LLM 不等于停 ASR |
 | 当前保存位置与数量 | 新项目保存位置及已有数量 |
 | 新保存位置／选择文件夹 | 指定新项目位置，不是修改 DB／缓存 DataDir |
@@ -314,7 +314,7 @@ P11 需将人物视频设为基准素材，将一段录屏设为 Screen 角色�
 | FFmpeg／缺少滤镜／Copilot CLI／模式数 | 诊断启动环境，分享前遮盖 CLI 路径个人信息 |
 | 关闭 | 关闭对话框 |
 
-AI 选择为 Runtime 状态，重启恢复启动配置。保存位置界面配置保存到 DB 并优先。迁移后手动移回文件夹会导致引用错位，请阅读[保存与恢复注意](troubleshooting.md#保存与备份)。
+AI 选择和连接设置保存在 `DataDir/ai-settings.json`，重启后仍优先于启动配置。删除已保存连接后恢复对应启动配置。保存位置界面配置保存到 DB 并优先。迁移后手动移回文件夹会导致引用错位，请阅读[保存与恢复注意](troubleshooting.md#保存与备份)。
 
 ![设置下部：保存位置与诊断（个人路径已遮盖）](../images/screen-settings-storage.svg)
 ---

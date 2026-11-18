@@ -30,6 +30,7 @@ public sealed class AsrOptions
     public string Provider { get; set; } = "azure";   // azure | none
     public string Endpoint { get; set; } = "";
     public string Locale { get; set; } = "ja-JP";
+    public string? TenantId { get; set; }
 }
 
 public sealed class LlmOptions
@@ -39,6 +40,7 @@ public sealed class LlmOptions
     public string Deployment { get; set; } = "gpt-chat-latest";
     /// <summary>Embedding deployment used to find where the subject changes (series split). Empty = vocabulary-only detection.</summary>
     public string EmbeddingDeployment { get; set; } = "text-embedding-3-large";
+    public string? TenantId { get; set; }
     public string? CopilotCliPath { get; set; }
     public string? CopilotModel { get; set; }
     public int SingleCallCharBudget { get; set; } = VideoCreator.Selection.SelectionService.DefaultCharBudget;

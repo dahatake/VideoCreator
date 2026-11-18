@@ -16,19 +16,69 @@ public interface ITranscriber
 public sealed class AsrException(string message, bool transient) : Exception(message)
 {
     public bool Transient { get; } = transient;
+    public HttpStatusCode? StatusCode { get; init; }
 }
 
-/// <summary>Azure AI Speech fast transcription, keyless (verified in spikes/04-asr.cs).</summary>
-public sealed class AzureFastTranscriber(Uri endpoint, TokenCredential credential, HttpClient http, string locale = "ja-JP") : ITranscriber
+public sealed record SpeechConnection(string Endpoint, string Auth = "entra", string? TenantId = null, string? ApiKey = null)
 {
+    public bool UsesKey => Auth == "key";
+
+    public static Uri NormalizeEndpoint(string? input)
+    {
+        if (!Uri.TryCreate(input?.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || uri.Host.Length == 0 || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0
+            || uri.AbsolutePath != "/")
+            throw new ArgumentException("Speech endpoint must be an HTTPS resource root without a path, credentials, query or fragment.");
+        return uri;
+    }
+}
+
+/// <summary>Azure AI Speech fast transcription using either Entra ID or a resource key.</summary>
+public sealed class AzureFastTranscriber : ITranscriber
+{
+    readonly Uri _endpoint;
+    readonly TokenCredential? _credential;
+    readonly string? _apiKey;
+    readonly HttpClient _http;
+    readonly string _locale;
+
+    public AzureFastTranscriber(Uri endpoint, TokenCredential credential, HttpClient http, string locale = "ja-JP")
+        : this(endpoint, credential ?? throw new ArgumentNullException(nameof(credential)), null, http, locale) { }
+
+    public AzureFastTranscriber(Uri endpoint, string apiKey, HttpClient http, string locale = "ja-JP")
+        : this(endpoint, null, string.IsNullOrWhiteSpace(apiKey) ? throw new ArgumentException("Speech API key is required.", nameof(apiKey)) : apiKey.Trim(), http, locale) { }
+
+    AzureFastTranscriber(Uri endpoint, TokenCredential? credential, string? apiKey, HttpClient http, string locale)
+    {
+        _endpoint = endpoint; _credential = credential; _apiKey = apiKey; _http = http; _locale = locale;
+    }
+
     public string Name => "azure-fast-transcription";
     public const string ApiVersion = "2025-10-15";
 
-    public async Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct)
+    public Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) =>
+        TranscribeAudioAsync(() => File.OpenRead(audioFile), Path.GetFileName(audioFile), "audio/flac", duration, phrases, maxSpeakers, ct);
+
+    /// <summary>Same API as generation, with one second of synthetic silence instead of user audio.</summary>
+    public Task<Transcript> ProbeAsync(CancellationToken ct)
+    {
+        using var wav = new MemoryStream();
+        using (var writer = new BinaryWriter(wav, Encoding.ASCII, leaveOpen: true))
+        {
+            writer.Write("RIFF"u8); writer.Write(36 + 32000); writer.Write("WAVEfmt "u8);
+            writer.Write(16); writer.Write((short)1); writer.Write((short)1); writer.Write(16000);
+            writer.Write(32000); writer.Write((short)2); writer.Write((short)16);
+            writer.Write("data"u8); writer.Write(32000); writer.Write(new byte[32000]);
+        }
+        var bytes = wav.ToArray();
+        return TranscribeAudioAsync(() => new MemoryStream(bytes, writable: false), "connection-test.wav", "audio/wav", 1, [], 2, ct);
+    }
+
+    async Task<Transcript> TranscribeAudioAsync(Func<Stream> openAudio, string fileName, string contentType, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct)
     {
         var definition = new Dictionary<string, object>
         {
-            ["locales"] = new[] { locale },
+            ["locales"] = new[] { _locale },
             ["diarization"] = new { enabled = true, maxSpeakers = Math.Clamp(maxSpeakers, 2, 35) },
             ["profanityFilterMode"] = "None",
         };
@@ -40,21 +90,26 @@ public sealed class AzureFastTranscriber(Uri endpoint, TokenCredential credentia
         foreach (var delay in new[] { 0, 1, 4, 16 })
         {
             if (delay > 0) await Task.Delay(TimeSpan.FromSeconds(delay), ct);
-            var token = await credential.GetTokenAsync(new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]), ct);
             using var form = new MultipartFormDataContent();
-            var audio = new StreamContent(File.OpenRead(audioFile));
-            audio.Headers.ContentType = new MediaTypeHeaderValue("audio/flac");
-            form.Add(audio, "audio", Path.GetFileName(audioFile));
+            var audio = new StreamContent(openAudio());
+            audio.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+            form.Add(audio, "audio", fileName);
             form.Add(new StringContent(defJson, Encoding.UTF8, "application/json"), "definition");
-            using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint, $"speechtotext/transcriptions:transcribe?api-version={ApiVersion}")) { Content = form };
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(_endpoint, $"speechtotext/transcriptions:transcribe?api-version={ApiVersion}")) { Content = form };
+            if (_apiKey != null) req.Headers.Add("Ocp-Apim-Subscription-Key", _apiKey);
+            else
+            {
+                var token = await _credential!.GetTokenAsync(new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]), ct);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+            }
             try
             {
-                using var resp = await http.SendAsync(req, ct);
+                using var resp = await _http.SendAsync(req, ct);
                 body = await resp.Content.ReadAsStringAsync(ct);
-                if (resp.IsSuccessStatusCode) return Parse(body, duration, Name, locale);
+                if (resp.IsSuccessStatusCode) return Parse(body, duration, Name, _locale);
+                if (_apiKey != null) body = body.Replace(_apiKey, "***", StringComparison.Ordinal);
                 bool transient = resp.StatusCode is HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError;
-                if (!transient || delay == 16) throw new AsrException($"Speech API {(int)resp.StatusCode}: {Truncate(body)}", transient);
+                if (!transient || delay == 16) throw new AsrException($"Speech API {(int)resp.StatusCode}: {Truncate(body)}", transient) { StatusCode = resp.StatusCode };
             }
             catch (HttpRequestException ex) when (delay < 16) { body = ex.Message; }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested && delay < 16) { body = "timeout"; }

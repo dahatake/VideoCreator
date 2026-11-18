@@ -38,11 +38,16 @@
 
 | 用途 | 需要的信息与权限 |
 |---|---|
-| 必需：转写 | 支持的资源、带自定义子域的端点 `https://<自己的资源>.cognitiveservices.azure.com/`、支持的区域、用户的 `Cognitive Services User` 角色 |
+| 必需：转写 | 支持的资源、带自定义子域的端点 `https://<自己的资源>.cognitiveservices.azure.com/`、支持的区域、用户的 `Cognitive Services Speech User` 角色 |
 | 可选：使用 Microsoft Foundry 筛选 | 支持的模型部署名称、`https://<自己的资源>.cognitiveservices.azure.com/openai/v1`、`Cognitive Services OpenAI User` 角色 |
 | 可选：使用 Copilot 筛选 | Copilot 使用资格，以及已安装并登录的 GitHub Copilot CLI |
 
 Azure 服务按量计费。配置的是**自己创建的部署的名称**，不是模型名称。安装脚本不会创建资源或部署。
+
+启动后，可以在 **设置 → AI 连接** 中分别填写 Speech 和 Foundry，选择 **API 密钥 /
+Microsoft Entra ID** 并测试保存。共享用户应在资源组 IAM 获得 Speech User /
+OpenAI User，并在各自电脑登录同一租户。密钥身份验证还需要 Azure 启用本地身份验证。
+当前资源、角色、费用和验证范围请参阅 [Azure 访问](azure-access.md)。
 
 启动前，将 [appsettings.json](../../src/VideoCreator.App/appsettings.json) 的 `VideoCreator` 节改为自己的值。以下仅为该节的示例，不用于替换整个文件。
 

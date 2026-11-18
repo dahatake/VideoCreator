@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using VideoCreator.Asr;
 using VideoCreator.Selection;
 
 namespace VideoCreator.App;
@@ -66,9 +67,10 @@ public sealed class NoSecretStorage : ISecretProtector
 }
 
 public sealed record SavedFoundry(string Endpoint, string Deployment, string? EmbeddingDeployment, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt);
+public sealed record SavedSpeech(string Endpoint, string Auth, string? TenantId, string? ApiKeyProtected, DateTimeOffset TestedAt);
 public sealed record SavedCopilot(string Auth, string? TokenProtected, string? Model, string? ReasoningEffort, string? ContextTier, string? Login, DateTimeOffset TestedAt);
 /// <summary>Connections chosen in the settings screen; they override appsettings.json. Secrets are stored only in protected form.</summary>
-public sealed record SavedAi(string? Provider = null, SavedFoundry? Foundry = null, SavedCopilot? Copilot = null, string? Protection = null);
+public sealed record SavedAi(string? Provider = null, SavedFoundry? Foundry = null, SavedCopilot? Copilot = null, string? Protection = null, SavedSpeech? Speech = null);
 
 public sealed class AiSettingsStore(string path, ISecretProtector protector)
 {
@@ -115,6 +117,9 @@ public sealed class AiSettingsStore(string path, ISecretProtector protector)
 
 public static class SavedAiExtensions
 {
+    public static SpeechConnection ToConnection(this SavedSpeech s, AiSettingsStore store) =>
+        new(s.Endpoint, s.Auth, s.TenantId, s.Auth == "key" ? store.Reveal(s.ApiKeyProtected) : null);
+
     public static FoundryConnection ToConnection(this SavedFoundry f, AiSettingsStore store) =>
         new(f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth, f.TenantId, f.Auth == "key" ? store.Reveal(f.ApiKeyProtected) : null);
 

@@ -25,6 +25,7 @@
 | FaceModel / UpscaleModel | 未指定时使用 tools 中的 UltraFace / Real-ESRGAN 模型 |
 | LocalOnly | `false`。`true` 强制不使用 LLM，但不停止 ASR |
 | Asr.Provider / Endpoint / Locale | `azure` / 空 / `ja-JP`。Provider 为 azure 且配置 Endpoint 时启用 ASR。应用生成时项目 `language` 优先于 Locale |
+| Asr.TenantId / Llm.TenantId | 未指定则使用 Azure Identity 默认值。Entra ID 租户；界面保存的对应连接优先 |
 | Llm.Provider | `azure-openai`。可选 `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 空 / `gpt-chat-latest`。填写自己的部署名称 |
 | Llm.CopilotCliPath / CopilotModel | 未指定时检测 CLI／使用默认模型 |
@@ -44,7 +45,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 配置的生命周期
 
-- 界面修改 LLM 方式仅影响 Runtime，重启后恢复启动配置。
+- LLM 方式与 Speech/Foundry/Copilot 连接保存在 `DataDir/ai-settings.json`，重启后仍优先于启动配置。连接测试通过后才保存；删除已保存连接后恢复启动配置。密钥和令牌使用 Windows DPAPI 加密，不支持的系统拒绝保存秘密。
 - 界面修改项目保存位置会持久化到 Store 的 setting，优先于启动配置。
 - 界面选择的模式与生成选项按项目保存到 Store，重启后恢复，生成时也记录到 Job.Options。
 - 工作流最后显示阶段及目标任务、编辑计划和导出保存到 Project.WorkflowState。引用无效时退回前一阶段。
@@ -69,6 +70,11 @@ dotnet run --project src\VideoCreator.App -c Release
 |---|---|---|
 | 诊断 | GET `/health` | FFmpeg、缺少的滤镜、ASR、LLM、模型等。仅配置与检测，不保证云端连通 |
 | 配置 | GET / PUT `/settings` | 读取／使用 `{"llm_provider":"none"}` 等切换 LLM |
+| Speech 连接 | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`。auth 为 `entra` / `key`，密钥放在 `api_key`。仅发送合成静音测试，不保存 |
+| Speech 连接 | PUT / DELETE `/settings/ai/speech` | PUT 使用相同请求重新测试，通过才保存；失败返回 422。DELETE 删除已保存连接及密钥并恢复启动配置 |
+| Foundry 连接 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | 相同身份验证字段加上 `deployment`、可选的 `embedding_deployment`。测试聊天与嵌入；强制禁用 LLM 时不可测试或保存 |
+| Azure 资源列表 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`（可省略）。用当前登录的 Entra ID 读取 ARM，返回 `subscriptions`、`accounts`（`endpoint`、`speech`、`foundry`、`key_auth_disabled`、`custom_domain`、`can_transcribe`/`can_chat`/`can_embed`；无法读取权限时为 `null`）和 `issues`（无法列出的订阅）。不读取密钥。失败返回 422（`arm_unauthorized`/`arm_forbidden`/`entra_signin` 等） |
+| Azure 部署列表 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`。返回 `deployments`（`name`、`model`、`chat`、`embeddings`、`provisioning_state`）。非 Cognitive Services 的 ID 在发送请求前返回 422（`invalid_input`） |
 | 保存位置 | GET `/settings/projects-dir` | path、source、configured_path、数量、迁移进度 |
 | 保存位置 | POST `/settings/projects-dir/plan` | 预检查 `{"path":"D:\\Videos\\VideoCreator","move":true}` |
 | 保存位置 | PUT `/settings/projects-dir` | 以相同格式实际修改／迁移 |

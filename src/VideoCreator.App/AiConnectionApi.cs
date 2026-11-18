@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using VideoCreator.Asr;
 using VideoCreator.Selection;
 
 namespace VideoCreator.App;
@@ -11,10 +12,13 @@ public static class AiConnectionApi
 {
     /// <summary>Empty <c>api_key</c> = keep the saved key (only for the same endpoint host).</summary>
     public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? Auth, string? TenantId, string? ApiKey);
+    public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
     public sealed record CopilotRequest(string? Auth, [property: System.Text.Json.Serialization.JsonPropertyName("github_token")] string? GitHubToken, string? Model = null, string? ReasoningEffort = null, string? ContextTier = null);
     public sealed record Step(string Id, bool Ok, long Ms, AiDiagnosis? Diagnosis = null);
     public sealed record TestResult(bool Ok, IReadOnlyList<Step> Steps, AiDiagnosis? Diagnosis, string? Endpoint = null, string? Login = null);
+    /// <summary>Lists resources in the given (or default) tenant; <c>account_id</c> selects whose deployments to list.</summary>
+    public sealed record AzureCatalogRequest(string? TenantId, string? AccountId = null);
 
     static readonly TimeSpan FoundryTimeout = TimeSpan.FromSeconds(60), CopilotTimeout = TimeSpan.FromMinutes(2);
 
@@ -29,7 +33,22 @@ public static class AiConnectionApi
                 ApiKeyUnreadable = saved.ApiKeyProtected != null && rt.AiSettings.Reveal(saved.ApiKeyProtected) == null,
             };
         var f = rt.Foundry;
-        return f == null ? new { Source = "none", Auth = "entra" } : new { Source = "config", f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth };
+        return f == null ? new { Source = "none", Auth = "entra" } : new { Source = "config", f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.Auth, f.TenantId };
+    }
+
+    public static object SpeechView(Runtime rt)
+    {
+        var saved = rt.AiSettings.Load().Speech;
+        if (saved != null)
+            return new
+            {
+                Source = "app", saved.Endpoint, saved.Auth, saved.TenantId, saved.TestedAt,
+                HasApiKey = saved.ApiKeyProtected != null,
+                ApiKeyUnreadable = saved.ApiKeyProtected != null && rt.AiSettings.Reveal(saved.ApiKeyProtected) == null,
+            };
+        if (rt.Speech is not { } s) return new { Source = "none", Auth = "entra" };
+        var endpoint = new UriBuilder(s.Endpoint) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.ToString();
+        return new { Source = "config", Endpoint = endpoint, s.Auth, s.TenantId };
     }
 
     public static object CopilotView(Runtime rt)
@@ -48,6 +67,50 @@ public static class AiConnectionApi
 
     public static void Map(RouteGroupBuilder api)
     {
+        api.MapPost("/settings/ai/azure/resources", async (Runtime rt, AzureCatalogRequest req, CancellationToken ct) =>
+        {
+            try
+            {
+                var catalog = rt.AzureCatalog(Tenant(req.TenantId));
+                using var cts = Timeout(ct, FoundryTimeout);
+                return Results.Json(await catalog.ListAccountsAsync(cts.Token), Json.Options);
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return Results.Json(Fail(AzureDiagnosis(e)), Json.Options, statusCode: 422);
+            }
+        }).WithSummary("Azure Speech and Microsoft Foundry resources the signed-in Entra ID identity can see in Azure Resource Manager, with its effective data permissions; never reads keys");
+        api.MapPost("/settings/ai/azure/deployments", async (Runtime rt, AzureCatalogRequest req, CancellationToken ct) =>
+        {
+            try
+            {
+                var catalog = rt.AzureCatalog(Tenant(req.TenantId));
+                using var cts = Timeout(ct, FoundryTimeout);
+                return Results.Json(new { deployments = await catalog.ListDeploymentsAsync(req.AccountId ?? "", cts.Token) }, Json.Options);
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return Results.Json(Fail(AzureDiagnosis(e)), Json.Options, statusCode: 422);
+            }
+        }).WithSummary("Model deployments of one Azure AI account (chat / embedding capability from ARM)");
+
+        api.MapPost("/settings/ai/speech/test", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
+            Results.Json((await RunSpeechAsync(rt, req, ct)).Result, Json.Options))
+            .WithSummary("Test Speech fast transcription using one second of synthetic silence; saves nothing");
+        api.MapPut("/settings/ai/speech", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
+        {
+            if (req.Auth == "key" && !rt.AiSettings.Protector.StoresSecrets) return Results.Json(Fail(NoSecretStorageCode, NoSecretStorageMessage), Json.Options, statusCode: 422);
+            var (result, conn) = await RunSpeechAsync(rt, req, ct);
+            if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
+            rt.SaveSpeech(conn, DateTimeOffset.Now);
+            return Results.Json(new { test = result, speech = SpeechView(rt) }, Json.Options);
+        }).WithSummary("Test, then save the Speech connection only when fast transcription succeeds");
+        api.MapDelete("/settings/ai/speech", (Runtime rt) =>
+        {
+            rt.AiSettings.Update(s => s with { Speech = null });
+            return Results.Json(new { speech = SpeechView(rt) }, Json.Options);
+        }).WithSummary("Forget the saved Speech connection and key; appsettings.json applies again");
+
         api.MapPost("/settings/ai/foundry/test", async (Runtime rt, FoundryRequest req, CancellationToken ct) =>
             Results.Json(await TestFoundryAsync(rt, req, ct), Json.Options))
             .WithSummary("Test a Microsoft Foundry connection (chat with the strict JSON schema, and the embedding deployment if given); saves nothing");
@@ -106,6 +169,15 @@ public static class AiConnectionApi
     static TestResult Fail(string code, string message) => new(false, [], new AiDiagnosis(code, message));
     static TestResult Fail(AiDiagnosis d) => new(false, [], d);
 
+    static AiDiagnosis AzureDiagnosis(Exception e) => e switch
+    {
+        ArgumentException => new("invalid_input", e.Message),
+        AzureArmException { Status: System.Net.HttpStatusCode.Unauthorized } arm => new("arm_unauthorized", "Azure Resource Manager がトークンを受け付けませんでした。リソースのあるテナントに az login し、必要ならテナント ID を入力してください", arm.Message),
+        AzureArmException { Status: System.Net.HttpStatusCode.Forbidden } arm => new("arm_forbidden", "このアカウントにはサブスクリプションやリソースを一覧する権限がありません。エンドポイントを直接入力するか、管理者に閲覧者ロールを依頼してください", arm.Message),
+        AzureArmException arm => new("http_" + (int)arm.Status, $"Azure Resource Manager の呼び出しに失敗しました（HTTP {(int)arm.Status}）", arm.Message),
+        _ => AiDiagnostics.Classify(e, "azure"),
+    };
+
     static CancellationTokenSource Timeout(CancellationToken ct, TimeSpan after)
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -119,14 +191,37 @@ public static class AiConnectionApi
 
     static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
+    static string? Tenant(string? input)
+    {
+        var tenant = Clean(input);
+        if (tenant != null && !Guid.TryParse(tenant, out _) && !System.Text.RegularExpressions.Regex.IsMatch(tenant, @"^[a-z0-9-]+(\.[a-z0-9-]+)+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            throw new ArgumentException("テナント ID は GUID（例: 72f988bf-…）か、ドメイン名（例: contoso.onmicrosoft.com）で入力してください");
+        return tenant;
+    }
+
+    public static SpeechConnection SpeechInput(Runtime rt, SpeechRequest req)
+    {
+        var endpoint = SpeechConnection.NormalizeEndpoint(req.Endpoint).ToString();
+        var auth = req.Auth is "key" ? "key" : req.Auth is null or "entra" ? "entra" : throw new ArgumentException("認証方式は entra | key です");
+        var tenant = auth == "entra" ? Tenant(req.TenantId) : null;
+        var key = auth == "key" ? Clean(req.ApiKey) : null;
+        if (auth == "key" && key == null)
+        {
+            var saved = rt.AiSettings.Load().Speech;
+            if (saved is { Auth: "key", ApiKeyProtected: not null }
+                && new Uri(saved.Endpoint).GetLeftPart(UriPartial.Authority).Equals(new Uri(endpoint).GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+                key = rt.AiSettings.Reveal(saved.ApiKeyProtected) ?? throw new ArgumentException("保存した API キーをこの Windows ユーザーでは読めません。キーを入力し直してください");
+            else throw new ArgumentException("API キーを入力してください。別の接続先に保存済みのキーは送信しません。");
+        }
+        return new SpeechConnection(endpoint, auth, tenant, key);
+    }
+
     public static FoundryConnection FoundryInput(Runtime rt, FoundryRequest req)
     {
         var endpoint = FoundryEndpoint.Normalize(req.Endpoint).ToString();
         var deployment = Clean(req.Deployment) ?? throw new ArgumentException("チャット用モデルのデプロイ名を入力してください（Foundry ポータルの「デプロイ」に表示される名前）");
         var auth = req.Auth is "key" ? "key" : req.Auth is null or "entra" ? "entra" : throw new ArgumentException("認証方式は entra | key です");
-        var tenant = Clean(req.TenantId);
-        if (tenant != null && !Guid.TryParse(tenant, out _) && !System.Text.RegularExpressions.Regex.IsMatch(tenant, @"^[a-z0-9-]+(\.[a-z0-9-]+)+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-            throw new ArgumentException("テナント ID は GUID（例: 72f988bf-…）か、ドメイン名（例: contoso.onmicrosoft.com）で入力してください");
+        var tenant = Tenant(req.TenantId);
         var key = auth == "key" ? Clean(req.ApiKey) : null;
         if (auth == "key" && key == null)
         {
@@ -155,6 +250,25 @@ public static class AiConnectionApi
     }
 
     static async Task<TestResult> TestFoundryAsync(Runtime rt, FoundryRequest req, CancellationToken ct) => (await RunFoundryAsync(rt, req, ct)).Result;
+
+    static async Task<(TestResult Result, SpeechConnection? Conn)> RunSpeechAsync(Runtime rt, SpeechRequest req, CancellationToken ct)
+    {
+        SpeechConnection c;
+        try { c = SpeechInput(rt, req); }
+        catch (ArgumentException e) { return (Fail("invalid_input", e.Message), null); }
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var cts = Timeout(ct, FoundryTimeout);
+            await rt.SpeechTranscriber(c, rt.Options.Asr.Locale).ProbeAsync(cts.Token);
+            return (new(true, [new("speech", true, sw.ElapsedMilliseconds)], null, c.Endpoint), c);
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            var diagnosis = Scrub(AiDiagnostics.Classify(e, "speech", c.Auth), c.ApiKey);
+            return (new(false, [new("speech", false, sw.ElapsedMilliseconds, diagnosis)], diagnosis), null);
+        }
+    }
 
     static async Task<(TestResult Result, FoundryConnection? Conn)> RunFoundryAsync(Runtime rt, FoundryRequest req, CancellationToken ct)
     {

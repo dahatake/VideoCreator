@@ -38,6 +38,7 @@
 | 错误、警告和备份 | [故障排除](troubleshooting.md) |
 | 详细功能、发行版和原有安装步骤 | [详细概览](overview.md) |
 | 工程师安全定制 | [技术参考](technical-reference.md) / [配置与 API](configuration-api.md) |
+| Azure 准备、共享用户、密钥 / Entra ID 身份验证 | [Azure 访问](azure-access.md) |
 | 验证、构建和发布依据 | [验证与维护](verification.md) / [详细概览](overview.md) |
 
 界面语言与视频语言相互独立。字幕不会自动翻译。更改视频语言后请重新生成候选视频。功能、分发、版本管理、测试、结构和安全详情均保留在[详细概览](overview.md)中。

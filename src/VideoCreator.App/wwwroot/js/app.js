@@ -311,6 +311,8 @@ function aiDiagnosisText(d, deployment) {
     no_structured_output: trUi('ai.d.no_structured_output'), wrong_model_kind: trUi('ai.d.wrong_model_kind'), rate_limited: trUi('ai.d.rate_limited'),
     service_error: trUi('ai.d.service_error'), copilot_auth: trUi('ai.d.copilot_auth'), copilot_failed: trUi('ai.d.copilot_failed'), failed: trUi('ai.d.failed'),
     secret_storage_unavailable: trUi('ai.d.secret_storage_unavailable'),
+    speech_forbidden: trUi('ai.d.speech_forbidden'), speech_failed: trUi('ai.d.speech_failed'),
+    arm_unauthorized: trUi('ai.d.arm_unauthorized'), arm_forbidden: trUi('ai.d.arm_forbidden'),
   }[d.code];
   if (known) return known;
   if (/^http_\d+$/.test(d.code)) return trUi('ai.d.http', [d.code.slice(5)]);
@@ -329,12 +331,27 @@ function aiResultBar(r, names, deployments = {}) {
 function aiInput(id, label, value, extra = '', help = '') {
   return `<fluent-text-input id="${id}" value="${esc(value ?? '')}" ${extra}>${label}</fluent-text-input>${help ? `<p class="caption" id="${id}Help">${help}</p>` : ''}`;
 }
+// "Choose from Azure": lists resources the signed-in Entra ID identity can see (ARM), then fills the inputs below; saving still needs a passing test.
+function azPicker(p, disabled) {
+  const deployments = p === 'f' ? `<div id="fDepBox" class="stack" hidden>
+      <label class="caption">${trUi('ai.az.chat')} <select class="native" id="fChatDep"></select></label>
+      <label class="caption">${trUi('ai.az.embedding')} <select class="native" id="fEmbDep"></select></label>
+    </div>` : '';
+  return `<div class="stack">
+      <div class="row" style="align-items:center"><fluent-button id="${p}Pick" type="button" ${disabled ? 'disabled' : ''}>${trUi('ai.az.load')}</fluent-button><span class="caption" id="${p}PickStatus" aria-live="polite"></span></div>
+      <p class="caption">${trUi('ai.az.help')}</p>
+      <label class="caption" id="${p}ResBox" hidden>${trUi('ai.az.resource')} <select class="native" id="${p}Resource"></select></label>
+      ${deployments}
+      <div id="${p}PickNote" aria-live="polite"></div>
+    </div>`;
+}
 function aiConnectionsSection(s, flash) {
   const f = s.foundry ?? { source: 'none', auth: 'entra' }, c = s.copilot ?? { source: 'config', auth: 'user' };
+  const speech = s.speech ?? { source: 'none', auth: 'entra' };
   const blocked = s.local_only ? info(trUi('ai.d.local_only'), 'warning') : '';
-  const buttons = (p, saved) => `<div class="row">
-      <fluent-button id="${p}Test" type="button" ${s.local_only ? 'disabled' : ''}>${trUi('ai.test')}</fluent-button>
-      <fluent-button id="${p}Save" type="button" appearance="primary" ${s.local_only ? 'disabled' : ''}>${trUi('ai.save')}</fluent-button>
+  const buttons = (p, saved, llm = true) => `<div class="row">
+      <fluent-button id="${p}Test" type="button" ${s.local_only && llm ? 'disabled' : ''}>${trUi('ai.test')}</fluent-button>
+      <fluent-button id="${p}Save" type="button" appearance="primary" ${s.local_only && llm ? 'disabled' : ''}>${trUi('ai.save')}</fluent-button>
       ${saved ? `<fluent-button id="${p}Forget" type="button" appearance="subtle">${trUi('ai.forget')}</fluent-button>` : ''}
     </div>
     <div id="${p}Result" aria-live="polite"></div>`;
@@ -342,10 +359,31 @@ function aiConnectionsSection(s, flash) {
     <p class="caption">${trUi('ai.intro')}</p>
     ${s.secret_protection === 'dpapi' ? `<p class="caption">${trUi('ai.protectDpapi')}</p>` : info(trUi('ai.protectNone'), 'warning')}
     <div id="aiFlash" tabindex="-1" aria-live="polite">${flash ?? ''}</div>
+    <details class="setgroup" id="aiSpeech" open>
+      <summary><h3>Azure Speech</h3><span class="caption group-sum">${esc(aiSource(speech))}</span></summary>
+      <div class="stack setgroup-body">
+        <p class="caption">${trUi('ai.s.intro')}</p>
+        ${azPicker('s', false)}
+        ${aiInput('sEndpoint', trUi('ai.s.endpoint'), speech.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
+        <p class="caption" id="sAuthLabel">${trUi('ai.f.auth')}</p>
+        <fluent-radio-group id="sAuth" orientation="vertical" aria-labelledby="sAuthLabel" value="${speech.auth === 'key' ? 'key' : 'entra'}">
+          ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
+          ${field(trUi('ai.f.key'), '<fluent-radio slot="input" value="key"></fluent-radio>')}
+        </fluent-radio-group>
+        <div id="sEntraBox" class="stack">
+          ${aiInput('sTenant', trUi('ai.f.tenant'), speech.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}
+          <p class="caption">${esc(trUi('ai.s.accessHelp'))}</p>
+        </div>
+        <div id="sKeyBox" class="stack">${aiInput('sKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${speech.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
+          speech.api_key_unreadable ? trUi('ai.secretUnreadable') : speech.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
+        ${buttons('s', speech.source === 'app', false)}
+      </div>
+    </details>
     <details class="setgroup" id="aiFoundry" ${s.llm_provider === 'azure-openai' || f.source === 'none' ? 'open' : ''}>
       <summary><h3>Microsoft Foundry</h3><span class="caption group-sum">${esc(aiSource(f))}</span></summary>
       <div class="stack setgroup-body">
         <p class="caption">${esc(aiSource(f))}</p>${blocked}
+        ${azPicker('f', s.local_only)}
         ${aiInput('fEndpoint', trUi('ai.f.endpoint'), f.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
         ${aiInput('fDeployment', trUi('ai.f.deployment'), f.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}
         ${aiInput('fEmbedding', trUi('ai.f.embedding'), f.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}
@@ -382,10 +420,34 @@ function aiConnectionsSection(s, flash) {
 function wireAiConnections(s, flash) {
   if (!$('#aiFoundry')) return;
   const f = s.foundry ?? {}, c = s.copilot ?? {};
-  const radio = (id) => $$(`#${id} fluent-radio`).find(r => r.checked)?.value;
+  // Before fluent-radio-group upgrades, no radio is checked yet: fall back to the server-rendered value.
+  const radio = (id) => $$(`#${id} fluent-radio`).find(r => r.checked)?.value ?? $(`#${id}`).getAttribute('value');
   const busy = (prefix, on) => [`#${prefix}Test`, `#${prefix}Save`, `#${prefix}Forget`, '#cLoad', '#settings-close'].map(x => $(x)).filter(Boolean)
-    .forEach(b => { b.disabled = on || (s.local_only && b.id !== 'settings-close' && !b.id.endsWith('Forget')) || (b.id === 'cLoad' && !s.copilot_cli); });
+    .forEach(b => { b.disabled = on || (s.local_only && prefix !== 's' && b.id !== 'settings-close' && !b.id.endsWith('Forget')) || (b.id === 'cLoad' && (!s.copilot_cli || s.local_only)); });
   if (flash) setTimeout(() => $('#aiFlash')?.focus(), 0);
+
+  const sAuthSync = () => { const key = radio('sAuth') === 'key'; $('#sKeyBox').hidden = !key; $('#sEntraBox').hidden = key; };
+  $('#sAuth').addEventListener('change', sAuthSync); sAuthSync();
+  const sRun = async (save) => {
+    const body = { endpoint: $('#sEndpoint').value, auth: radio('sAuth') ?? 'entra', tenant_id: $('#sTenant').value, api_key: $('#sKey').value };
+    busy('s', true); $('#sResult').innerHTML = info(trUi('ai.testing'));
+    try {
+      const r = await api(save ? '/api/settings/ai/speech' : '/api/settings/ai/speech/test', { method: save ? 'PUT' : 'POST', body, accept: [422] });
+      const result = r.test ?? r;
+      if (save && result.ok) { $('#sKey').value = ''; await aiAfterSave(info(trUi('ai.savedSpeech', [result.endpoint ?? '']), 'success')); return; }
+      $('#sResult').innerHTML = aiResultBar(result, { speech: trUi('ai.step.speech') })
+        + (!save && result.ok ? `<p class="caption">${trUi('ai.notSavedYet')}</p>` : '');
+    } catch (e) { $('#sResult').innerHTML = errorBar(e); }
+    finally { busy('s', false); }
+  };
+  $('#sTest').addEventListener('click', () => sRun(false));
+  $('#sSave').addEventListener('click', () => sRun(true));
+  $('#sForget')?.addEventListener('click', async () => {
+    if (!confirm(trUi('ai.forgetConfirm', ['Azure Speech']))) return;
+    busy('s', true);
+    try { await api('/api/settings/ai/speech', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Azure Speech']))); }
+    catch (e) { $('#sResult').innerHTML = errorBar(e); busy('s', false); }
+  });
 
   // ----- Foundry -----
   const fAuthSync = () => { const key = radio('fAuth') === 'key'; $('#fKeyBox').hidden = !key; $('#fEntraBox').hidden = key; };
@@ -413,6 +475,81 @@ function wireAiConnections(s, flash) {
     try { await api('/api/settings/ai/foundry', { method: 'DELETE' }); await aiAfterSave(info(trUi('ai.forgotten', ['Microsoft Foundry']))); }
     catch (e) { $('#fResult').innerHTML = errorBar(e); busy('f', false); }
   });
+
+  // ----- Choose from Azure (Speech / Foundry) -----
+  const catalogs = {}, picked = { s: [], f: [] };
+  const azFail = (d) => `<fluent-message-bar intent="error" layout="multiline">${esc(aiDiagnosisText(d))}${d.detail ? `<details><summary class="caption">${trUi('ai.detail')}</summary><p class="caption ai-detail">${esc(d.detail)}</p></details>` : ''}</fluent-message-bar>`;
+  const hostOf = (u) => { try { return new URL(u).host.toLowerCase(); } catch { return ''; } };
+  const useEntra = (p) => {
+    const r = $$(`#${p}Auth fluent-radio`).find(x => x.value === 'entra');
+    if (r && !r.checked) { r.checked = true; $(`#${p}Auth`).value = 'entra'; (p === 's' ? sAuthSync : fAuthSync)(); }
+  };
+  const azOption = (a, can) => `<option value="${esc(a.id)}" ${a.provisioning_state === 'Succeeded' ? '' : 'disabled'}>${esc(a.name)} · ${esc(a.subscription_name)} / ${esc(a.resource_group)} · ${esc(a.location)}${can === false ? ` — ${trUi('ai.az.noRole')}` : ''}${a.provisioning_state === 'Succeeded' ? '' : ` — ${trUi('ai.az.notReady')}`}</option>`;
+  const fillDeployments = async (a) => {
+    const box = $('#fDepBox'); box.hidden = true;
+    const r = await api('/api/settings/ai/azure/deployments', { method: 'POST', body: { tenant_id: $('#fTenant').value, account_id: a.id }, accept: [422] });
+    if (r.diagnosis) { $('#fPickNote').insertAdjacentHTML('beforeend', azFail(r.diagnosis)); return; }
+    const ready = r.deployments.filter(d => d.provisioning_state === 'Succeeded');
+    const label = (d) => `${esc(d.name)}${d.model ? ` (${esc(d.model)}${d.model_version ? ` ${esc(d.model_version)}` : ''}${d.sku ? ` · ${esc(d.sku)}` : ''})` : ''}`;
+    const chats = ready.filter(d => d.chat), embeds = ready.filter(d => d.embeddings);
+    if (!chats.length) $('#fPickNote').insertAdjacentHTML('beforeend', info(trUi('ai.az.noChat'), 'warning'));
+    const curChat = $('#fDeployment').value.trim(), curEmb = $('#fEmbedding').value.trim();
+    const chat = chats.find(d => d.name === curChat) ?? chats[0];
+    const emb = embeds.find(d => d.name === curEmb) ?? (curEmb ? null : embeds[0]);
+    $('#fChatDep').innerHTML = chats.map(d => `<option value="${esc(d.name)}">${label(d)}</option>`).join('');
+    $('#fEmbDep').innerHTML = `<option value="">${trUi('ai.az.noEmbedding')}</option>` + embeds.map(d => `<option value="${esc(d.name)}">${label(d)}</option>`).join('');
+    $('#fChatDep').value = chat?.name ?? ''; $('#fEmbDep').value = emb?.name ?? '';
+    $('#fDeployment').value = chat?.name ?? ''; $('#fEmbedding').value = emb?.name ?? '';
+    box.hidden = false;
+  };
+  const onResource = async (p) => {
+    const a = picked[p].find(x => x.id === $(`#${p}Resource`).value);
+    const note = $(`#${p}PickNote`); note.innerHTML = '';
+    if (p === 'f') $('#fDepBox').hidden = true;
+    if (!a) return;
+    $(`#${p}Endpoint`).value = a.endpoint;
+    const can = p === 's' ? a.can_transcribe : a.can_chat;
+    const notes = [];
+    if (can === true) notes.push(info(trUi('ai.az.canUse'), 'success'));
+    else if (can === false) notes.push(info(p === 's' ? trUi('ai.az.noSpeechRole') : trUi('ai.az.noOpenAiRole'), 'warning'));
+    else notes.push(info(trUi('ai.az.roleUnknown')));
+    if (p === 'f' && a.can_chat === true && a.can_embed === false) notes.push(info(trUi('ai.az.noEmbedRole'), 'warning'));
+    if (a.key_auth_disabled) { notes.push(info(trUi('ai.az.keyDisabled'))); useEntra(p); }
+    if (!a.custom_domain) notes.push(info(trUi('ai.az.noDomain'), 'warning'));
+    notes.push(`<p class="caption">${trUi('ai.az.picked')}</p>`);
+    note.innerHTML = notes.join('');
+    if (p === 'f') { try { await fillDeployments(a); } catch (e) { note.insertAdjacentHTML('beforeend', errorBar(e)); } }
+  };
+  const azPick = async (p) => {
+    const tenant = $(`#${p}Tenant`).value.trim(), btn = $(`#${p}Pick`), status = $(`#${p}PickStatus`), note = $(`#${p}PickNote`);
+    btn.disabled = true; status.textContent = trUi('ai.az.loading'); note.innerHTML = '';
+    try {
+      const r = catalogs[tenant] ?? await api('/api/settings/ai/azure/resources', { method: 'POST', body: { tenant_id: tenant }, accept: [422] });
+      if (r.diagnosis) { status.textContent = ''; note.innerHTML = azFail(r.diagnosis); return; }
+      catalogs[tenant] = r;
+      const list = r.accounts.filter(a => p === 's' ? a.speech : a.foundry);
+      picked[p] = list;
+      status.textContent = list.length ? trUi('ai.az.found', [list.length, r.subscriptions.length])
+        : trUi('ai.az.none', [p === 's' ? 'Azure Speech' : 'Microsoft Foundry', r.subscriptions.length]);
+      const issues = r.issues.length ? info(trUi('ai.az.issue', [r.issues.map(i => i.scope).join(', ')]), 'warning') : '';
+      if (!list.length) { $(`#${p}ResBox`).hidden = true; note.innerHTML = issues; return; }
+      const can = (a) => p === 's' ? a.can_transcribe : a.can_chat;
+      const current = hostOf($(`#${p}Endpoint`).value);
+      const pre = list.find(a => current && hostOf(a.endpoint) === current) ?? list.find(a => can(a) !== false && a.provisioning_state === 'Succeeded');
+      $(`#${p}Resource`).innerHTML = `<option value="">${trUi('ai.az.choose')}</option>` + list.map(a => azOption(a, can(a))).join('');
+      $(`#${p}Resource`).value = pre?.id ?? '';
+      $(`#${p}ResBox`).hidden = false;
+      await onResource(p);
+      if (issues) note.insertAdjacentHTML('afterbegin', issues);
+    } catch (e) { status.textContent = ''; note.innerHTML = errorBar(e); }
+    finally { btn.disabled = p === 'f' && s.local_only; }
+  };
+  for (const p of ['s', 'f']) {
+    $(`#${p}Pick`).addEventListener('click', () => azPick(p));
+    $(`#${p}Resource`).addEventListener('change', () => onResource(p));
+  }
+  $('#fChatDep').addEventListener('change', () => { $('#fDeployment').value = $('#fChatDep').value; });
+  $('#fEmbDep').addEventListener('change', () => { $('#fEmbedding').value = $('#fEmbDep').value; });
 
   // ----- GitHub Copilot -----
   let models = null;
@@ -870,23 +1007,32 @@ async function project(id, showSettings = false) {
               const videos = assets.filter(a => a.media.duration > 0);
               const at = (t) => t < 60 ? trUi('m247', [t.toFixed(1)]) : fmt(t);
               const origin = (img) => (img.brand_path ?? assets.find(a => a.id === img.asset_id)?.path ?? trUi('m248')).split(/[\\/]/).pop();
+              const previousSource = made[0]?.brand_path ? `brand:${made[0].brand_path}` : made[0]?.asset_id ? `asset:${made[0].asset_id}` : null;
+              const sources = [
+                ...videos.map(a => ({ value: `asset:${a.id}`, label: `${name(a.path)}${rights.has(a.id) ? '' : trUi('m253')}`, group: 'project' })),
+                ...bumpers.map(f => ({ value: `brand:${f.path}`, label: trUi('m257', [f.kind === 'opening' ? trUi('m255') : trUi('m256'), name(f.path), f.width, f.height, Number(f.duration).toFixed(1)]), group: 'brand' })),
+              ];
+              const sourceOptions = ['project', 'brand'].map(group => {
+                const items = sources.filter(source => source.group === group);
+                if (!items.length) return '';
+                const label = group === 'project' ? trUi('m254') : trUi('m258');
+                return `<optgroup label="${label}">${items.map(source => `<option value="${esc(source.value)}" ${source.value === previousSource ? 'selected' : ''}>${source.label}</option>`).join('')}</optgroup>`;
+              }).join('');
               return `<fluent-radio-group id="cardMake" orientation="horizontal" aria-labelledby="cardMakeLabel" value="${make ? 'make' : 'skip'}">
                   ${field(trUi('m249'), '<fluent-radio slot="input" value="make"></fluent-radio>')}
                   ${field(trUi('m250'), '<fluent-radio slot="input" value="skip"></fluent-radio>')}
                 </fluent-radio-group>
                 <p class="caption" id="cardSkipNote" ${make ? 'hidden' : ''}>${trUi('m264', [made.length ? trUi('m251', [made.length]) : ''])}</p>
                 <div class="stack" id="cardMakeBody" ${make ? '' : 'hidden'}>
-                ${made.length ? `<div class="row" style="flex-wrap:wrap">${made.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="${trUi('card.imageAlt', [i + 1, esc(at(img.source_t))])}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(origin(img))} · ${esc(at(img.source_t))}</figcaption></figure>`).join('')}</div><p class="caption">${trUi('m252', [made.length])}</p>` : `
+                ${made.length ? `<div class="row" style="flex-wrap:wrap">${made.map((img, i) => `<figure style="margin:0;width:120px"><img src="/api/projects/${encodeURIComponent(id)}/scene-cards/${i}" alt="${trUi('card.imageAlt', [i + 1, esc(at(img.source_t))])}" style="width:120px;height:90px;object-fit:contain"><figcaption class="caption">${esc(origin(img))} · ${esc(at(img.source_t))}</figcaption></figure>`).join('')}</div><p class="caption">${trUi('m252', [made.length])}</p>` : ''}
                   <label class="caption">${trUi('m260')}
                     <select class="native" id="cardSource" aria-label="${trUi('m261')}">
-                      ${videos.length ? `<optgroup label="${trUi('m254')}">${videos.map(a => `<option value="asset:${esc(a.id)}">${name(a.path)}${rights.has(a.id) ? '' : trUi('m253')}</option>`).join('')}</optgroup>` : ''}
-                      ${bumpers.length ? `<optgroup label="${trUi('m258')}">${bumpers.map(f => `<option value="brand:${esc(f.path)}">${trUi('m257', [f.kind === 'opening' ? trUi('m255') : trUi('m256'), name(f.path), f.width, f.height, Number(f.duration).toFixed(1)])}</option>`).join('')}</optgroup>` : ''}
+                      ${sourceOptions}
                     </select>
                   </label>
-                  <label class="caption">${trUi('m262')} <input class="native" type="number" id="cardCount" min="2" max="6" step="1" value="4" style="width:72px"></label>
-                  <fluent-button id="makeCards" size="small" ${videos.length + bumpers.length ? '' : 'disabled'}>${trUi('m263')}</fluent-button>
-                  ${videos.length + bumpers.length ? '' : `<p class="caption">${trUi('m259')}</p>`}
-                `}
+                  <label class="caption">${trUi('m262')} <input class="native" type="number" id="cardCount" min="2" max="6" step="1" value="${made.length ? Math.max(2, made.length) : 4}" style="width:72px"></label>
+                  <fluent-button id="makeCards" size="small" ${sources.length ? '' : 'disabled'}>${trUi(made.length ? 'card.recreate' : 'm263')}</fluent-button>
+                  ${made.length ? `<p class="caption">${trUi('card.recreateHelp')}</p>` : sources.length ? '' : `<p class="caption">${trUi('m259')}</p>`}
                 </div>`;
             })()}
             <div id="cardImageMsg" aria-live="polite"></div>
@@ -1161,13 +1307,15 @@ async function project(id, showSettings = false) {
   });
   $('#makeCards')?.addEventListener('click', async () => {
     const button = $('#makeCards'), msg = $('#cardImageMsg'), [kind, ...rest] = $('#cardSource').value.split(':'), ref = rest.join(':');
+    const replace = (d.project.scene_card_images?.length ?? 0) > 0;
+    if (replace && !confirm(trUi('card.recreateConfirm'))) return;
     if (kind === 'asset' && !rights.has(ref)) { msg.innerHTML = info(trUi('m364'), 'warning'); return; }
     const count = Number($('#cardCount').value);
     if (!Number.isInteger(count) || count < 2 || count > 6) { msg.innerHTML = info(trUi('m365'), 'warning'); return; }
     button.disabled = true; $('#gen').disabled = true; $$('#cardMake fluent-radio').forEach(r => { r.disabled = true; });
     msg.innerHTML = `<fluent-spinner size="small"></fluent-spinner> ${trUi('m367', [kind === 'brand' ? trUi('m366') : trUi('m248')])}`;
     try {
-      const r = await api(`/api/projects/${id}/scene-cards`, { method: 'POST', body: kind === 'brand' ? { brand_path: ref, count } : { asset_id: ref, count }, signal: cardRequests.signal });
+      const r = await api(`/api/projects/${id}/scene-cards`, { method: 'POST', body: kind === 'brand' ? { brand_path: ref, count, replace } : { asset_id: ref, count, replace }, signal: cardRequests.signal });
       opts.scene_cards = true; saveOpts();
       sessionStorage.setItem(`cardImageMessage:${id}`, r.message);
       router();

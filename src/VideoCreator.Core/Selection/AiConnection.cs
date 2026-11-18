@@ -82,6 +82,17 @@ public static class AiDiagnostics
             return new("timeout", "応答が時間内に返りませんでした。ネットワークとプロキシを確認し、もう一度テストしてください", detail);
         if (ex is HttpRequestException { InnerException: SocketException } || ex.InnerException is HttpRequestException { InnerException: SocketException } || ex is HttpRequestException { StatusCode: null })
             return new("unreachable", "エンドポイントに接続できません。リソース名（ホスト名）のつづりと、ネットワーク・プロキシ・ファイアウォールを確認してください", detail);
+        if (provider == "speech" && ex is Asr.AsrException speech)
+            return speech.StatusCode switch
+            {
+                HttpStatusCode.Unauthorized when auth == "key" => new("key_rejected", "API キーが拒否されました。キーが正しいか、またはこのリソースでキー認証が無効（disableLocalAuth）になっていないか確認してください。無効なら「Microsoft Entra ID」を選んでください", detail),
+                HttpStatusCode.Unauthorized => new("entra_rejected", "Microsoft Entra ID token was rejected. Sign in to the resource's tenant.", detail),
+                HttpStatusCode.Forbidden => new("speech_forbidden", "Assign Cognitive Services Speech User at the resource group or resource scope, then allow time for RBAC propagation.", detail),
+                HttpStatusCode.NotFound => new("endpoint_not_found", "Speech API was not found. Use the resource's custom-domain endpoint.", detail),
+                HttpStatusCode.TooManyRequests => new("rate_limited", "Speech quota exceeded. Retry later.", detail),
+                >= HttpStatusCode.InternalServerError => new("service_error", "Speech service is temporarily unavailable.", detail),
+                _ => new("speech_failed", "Speech fast transcription failed. Verify the resource supports fast transcription and check the response details.", detail),
+            };
         if (ex is ClientResultException r)
         {
             var code = ProviderCode(r);

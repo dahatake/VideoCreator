@@ -4,6 +4,7 @@ obj/
 *.user
 .vs/
 artifacts/
+.copilot-azure/
 
 # third-party tools downloaded by scripts/get-tools.ps1
 tools/

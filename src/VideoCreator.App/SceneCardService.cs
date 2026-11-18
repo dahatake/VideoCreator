@@ -13,7 +13,7 @@ public sealed class SceneCardService(Runtime rt, ILogger<SceneCardService> log)
     public bool AnyBusy => _projectId != null;
 
     /// <summary>Extracts from a project source (<paramref name="assetId"/>) or a registered opening / closing video (<paramref name="brandPath"/>).</summary>
-    public async Task<List<SceneCardImage>> GenerateAsync(Project project, string? assetId, string? brandPath, int count, CancellationToken ct)
+    public async Task<List<SceneCardImage>> GenerateAsync(Project project, string? assetId, string? brandPath, int count, bool replace, CancellationToken ct)
     {
         if (!await _gate.WaitAsync(0, ct)) throw new InvalidOperationException("カード画像を作成中です。完了を待ってください");
         _projectId = project.Id;
@@ -21,15 +21,16 @@ public sealed class SceneCardService(Runtime rt, ILogger<SceneCardService> log)
         bool saved = false;
         try
         {
-            var (_, source, bumper) = Check(project.Id, assetId, brandPath);
+            var (_, source, bumper) = Check(project.Id, assetId, brandPath, replace);
             output = Path.Combine(project.Directory, "scene-cards", Guid.NewGuid().ToString("N"));
             PipelineRunner.EnsureInside(project.Directory, output);
             var extractor = new SceneCardExtractor(rt.Ff);
             var images = bumper != null ? await extractor.ExtractAsync(bumper, output, count, ct) : await extractor.ExtractAsync(source!, output, count, ct);
             ct.ThrowIfCancellationRequested();
-            var (current, _, _) = Check(project.Id, assetId, brandPath);
+            var (current, _, _) = Check(project.Id, assetId, brandPath, replace);
             rt.Store.Put(Kinds.Project, project.Id, null, current with { SceneCardImages = images, MakeSceneCardImages = true });
             saved = true;
+            RemoveReplacedImages(current, current.SceneCardImages);
             return images;
         }
         finally
@@ -53,10 +54,27 @@ public sealed class SceneCardService(Runtime rt, ILogger<SceneCardService> log)
         return project;
     }
 
-    (Project Project, SourceAsset? Source, BrandFile? Bumper) Check(string projectId, string? assetId, string? brandPath)
+    void RemoveReplacedImages(Project project, List<SceneCardImage> images)
+    {
+        var cardsRoot = Path.GetFullPath(Path.Combine(project.Directory, "scene-cards")).TrimEnd(Path.DirectorySeparatorChar);
+        foreach (var folder in images.Select(i => Path.GetDirectoryName(Path.GetFullPath(i.Path))).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (Path.GetDirectoryName(folder) is not { } parent
+                || !string.Equals(parent, cardsRoot, StringComparison.OrdinalIgnoreCase)
+                || !Guid.TryParseExact(Path.GetFileName(folder), "N", out _))
+                continue;
+            try { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log.LogWarning(ex, "Could not remove replaced scene cards at {Path}", folder);
+            }
+        }
+    }
+
+    (Project Project, SourceAsset? Source, BrandFile? Bumper) Check(string projectId, string? assetId, string? brandPath, bool replace)
     {
         var project = rt.Store.Get<Project>(Kinds.Project, projectId) ?? throw new KeyNotFoundException("プロジェクトがありません");
-        if (project.SceneCardImages.Count > 0) throw new InvalidOperationException("このプロジェクトのカード画像は作成済みです。既存の画像は上書きしません");
+        if (project.SceneCardImages.Count > 0 && !replace) throw new InvalidOperationException("このプロジェクトのカード画像は作成済みです。作り直す場合は replace を指定してください");
         var kit = rt.Store.Get<BrandKit>(Kinds.BrandKit, PipelineRunner.BrandKitId) is { RightsConfirmed: true } k ? k : null;
         if (kit != null && kit.Files.Any(f => f.Kind == "card"))
             throw new InvalidOperationException("登録済みのカード画像があります。既存の画像を使用します");
