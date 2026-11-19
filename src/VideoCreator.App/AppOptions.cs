@@ -28,10 +28,10 @@ public sealed class AppOptions
 
 public sealed class AsrOptions
 {
-    public string Provider { get; set; } = "azure";   // azure | none
+    public string Provider { get; set; } = "azure";   // azure | none. The Speech endpoint and sign-in are those of the Microsoft Foundry connection.
+    /// <summary>Verification fixtures only (e.g. a loopback port so no audio can leave the machine). Empty = the Microsoft Foundry resource, which is what every real setup uses.</summary>
     public string Endpoint { get; set; } = "";
     public string Locale { get; set; } = "ja-JP";
-    public string? TenantId { get; set; }
     /// <summary>Speech model: MAI-Transcribe-2 (Microsoft Foundry, more accurate in spike 24) or "standard". Regions without MAI fall back to standard.</summary>
     public string Model { get; set; } = VideoCreator.Asr.AzureFastTranscriber.MaiModel;
 }

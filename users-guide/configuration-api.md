@@ -12,7 +12,7 @@
 
 UIの表示言語はブラウザーの言語切り替えで保存します。動画の音声言語はプロジェクトごとに指定します。`POST /api/projects` は `{"name":"Example","language":"en-US"}`、`PATCH /api/projects/{id}` は `{"language":"ko-KR"}` のように指定できます。対応値は `ja-JP`（省略時の既定）・`en-US`・`zh-CN`・`ko-KR`。非対応値は422、生成・書き出し中の言語変更は409です。変更後は新しい候補を生成してください。既存の編集計画は作成時の言語を保持します。
 
-[appsettings.json](../src/VideoCreator.App/appsettings.json)の `VideoCreator` セクション、環境変数、コマンドラインで設定します。環境変数は `VideoCreator__Asr__Endpoint` のように区切りを `__` にします。下表は[AppOptions](../src/VideoCreator.App/AppOptions.cs)の既定です。配布ファイルの具体的なエンドポイントは自分の値へ変更してください。
+[appsettings.json](../src/VideoCreator.App/appsettings.json)の `VideoCreator` セクション、環境変数、コマンドラインで設定します。環境変数は `VideoCreator__Llm__Endpoint` のように区切りを `__` にします。下表は[AppOptions](../src/VideoCreator.App/AppOptions.cs)の既定です。配布ファイルの具体的なエンドポイントは自分の値へ変更してください。
 
 | 設定 | 既定・意味 |
 |---|---|
@@ -22,8 +22,8 @@ UIの表示言語はブラウザーの言語切り替えで保存します。動
 | FfmpegBin / FontsDir / PresetsDir | 未指定ならリポジトリ上位のtools等を探索 |
 | FaceModel / UpscaleModel | 未指定ならtoolsのUltraFace / Real-ESRGANモデル |
 | LocalOnly | `false`。`true`ならLLMを使わないことを固定。ASRは停止しない |
-| Asr.Provider / Endpoint / Locale | `azure` / 空 / `ja-JP`。ProviderがazureでEndpointが設定されているとASR有効。アプリからの生成ではプロジェクトの `language` が Locale より優先されます |
-| Asr.TenantId / Llm.TenantId | 未指定ならAzure Identityの既定。Entra IDで使うテナント。画面に保存した各接続の設定が優先 |
+| Asr.Provider / Locale / Model | `azure` / `ja-JP` / `MAI-Transcribe-2`。Providerがazureで、Microsoft Foundry の接続があるとASR有効（送信先・認証は Foundry と同じ。別のEndpoint設定はなし。`Asr.Endpoint` は検証用に送信先を固定する上書きで、通常は設定しません）。アプリからの生成ではプロジェクトの `language` が Locale より優先されます |
+| Llm.TenantId | 未指定ならAzure Identityの既定。Entra IDで使うテナント。画面に保存した接続の設定が優先 |
 | Llm.Provider | `azure-openai`。`azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 空 / `gpt-chat-latest`。自分のデプロイ名を設定 |
 | Llm.CopilotCliPath / CopilotModel | 未指定ならCLI検出／既定モデル |
@@ -43,8 +43,8 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 設定の寿命
 
-- MAI-Transcribe-2 は個別のモデルデプロイではなく、[対応リージョンの Speech リソース](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)から利用します。設定の「Azure Speech」で個別の接続を選び、書き起こしモデルとリソースを選択して「接続テスト」「テストして保存」を実行します。モデルも接続と一緒に保存・復元され、Foundry のチャット接続は変わりません。Speech のテスト・保存 API は任意の `model`（`MAI-Transcribe-2` / `standard`）を受け付け、省略時は保存済みの選択、未保存なら `Asr.Model` を使います。非対応リージョンでは標準モデルへ切り替わるため、テスト結果のモデル名を確認してください。下書きのモデル選択は適用されません。従量課金で、Azure の予算アラートは利用額のハード上限ではありません。
-- LLM方式・Speech／Foundry／Copilotの画面設定は `DataDir/ai-settings.json` に保存され、再起動後も起動設定より優先。接続情報はテスト合格後に保存。保存した接続を削除すると起動設定へ戻ります。キー・トークンはWindows DPAPIで暗号化し、非対応OSでは保存を拒否します。
+- MAI-Transcribe-2 は個別のモデルデプロイではなく、[対応リージョンの Speech リソース](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)から利用します。字幕は Microsoft Foundry と同じリソースの Speech を使うため、別の接続設定はありません（モデルは `Asr.Model`）。Foundry の「接続テスト」「テストして保存」で字幕の書き起こしも確認し、使われたモデル名を表示します。非対応リージョンでは標準モデルへ切り替わるため、テスト結果のモデル名を確認してください。従量課金で、Azure の予算アラートは利用額のハード上限ではありません。
+- LLM方式・Foundry／Copilotの画面設定は `DataDir/ai-settings.json` に保存され、再起動後も起動設定より優先。接続情報はテスト合格後に保存。保存した接続を削除すると起動設定へ戻ります。旧版で保存した個別の Speech 接続は使われず、次の保存で消えます。キー・トークンはWindows DPAPIで暗号化し、非対応OSでは保存を拒否します。
 - プロジェクト保存先の画面変更はStoreのsettingに永続化。起動設定より優先。
 - パターン・生成オプションの画面選択はプロジェクトごとにStoreへ保存し、再起動後も復元。生成時にはJob.Optionsにも記録。
 - ワークフローの最終表示段階と対象ジョブ・編集計画・書き出しはProject.WorkflowStateに保存。参照先が無効な場合は前段階へ戻る。
@@ -69,11 +69,9 @@ dotnet run --project src\VideoCreator.App -c Release
 |---|---|---|
 | 診断 | GET `/health` | FFmpeg・不足フィルタ・ASR・LLM・モデル等。設定・検出でありクラウド疎通を保証しない |
 | 設定 | GET / PUT `/settings` | 読取／`{"llm_provider":"none"}` 等でLLM切替 |
-| Speech接続 | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`。`auth` は `entra` / `key`。キー方式は `api_key`。合成無音によるテストのみ（保存しない） |
-| Speech接続 | PUT / DELETE `/settings/ai/speech` | PUTは同じ要求形式で再テストし、合格時のみ保存。不合格は422。DELETEは保存した接続・キーを削除して起動設定へ戻す |
-| Foundry接続 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | Speechと同じ認証欄に `deployment`・任意の `embedding_deployment` を追加。チャットと指定時の埋め込みを検証。LLM不使用固定ではテスト・保存不可 |
+| Foundry接続 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","deployment":"…","embedding_deployment":"…","image_deployment":"…","auth":"entra","tenant_id":"<tenant-guid>"}`。`auth` は `entra` / `key`（キー方式は `api_key`）。チャット・指定時の埋め込み・字幕の書き起こし（1秒の合成無音）を検証し、字幕が失敗すれば不合格。字幕は別の接続を持たず、この接続（同じリソース）を使う。LLM不使用固定ではテスト・保存不可 |
 | Azureリソース一覧 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`（省略可）。サインイン中の Entra ID で ARM を読み、`subscriptions`・`accounts`（`endpoint`・`speech`・`foundry`・`key_auth_disabled`・`custom_domain`・`can_transcribe`/`can_chat`/`can_embed`。権限を読めなければ `null`）・`issues`（読めなかったサブスクリプション）を返す。キーは読まない。失敗は422（`arm_unauthorized`/`arm_forbidden`/`entra_signin` 等） |
-| 設定の下書き | GET `/settings/drafts`／PUT・DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 設定画面の未適用の入力。GETは下書きのある節だけを返す。PUTは文字列を前後空白除去・空はnull・2048字超は422、範囲外の列挙値は捨てて保存し `updated_at` を付けて返す。キー・トークンの欄は持たない。DELETEは204（不明な節は404）。下書きは接続に使われず、保存・削除・保存先の変更が成功すると消える |
+| 設定の下書き | GET `/settings/drafts`／PUT・DELETE `/settings/drafts/{foundry\|copilot\|projects_dir}` | 設定画面の未適用の入力。GETは下書きのある節だけを返す。PUTは文字列を前後空白除去・空はnull・2048字超は422、範囲外の列挙値は捨てて保存し `updated_at` を付けて返す。キー・トークンの欄は持たない。DELETEは204（不明な節は404）。下書きは接続に使われず、保存・削除・保存先の変更が成功すると消える |
 | Azureデプロイ一覧 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`。`deployments`（`name`・`model`・`chat`・`embeddings`・`provisioning_state`）を返す。Cognitive Services 以外のIDは送信前に422（`invalid_input`） |
 | 保存先 | GET `/settings/projects-dir` | path、source、configured_path、件数、移動進捗 |
 | 保存先 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` の事前確認 |

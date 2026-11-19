@@ -14,7 +14,7 @@ var root = Directory.GetCurrentDirectory();
 var bin = Path.Combine(root, "tools", "ffmpeg", "bin");
 var media = Path.Combine(root, "spikes", "media");
 var tmp = Path.Combine(root, "spikes", "out", "tts"); Directory.CreateDirectory(tmp);
-var resourceId = Environment.GetEnvironmentVariable("VC_SPEECH_RESOURCE_ID") ?? "/subscriptions/0e930937-43f5-484d-ba9e-1dd1151cf7ba/resourceGroups/rg-videocreator-jpe/providers/Microsoft.CognitiveServices/accounts/videocreator-ai-40800";
+var resourceId = Environment.GetEnvironmentVariable("VC_SPEECH_RESOURCE_ID") ?? "/subscriptions/0e930937-43f5-484d-ba9e-1dd1151cf7ba/resourceGroups/rg-videocreator-jpe/providers/Microsoft.CognitiveServices/accounts/videocreator-mai-9709";
 var region = "japaneast";
 
 // A = host (Nanami), B = guest (Keita). Variety-show style: setup -> rule -> escalation -> payoff.

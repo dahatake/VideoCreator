@@ -15,7 +15,7 @@ using OpenAI.Chat;
 
 var root = Directory.GetCurrentDirectory();
 var outDir = Path.Combine(root, "spikes", "out");
-var endpoint = Environment.GetEnvironmentVariable("VC_OPENAI_ENDPOINT") ?? "https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1";
+var endpoint = Environment.GetEnvironmentVariable("VC_OPENAI_ENDPOINT") ?? "https://videocreator-mai-9709.cognitiveservices.azure.com/openai/v1";
 var model = Environment.GetEnvironmentVariable("VC_OPENAI_DEPLOYMENT") ?? "gpt-chat-latest";
 int fails = 0;
 void Check(bool ok, string msg) { Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {msg}"); if (!ok) fails++; }

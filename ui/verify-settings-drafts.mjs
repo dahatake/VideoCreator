@@ -9,8 +9,8 @@ const errors = [];
 const headers = { 'X-VideoCreator': '1' };
 const open = async (page) => {
   await page.locator('#settings-btn').click();
-  await page.locator('#sEndpoint').waitFor();
-  await page.waitForFunction(() => customElements.get('fluent-radio-group') && document.querySelector('#sAuth fluent-radio')?.shadowRoot);
+  await page.locator('#fEndpoint').waitFor();
+  await page.waitForFunction(() => customElements.get('fluent-radio-group') && document.querySelector('#fAuth fluent-radio')?.shadowRoot);
 };
 try {
   // ---- width ----
@@ -36,49 +36,44 @@ try {
   // ---- drafts ----
   const page = await browser.newPage({ locale: 'ja-JP', viewport: { width: 1440, height: 1100 } });
   page.on('pageerror', e => errors.push(e.message));
-  for (const s of ['speech', 'foundry', 'copilot', 'projects_dir']) await page.request.delete(`${base}/api/settings/drafts/${s}`, { headers });
+  for (const s of ['foundry', 'copilot', 'projects_dir']) await page.request.delete(`${base}/api/settings/drafts/${s}`, { headers });
   await page.goto(base); await open(page);
-  assert.equal(await page.locator('#sDraft fluent-message-bar').count(), 0, 'no draft notice when nothing is pending');
-  const original = await page.locator('#sEndpoint').evaluate(e => e.value);
-  const originalModel = await page.locator('#sTranscriptionModel').inputValue();
-  const draftModel = originalModel === 'standard' ? 'MAI-Transcribe-2' : 'standard';
-  await page.locator('#sTranscriptionModel').selectOption(draftModel);
-  await page.locator('#sEndpoint').evaluate(e => { e.value = ''; });
-  await page.locator('#sEndpoint').pressSequentially('https://draft.cognitiveservices.azure.com/');
-  await page.locator('#sAuth fluent-radio[value=key]').click();
-  await page.locator('#sKey').pressSequentially('secret-typed-but-never-kept');
+  assert.equal(await page.locator('#fDraft fluent-message-bar').count(), 0, 'no draft notice when nothing is pending');
+  const original = await page.locator('#fEndpoint').evaluate(e => e.value);
+  await page.locator('#fEndpoint').evaluate(e => { e.value = ''; });
+  await page.locator('#fEndpoint').pressSequentially('https://draft.cognitiveservices.azure.com/');
+  await page.locator('#fAuth fluent-radio[value=key]').click();
+  await page.locator('#fKey').pressSequentially('secret-typed-but-never-kept');
   await page.locator('#pdirPath').pressSequentially('D:\\Drafts\\Videos');
   await page.locator('#pdirMove fluent-radio[value=keep]').click();
-  assert.equal(await page.locator('#sDraft fluent-message-bar').count(), 1, 'the notice says the input is kept as a draft');
+  assert.equal(await page.locator('#fDraft fluent-message-bar').count(), 1, 'the notice says the input is kept as a draft');
   await page.locator('#settings-close').click();
   await page.waitForTimeout(300);
   const stored = await (await page.request.get(`${base}/api/settings/drafts`, { headers })).json();
-  assert.equal(stored.speech.endpoint, 'https://draft.cognitiveservices.azure.com/');
-  assert.equal(stored.speech.auth, 'key');
-  assert.equal(stored.speech.model, draftModel);
+  assert.equal(stored.foundry.endpoint, 'https://draft.cognitiveservices.azure.com/');
+  assert.equal(stored.foundry.auth, 'key');
+  assert.equal(stored.speech, undefined, 'there is no separate Speech draft');
   assert.equal(stored.projects_dir.path, 'D:\\Drafts\\Videos');
   assert.ok(!JSON.stringify(stored).includes('secret-typed'), 'a key is never part of a draft');
   const settings = await (await page.request.get(`${base}/api/settings`, { headers })).json();
-  assert.notEqual(settings.speech?.endpoint, 'https://draft.cognitiveservices.azure.com/', 'a draft is not a connection');
+  assert.notEqual(settings.foundry?.endpoint, 'https://draft.cognitiveservices.azure.com/', 'a draft is not a connection');
 
   await page.reload(); await open(page);
-  assert.equal(await page.locator('#sEndpoint').evaluate(e => e.value), 'https://draft.cognitiveservices.azure.com/');
-  assert.equal(await page.locator('#sTranscriptionModel').inputValue(), draftModel);
-  assert.equal(await page.locator('#sAuth fluent-radio[value=key]').evaluate(e => e.checked), true);
-  assert.equal(await page.locator('#sKeyBox').evaluate(e => e.hidden), false, 'the key box follows the restored auth');
-  assert.equal(await page.locator('#sKey').evaluate(e => e.value), '');
+  assert.equal(await page.locator('#fEndpoint').evaluate(e => e.value), 'https://draft.cognitiveservices.azure.com/');
+  assert.equal(await page.locator('#fAuth fluent-radio[value=key]').evaluate(e => e.checked), true);
+  assert.equal(await page.locator('#fKeyBox').evaluate(e => e.hidden), false, 'the key box follows the restored auth');
+  assert.equal(await page.locator('#fKey').evaluate(e => e.value), '');
   assert.equal(await page.locator('#pdirPath').evaluate(e => e.value), 'D:\\Drafts\\Videos');
   assert.equal(await page.locator('#pdirMove fluent-radio[value=keep]').evaluate(e => e.checked), true);
-  assert.match(await page.locator('#sDraft').innerText(), /復元/);
+  assert.match(await page.locator('#fDraft').innerText(), /復元/);
   assert.match(await page.locator('#pdirDraft').innerText(), /復元/);
 
   // putting the saved values back removes the draft
-  await page.locator('#sEndpoint').evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input')); }, original);
-  await page.locator('#sAuth fluent-radio[value=entra]').click();
-  await page.locator('#sTranscriptionModel').selectOption(originalModel);
-  await page.waitForFunction(() => !document.querySelector('#sDraft fluent-message-bar'));
+  await page.locator('#fEndpoint').evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input')); }, original);
+  await page.locator('#fAuth fluent-radio[value=entra]').click();
+  await page.waitForFunction(() => !document.querySelector('#fDraft fluent-message-bar'));
   await page.waitForTimeout(800);
-  assert.equal((await (await page.request.get(`${base}/api/settings/drafts`, { headers })).json()).speech, undefined);
+  assert.equal((await (await page.request.get(`${base}/api/settings/drafts`, { headers })).json()).foundry, undefined);
 
   await page.locator('#pdirDraft [data-draft-discard]').click();
   await page.waitForFunction(() => !document.querySelector('#pdirDraft fluent-message-bar'));

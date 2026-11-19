@@ -27,7 +27,7 @@ var outDir = Path.Combine(root, "spikes", "out", "topic-eval"); Directory.Create
 if (args.Length < 1 || args[0] != "eval") { Console.WriteLine("usage: eval [episodes=3] [tol=3]"); return; }
 int episodes = args.FirstOrDefault(a => a.StartsWith("episodes=")) is { } ea ? int.Parse(ea[9..]) : 3;
 int tol = args.FirstOrDefault(a => a.StartsWith("tol=")) is { } ta ? int.Parse(ta[4..]) : 3;
-var endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1");
+var endpoint = new Uri("https://videocreator-mai-9709.cognitiveservices.azure.com/openai/v1");
 var cred = new AzureCliCredential();
 var gen = new AzureOpenAISelector(endpoint, "gpt-4.1", cred);
 var llm = new AzureOpenAISelector(endpoint, "gpt-chat-latest", cred);

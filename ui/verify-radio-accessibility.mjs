@@ -73,7 +73,7 @@ try {
     await page.locator('#settings-btn').click();
     await page.locator('#aiCopilot').evaluate(element => { element.open = true; });
     assert.deepEqual(await page.locator('#aiFlash ~ details.setgroup > summary h3').allInnerTexts(),
-      ['Microsoft Foundry', 'Azure Speech', 'GitHub Copilot'], `${language}: AI connection order`);
+      ['Microsoft Foundry', 'GitHub Copilot'], `${language}: AI connection order`);
     await page.locator('#cEffort fluent-radio').last().waitFor();
     await page.addScriptTag({ content: axe.source });
     const audit = async () => {
@@ -88,7 +88,7 @@ try {
     const radios = nodes.filter(node => !node.ignored && node.role?.value === 'radio');
     assert.equal(radios.length, await page.locator('#settings-body fluent-radio').count(), `${language}: all settings radios exposed`);
     assert.ok(radios.every(node => node.name?.value), `${language}: every radio has a name`);
-    assert.equal(radios.filter(node => node.properties?.some(p => p.name === 'checked' && p.value.value === 'true')).length, 5);
+    assert.equal(radios.filter(node => node.properties?.some(p => p.name === 'checked' && p.value.value === 'true')).length, 4);
     assert.ok(radios.some(node => node.properties?.some(p => p.name === 'disabled' && p.value.value === true)));
     await cdp.detach();
 
@@ -96,11 +96,6 @@ try {
       await page.locator(`#${group} fluent-radio[value="${value}"]`).focus();
       await page.keyboard.press(key);
     };
-    await selectWithKeyboard('sAuth', 'entra', 'End');
-    assert.equal(await page.locator('#sAuth').getByRole('radio', { checked: true }).getAttribute('value'), 'key');
-    assert.equal(await page.locator('#sKeyBox').isVisible(), true);
-    await page.keyboard.press('Home');
-    assert.equal(await page.locator('#sEntraBox').isVisible(), true);
     await selectWithKeyboard('fAuth', 'entra', 'End');
     assert.equal(await page.locator('#fAuth').getByRole('radio', { checked: true }).getAttribute('value'), 'key');
     assert.equal(await page.locator('#fKeyBox').isVisible(), true);

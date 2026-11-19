@@ -30,7 +30,7 @@ var system = """
 """;
 var user = "字幕:\n" + string.Join("\n", caps.Select(c => $"{c.Item1}: {c.Item2}"));
 var client = new ChatClient("gpt-chat-latest", new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-    new OpenAIClientOptions { Endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1") });
+    new OpenAIClientOptions { Endpoint = new Uri("https://videocreator-mai-9709.cognitiveservices.azure.com/openai/v1") });
 int total = 0, ok = 0, tooLong = 0, badId = 0, invented = 0;
 for (int trial = 0; trial < 4; trial++)
 {

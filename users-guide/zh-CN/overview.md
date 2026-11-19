@@ -149,7 +149,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `Asr:Endpoint` | — | `https://<resource>.cognitiveservices.azure.com/`，必须自定义域 |
+| `Asr:Provider` / `Model` | `azure` / `MAI-Transcribe-2` | 字幕使用与 `Llm:Endpoint` 相同的 Microsoft Foundry 资源的 Speech |
 | `Llm:Provider` | `azure-openai` | `azure-openai` / `copilot` / `none`，也可在设置切换 |
 | `Llm:Endpoint` / `Deployment` | — / `gpt-chat-latest` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
 | `Llm:SingleCallCharBudget` | 12000 | 超出则信号筛选分块（NFR-COST-03），质量优先可增大 |
@@ -171,7 +171,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 1. 从 [Releases](https://github.com/dahatake/VideoCreator/releases) 下载适用文件和 `appsettings.json`，放在同一文件夹。
 2. 经 IT 批准安装 Azure CLI（Windows：`winget install Microsoft.AzureCLI`，macOS：`brew install azure-cli`），然后 `az login`。Speech 仍需要[快速入门](quickstart.md)中的权限。使用 Copilot 筛选还需要已登录的 Copilot CLI。
-3. 请管理员设置 `VideoCreator:Asr:Endpoint`、`Llm:Endpoint` / `Llm:Deployment`，或将 `Llm:Provider` 设为 `copilot` / `none`。分发用配置不包含终结点。
+3. 请管理员设置 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`，或将 `Llm:Provider` 设为 `copilot` / `none`。字幕 Speech 使用同一资源。分发用配置不包含终结点。
 4. 启动可执行文件，默认浏览器打开 `http://127.0.0.1:8765/`。关闭控制台或按 Ctrl+C 退出。
 
 macOS 请从 Terminal 启动，确保能在 PATH 中找到 `az`：
@@ -183,7 +183,7 @@ tar -xzf VideoCreator-<version>-osx-arm64.tar.gz
 
 macOS 版仅有临时签名，未经公证。浏览器下载被阻止时，验证文件后可在“系统设置 → 隐私与安全性”中允许，或运行 `xattr -d com.apple.quarantine VideoCreator`。使用 `gh release download` / `curl` 下载通常不会触发隔离。Windows 版也未进行代码签名，可能出现 SmartScreen 提示。请遵守 IT 政策，不要绕过公司控制。
 
-配置优先级（后者优先）：内置默认值 → **可执行文件旁**的 `appsettings.json` → `VideoCreator__Asr__Endpoint` 等环境变量 → `--VideoCreator:Asr:Endpoint=https://...` 等启动参数。启动日志的 `User settings file:` 显示读取的文件。
+配置优先级（后者优先）：内置默认值 → **可执行文件旁**的 `appsettings.json` → `VideoCreator__Llm__Endpoint` 等环境变量 → `--VideoCreator:Llm:Endpoint=https://...` 等启动参数。启动日志的 `User settings file:` 显示读取的文件。
 
 单一文件不代表不写入磁盘。首次启动时，.NET 将依赖解压至 `%TEMP%\.net`（macOS：`$TMPDIR/.net`），需要可写权限与空间。可用 `DOTNET_BUNDLE_EXTRACT_BASE_DIR` 更改位置，但不能使用其他用户可修改的目录。数据库与缓存位于 `%LOCALAPPDATA%\VideoCreator`（macOS：`~/Library/Application Support/VideoCreator`），项目位于“视频/VideoCreator”（macOS：`~/Movies/VideoCreator`）。删除项目会移入回收站／废纸篓。视频、凭据和现有项目不包含在可执行文件中。仍需要 Speech 和互联网，并非离线版。
 

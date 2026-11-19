@@ -31,18 +31,19 @@ To pin the standard model, set `VideoCreator:Asr:Model` to `standard`. Image ana
 Video Indexer, Event Grid and an additional managed identity are not required by
 the current execution path. Existing resources do not need to be deleted.
 
-### Environment inspected on 2026-11-18
+### Environment inspected on 2026-11-20
 
 - Subscription: `dahatake Internal Subscription`
   (`0e930937-43f5-484d-ba9e-1dd1151cf7ba`)
 - Tenant: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - Resource group: `rg-videocreator-jpe`
-- Resource: `videocreator-ai-40800` (AIServices / S0 / Japan East)
-- Caption resource: `videocreator-mai-9709` (AIServices / S0 / Southeast Asia; added in 2026-11 for MAI-Transcribe-2)
-- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
-- Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
+- Resource (the only one): `videocreator-mai-9709` (AIServices / S0 / Southeast Asia).
+  It serves chat, embeddings, image generation and captions (MAI-Transcribe-2).
+  The former `videocreator-ai-40800` was deleted and purged.
+- Foundry / Speech destination: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - Chat deployment: `gpt-chat-latest`
 - Embeddings: `text-embedding-3-large`
+- Viva Engage image: `FLUX-1.1-pro`
 
 The required resource and deployments already existed. No duplicate services or
 model capacity are needed. No additional fixed capacity cost does **not** mean
@@ -127,17 +128,20 @@ Install Azure CLI on the user's PC and sign in to the resource's tenant.
 az login --tenant 16b3c013-d300-468d-ac64-7eda0820b6d3
 ```
 
-In **Settings → AI connections**, configure these two connections independently:
+**Settings → AI connections** has exactly one Azure connection, **Microsoft Foundry**.
+Captions (Azure Speech) use the same resource; there is no separate Speech connection.
 
-1. **Azure Speech**: resource endpoint, **Microsoft Entra ID**, tenant ID.
-2. **Microsoft Foundry**: endpoint, chat/embedding deployment names,
-   **Microsoft Entra ID**, tenant ID.
-3. For each, use **Test connection**, then **Test and save**. Testing alone does
-   not save. Test and save repeats the test before persisting.
+1. **Microsoft Foundry**: choose the authentication method first (**Microsoft Entra ID** or **API key**);
+   the inputs of the other method are hidden. Then enter the endpoint, the chat / embedding / Viva Engage
+   image deployment names and the tenant ID.
+2. Use **Test connection**, then **Test and save**. The test checks chat, embeddings and caption
+   transcription (Speech); a connection whose caption transcription fails is not saved. Outside the
+   MAI-Transcribe-2 regions the standard model is used. Testing alone does not save.
+3. A separate Speech connection saved by an older version is ignored and removed on the next save.
 
 #### Choose from Azure (no typing of endpoints or deployment names)
 
-Select **Choose from Azure** in either connection to list the Azure Speech / Microsoft Foundry
+Select **Choose from Azure** to list the Microsoft Foundry
 resources visible to the signed-in Entra ID identity (default sign-in when the tenant ID box is empty).
 
 - The app reads Cognitive Services accounts in every accessible subscription through Azure Resource

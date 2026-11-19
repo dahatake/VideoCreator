@@ -14,7 +14,7 @@
 
 The browser's language selector saves the UI display language independently of each project's video/audio language. Create a project with `POST /api/projects` and `{"name":"Example","language":"en-US"}`, or change it with `PATCH /api/projects/{id}` and `{"language":"ko-KR"}`. Supported values: `ja-JP` (default when omitted), `en-US`, `zh-CN`, `ko-KR`. Unsupported values return 422; changing language during generation/export returns 409. Generate new candidates after changing language: existing edit plans retain their creation language.
 
-Use the `VideoCreator` section of [appsettings.json](../../src/VideoCreator.App/appsettings.json), environment variables, or command-line arguments. Environment variables use `__`, e.g. `VideoCreator__Asr__Endpoint`. Defaults below come from [AppOptions](../../src/VideoCreator.App/AppOptions.cs). Replace distributed endpoints with your own.
+Use the `VideoCreator` section of [appsettings.json](../../src/VideoCreator.App/appsettings.json), environment variables, or command-line arguments. Environment variables use `__`, e.g. `VideoCreator__Llm__Endpoint`. Defaults below come from [AppOptions](../../src/VideoCreator.App/AppOptions.cs). Replace distributed endpoints with your own.
 
 | Setting | Default / meaning |
 |---|---|
@@ -24,8 +24,8 @@ Use the `VideoCreator` section of [appsettings.json](../../src/VideoCreator.App/
 | FfmpegBin / FontsDir / PresetsDir | If unset, searches ancestor repository tools etc. |
 | FaceModel / UpscaleModel | If unset, tools UltraFace / Real-ESRGAN |
 | LocalOnly | `false`; `true` forces LLM off, not ASR |
-| Asr.Provider / Endpoint / Locale | `azure` / empty / `ja-JP`; ASR enabled when azure and endpoint set. For app generation, project `language` overrides Locale. |
-| Asr.TenantId / Llm.TenantId | Azure Identity default if unset; tenant for Entra ID. Each UI-saved connection takes precedence |
+| Asr.Provider / Locale / Model | `azure` / `ja-JP` / `MAI-Transcribe-2`; ASR is enabled when the provider is azure and a Microsoft Foundry connection exists (same destination and sign-in as Foundry; there is no separate endpoint setting. `Asr.Endpoint` is a verification-only override that pins the destination and is not set normally). For app generation, project `language` overrides Locale. |
+| Llm.TenantId | Azure Identity default if unset; tenant for Entra ID. The UI-saved connection takes precedence |
 | Llm.Provider | `azure-openai`: `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | Empty / `gpt-chat-latest`; use your deployment name |
 | Llm.CopilotCliPath / CopilotModel | CLI autodetection / default model if unset |
@@ -45,8 +45,8 @@ Variables apply to that PowerShell process and its children; reset in a new term
 
 ## Setting lifetimes
 
-- MAI-Transcribe-2 is used through a [Speech resource in a supported region](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe), not a separate model deployment. In Settings > Azure Speech, choose a separate connection, select the transcription model and resource, then test and save. The model persists with the connection across restarts without changing Foundry chat. Speech test/save APIs accept optional `model` (`MAI-Transcribe-2` / `standard`); omission preserves the saved choice or uses `Asr.Model` if none is saved. Unsupported regions fall back to standard, so check the model reported by the test. Draft model selections do not take effect. Billing is usage-based; Azure budget alerts are not hard spending caps.
-- UI LLM selection and Speech/Foundry/Copilot connections persist in `DataDir/ai-settings.json` across restart and override startup configuration. Connections save only after a passing test; removing one restores startup configuration. Keys/tokens use Windows DPAPI; unsupported OSes refuse secret storage.
+- MAI-Transcribe-2 is used through a [Speech resource in a supported region](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe), not a separate model deployment. Captions use the Speech of the same Microsoft Foundry resource, so there is no separate connection setting (the model is `Asr.Model`). The Foundry test and save also check caption transcription and show the model that answered. Unsupported regions fall back to standard, so check the model reported by the test. Billing is usage-based; Azure budget alerts are not hard spending caps.
+- UI LLM selection and Foundry/Copilot connections persist in `DataDir/ai-settings.json` across restart and override startup configuration. Connections save only after a passing test; removing one restores startup configuration. A separate Speech connection saved by an older version is ignored and dropped on the next save. Keys/tokens use Windows DPAPI; unsupported OSes refuse secret storage.
 - UI project-location changes persist in Store settings and override startup configuration.
 - Patterns/generation options persist per project, restore after restart, and are recorded in Job.Options on generation.
 - Last workflow stage/job/edit-plan/export is saved in Project.WorkflowState; invalid references fall back.
@@ -71,11 +71,9 @@ Variables apply to that PowerShell process and its children; reset in a new term
 |---|---|---|
 | Diagnostics | GET `/health` | FFmpeg/missing filters/ASR/LLM/models; configuration/detection, not guaranteed cloud connectivity |
 | Settings | GET / PUT `/settings` | Read / switch LLM, e.g. `{"llm_provider":"none"}` |
-| Speech connection | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`; auth is `entra` or `key` (`api_key`). Synthetic-silence test only; does not save |
-| Speech connection | PUT / DELETE `/settings/ai/speech` | PUT repeats the test with the same body and saves only on success; failure is 422. DELETE removes saved connection/key and restores startup configuration |
-| Foundry connection | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | Same authentication fields plus `deployment` and optional `embedding_deployment`. Tests chat/embeddings; blocked when LLM-disabled mode is forced |
+| Foundry connection | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","deployment":"…","embedding_deployment":"…","image_deployment":"…","auth":"entra","tenant_id":"<tenant-guid>"}`; auth is `entra` or `key` (`api_key`). Tests chat, embeddings if given, and caption transcription (one second of synthetic silence); a failing caption step fails the test. Captions have no connection of their own and use this resource. Blocked when LLM-disabled mode is forced |
 | Azure resource list | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}` (optional). Reads ARM with the signed-in Entra ID identity and returns `subscriptions`, `accounts` (`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`; `null` when permissions cannot be read) and `issues` (subscriptions that could not be listed). Never reads keys. Failures return 422 (`arm_unauthorized`/`arm_forbidden`/`entra_signin`, etc.) |
-| Settings drafts | GET `/settings/drafts`; PUT/DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | Unapplied Settings input. GET returns only sections with a draft. PUT trims text, stores empty as null, returns 422 above 2048 characters, drops out-of-range enum values, and returns the draft with `updated_at`. No key/token fields. DELETE returns 204 (404 for an unknown section). Drafts are never used for connections and are removed when save, forget or location change succeeds |
+| Settings drafts | GET `/settings/drafts`; PUT/DELETE `/settings/drafts/{foundry\|copilot\|projects_dir}` | Unapplied Settings input. GET returns only sections with a draft. PUT trims text, stores empty as null, returns 422 above 2048 characters, drops out-of-range enum values, and returns the draft with `updated_at`. No key/token fields. DELETE returns 204 (404 for an unknown section). Drafts are never used for connections and are removed when save, forget or location change succeeds |
 | Azure deployment list | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. Returns `deployments` (`name`, `model`, `chat`, `embeddings`, `provisioning_state`). Non-Cognitive Services IDs get 422 (`invalid_input`) before any request |
 | Storage | GET `/settings/projects-dir` | path, source, configured_path, counts, move progress |
 | Storage | POST `/settings/projects-dir/plan` | Preflight `{"path":"D:\\Videos\\VideoCreator","move":true}` |

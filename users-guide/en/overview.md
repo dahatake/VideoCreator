@@ -145,7 +145,7 @@ Configure the `VideoCreator` section of `src/VideoCreator.App/appsettings.json`.
 
 | Key | Default | Description |
 |---|---|---|
-| `Asr:Endpoint` | — | `https://<resource>.cognitiveservices.azure.com/` (custom domain required) |
+| `Asr:Provider` / `Model` | `azure` / `MAI-Transcribe-2` | Captions use Speech on the same Microsoft Foundry resource as `Llm:Endpoint` |
 | `Llm:Provider` | `azure-openai` | `azure-openai` / `copilot` / `none` (also selectable in Settings) |
 | `Llm:Endpoint` / `Deployment` | — / `gpt-chat-latest` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
 | `Llm:SingleCallCharBudget` | 12000 | Longer transcripts are signal-filtered and split (NFR-COST-03); increase for quality |
@@ -167,7 +167,7 @@ The packaged edition runs without an installer or a separate .NET SDK, FFmpeg or
 
 1. Download your platform's file and `appsettings.json` from [Releases](https://github.com/dahatake/VideoCreator/releases) into the same folder.
 2. With IT approval, install Azure CLI (`winget install Microsoft.AzureCLI` on Windows, `brew install azure-cli` on macOS), then use `az login`. Your Speech account still needs the permissions in the [quickstart](quickstart.md). Copilot selection additionally needs a signed-in Copilot CLI.
-3. Have your administrator set `VideoCreator:Asr:Endpoint`, `Llm:Endpoint` / `Llm:Deployment`, or set `Llm:Provider` to `copilot` / `none`. Distribution settings intentionally contain no endpoints.
+3. Have your administrator set `VideoCreator:Llm:Endpoint` / `Llm:Deployment`, or set `Llm:Provider` to `copilot` / `none`. Captions use Speech on the same resource. Distribution settings intentionally contain no endpoints.
 4. Launch the executable; the default browser opens `http://127.0.0.1:8765/`. Close the console or press Ctrl+C to stop.
 
 On macOS, launch from Terminal so `az` is found on PATH:
@@ -179,7 +179,7 @@ tar -xzf VideoCreator-<version>-osx-arm64.tar.gz
 
 The macOS build is ad-hoc signed, not notarized. If a browser download is blocked, use System Settings → Privacy & Security, or `xattr -d com.apple.quarantine VideoCreator` after verifying the file. `gh release download` / `curl` downloads generally avoid this quarantine. Windows builds are unsigned and may trigger SmartScreen; follow IT policy rather than bypassing company controls.
 
-Settings precedence, lowest to highest: bundled defaults → `appsettings.json` **beside the executable** → environment variables such as `VideoCreator__Asr__Endpoint` → command-line arguments such as `--VideoCreator:Asr:Endpoint=https://...`. The startup log's `User settings file:` identifies the loaded file.
+Settings precedence, lowest to highest: bundled defaults → `appsettings.json` **beside the executable** → environment variables such as `VideoCreator__Llm__Endpoint` → command-line arguments such as `--VideoCreator:Llm:Endpoint=https://...`. The startup log's `User settings file:` identifies the loaded file.
 
 One executable does not mean no disk writes. .NET extracts dependencies to `%TEMP%\.net` (macOS: `$TMPDIR/.net`) on first launch, requiring writable space. `DOTNET_BUNDLE_EXTRACT_BASE_DIR` changes this location; never use a directory writable by other users. Database/cache live in `%LOCALAPPDATA%\VideoCreator` (macOS: `~/Library/Application Support/VideoCreator`); projects in Videos/VideoCreator (macOS: `~/Movies/VideoCreator`). Deleted projects go to the Recycle Bin/Trash. Footage, credentials and existing projects are not bundled. Speech and Internet remain necessary: this is not an offline edition.
 

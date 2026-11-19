@@ -10,12 +10,11 @@ namespace VideoCreator.App;
 /// </summary>
 public static class SettingsDrafts
 {
-    public sealed record SpeechDraft(string? Endpoint, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default, string? Model = null);
     public sealed record FoundryDraft(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
     public sealed record CopilotDraft(string? Auth, string? Model, string? ReasoningEffort, string? ContextTier, DateTimeOffset UpdatedAt = default);
     public sealed record ProjectsDirDraft(string? Path, string? Move, DateTimeOffset UpdatedAt = default);
 
-    public const string Speech = "speech", Foundry = "foundry", Copilot = "copilot", ProjectsDir = "projects_dir";
+    public const string Foundry = "foundry", Copilot = "copilot", ProjectsDir = "projects_dir";
     const int MaxLength = 2048;
 
     static string Id(string section) => "draft_" + section;
@@ -24,7 +23,6 @@ public static class SettingsDrafts
 
     public static object View(Store store) => new
     {
-        Speech = store.Get<SpeechDraft>(Kinds.Setting, Id(Speech)),
         Foundry = store.Get<FoundryDraft>(Kinds.Setting, Id(Foundry)),
         Copilot = store.Get<CopilotDraft>(Kinds.Setting, Id(Copilot)),
         ProjectsDir = store.Get<ProjectsDirDraft>(Kinds.Setting, Id(ProjectsDir)),
@@ -38,9 +36,6 @@ public static class SettingsDrafts
     {
         api.MapGet("/settings/drafts", (Runtime rt) => Results.Json(View(rt.Store), Json.Options))
             .WithSummary("Unsaved settings-screen input (no keys or tokens); restored when the dialog opens");
-        api.MapPut("/settings/drafts/speech", (Runtime rt, SpeechDraft d) =>
-            Put(rt, Speech, () => new SpeechDraft(Text(d.Endpoint), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now,
-                OneOf(d.Model, "standard", Asr.AzureFastTranscriber.MaiModel))));
         api.MapPut("/settings/drafts/foundry", (Runtime rt, FoundryDraft d) =>
             Put(rt, Foundry, () => new FoundryDraft(Text(d.Endpoint), Text(d.Deployment), Text(d.EmbeddingDeployment), Text(d.ImageDeployment), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
         api.MapPut("/settings/drafts/copilot", (Runtime rt, CopilotDraft d) =>
@@ -49,7 +44,7 @@ public static class SettingsDrafts
             Put(rt, ProjectsDir, () => new ProjectsDirDraft(Text(d.Path), OneOf(d.Move, "move", "keep"), DateTimeOffset.Now)));
         api.MapDelete("/settings/drafts/{section}", (Runtime rt, string section) =>
         {
-            if (section is not (Speech or Foundry or Copilot or ProjectsDir)) return Results.NotFound();
+            if (section is not (Foundry or Copilot or ProjectsDir)) return Results.NotFound();
             Clear(rt.Store, section);
             return Results.NoContent();
         }).WithSummary("Discard the unsaved input of one settings section");

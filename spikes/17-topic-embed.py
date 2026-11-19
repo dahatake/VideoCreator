@@ -6,7 +6,7 @@ boundaries with the text on both sides, so a person (or a second model) can judg
 """
 import json, math, subprocess, sys, urllib.request
 
-ENDPOINT = "https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/embeddings"
+ENDPOINT = "https://videocreator-mai-9709.cognitiveservices.azure.com/openai/v1/embeddings"
 MODEL = "text-embedding-3-large"
 
 

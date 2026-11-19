@@ -37,38 +37,14 @@ public sealed class Runtime
     /// <summary>The Foundry connection in use: the one saved in the settings screen, else appsettings.json (Entra ID). Null = not configured.</summary>
     public FoundryConnection? Foundry => AiSettings.Load().Foundry is { } f ? f.ToConnection(AiSettings)
         : string.IsNullOrWhiteSpace(_o.Llm.Endpoint) ? null : new FoundryConnection(_o.Llm.Endpoint, _o.Llm.Deployment, _o.Llm.EmbeddingDeployment, TenantId: _o.Llm.TenantId, ImageDeployment: _o.Llm.ImageDeployment);
-    public SpeechConnection? Speech => EffectiveSpeech().Connection;
-
-    internal (SpeechConnection? Connection, string Source) EffectiveSpeech() => EffectiveSpeech(AiSettings.Load());
-
-    internal (SpeechConnection? Connection, string Source) EffectiveSpeech(SavedAi saved)
-    {
-        if (saved.UseFoundrySpeech == true)
-            return VerifiedFoundrySpeech(saved) is { } selected ? (selected, "foundry") : (null, "none");
-        if (saved.UseFoundrySpeech == null && saved.Speech == null && VerifiedFoundrySpeech(saved) is { } shared)
-            return (shared, "foundry");
-        return SeparateSpeech(saved);
-    }
-
-    internal (SpeechConnection? Connection, string Source) SeparateSpeech(SavedAi saved)
-    {
-        if (saved.Speech is { } speech) return (speech.ToConnection(AiSettings), "app");
-        return _o.Asr.Provider != "azure" || string.IsNullOrWhiteSpace(_o.Asr.Endpoint)
-            ? (null, "none") : (new SpeechConnection(_o.Asr.Endpoint, TenantId: _o.Asr.TenantId), "config");
-    }
-
-    internal SpeechConnection? VerifiedFoundrySpeech(SavedAi saved) =>
-        saved.Foundry is { SpeechVerified: true } foundry
-        && SharedSpeech(foundry.ToConnection(AiSettings)) is { } shared
-        && (!shared.UsesKey || !string.IsNullOrWhiteSpace(shared.ApiKey)) ? shared : null;
-
-    internal bool SetSpeechConnectionSource(bool useFoundry) =>
-        AiSettings.TryUpdate(s => useFoundry && VerifiedFoundrySpeech(s) == null
-            ? null : s with { UseFoundrySpeech = useFoundry });
+    /// <summary>Captions use the same Microsoft Foundry resource as everything else (there is no separate Speech connection). Null = not configured or ASR off.</summary>
+    public SpeechConnection? Speech => _o.Asr.Provider != "azure" ? null
+        : !string.IsNullOrWhiteSpace(_o.Asr.Endpoint) ? new SpeechConnection(_o.Asr.Endpoint)
+        : Foundry is { } f ? SharedSpeech(f) : null;
 
     // Use the same Azure account origin; never forward credentials to a guessed sibling host or gateway.
     internal static SpeechConnection? SharedSpeech(FoundryConnection c) =>
-        Uri.TryCreate(c.Endpoint, UriKind.Absolute, out var uri)
+        TryEndpoint(c) is { } uri
         && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0
         && uri.AbsolutePath == "/openai/v1/"
         && System.Text.RegularExpressions.Regex.IsMatch(uri.Host, @"^[a-z0-9-]+\.cognitiveservices\.azure\.com$")
@@ -118,17 +94,12 @@ public sealed class Runtime
         AiSettings.Update(s => s with { Provider = provider });
     }
 
-    public void SaveFoundry(FoundryConnection c, DateTimeOffset testedAt, bool speechVerified = false)
+    public void SaveFoundry(FoundryConnection c, DateTimeOffset testedAt)
     {
         var keep = AiSettings.Load().Foundry;
         // switching to Entra ID deletes the stored key; an empty key field keeps the stored one
         var key = c.UsesKey ? (string.IsNullOrWhiteSpace(c.ApiKey) ? keep?.ApiKeyProtected : AiSettings.Protect(c.ApiKey)) : null;
-        AiSettings.Update(s => s with
-        {
-            Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt, c.ImageDeployment, speechVerified),
-            // A newly available connection must not change the existing destination until selected.
-            UseFoundrySpeech = s.UseFoundrySpeech ?? (speechVerified && VerifiedFoundrySpeech(s) == null ? false : null),
-        });
+        AiSettings.Update(s => s with { Foundry = new SavedFoundry(c.Endpoint, c.Deployment, c.EmbeddingDeployment, c.Auth, c.TenantId, key, testedAt, c.ImageDeployment) });
     }
 
     public void SaveCopilot(CopilotConnection c, string? login, DateTimeOffset testedAt)
@@ -138,24 +109,21 @@ public sealed class Runtime
         AiSettings.Update(s => s with { Copilot = new SavedCopilot(c.Auth, token, c.Model, c.ReasoningEffort, c.ContextTier, login, testedAt) });
     }
 
-    public void SaveSpeech(SpeechConnection c, DateTimeOffset testedAt) =>
-        AiSettings.Update(s => s with { Speech = new SavedSpeech(c.Endpoint, c.Auth, c.TenantId, c.UsesKey ? AiSettings.Protect(c.ApiKey) : null, testedAt, c.Model) });
-
     public IHighlightSelector FoundrySelector(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
     public ITextEmbedder FoundryEmbedder(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
-    public string SpeechModel(SpeechConnection? c)
+    public string SpeechModel()
     {
-        var model = (c?.Model ?? _o.Asr.Model)?.Trim();
+        var model = _o.Asr.Model?.Trim();
         return string.IsNullOrEmpty(model) || model.Equals("standard", StringComparison.OrdinalIgnoreCase) ? "standard" : model;
     }
 
     public AzureFastTranscriber SpeechTranscriber(SpeechConnection c, string language) => c.UsesKey
-        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language, SpeechModel(c))
-        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language, SpeechModel(c));
+        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Foundry API key cannot be read. Enter it again in Settings."),         _http, language, SpeechModel())
+                : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language, SpeechModel());
 
     public ITranscriber? Asr => AsrForLanguage(_o.Asr.Locale);
 
@@ -165,7 +133,7 @@ public sealed class Runtime
 
     sealed class UnreadableKeyTranscriber : ITranscriber
     {
-        public const string Message = "保存した Speech の API キーをこの Windows ユーザーでは読めません。設定画面でキーを入力し直してください";
+        public const string Message = "保存した Microsoft Foundry の API キーをこの Windows ユーザーでは読めません。設定画面でキーを入力し直してください";
         public string Name => AzureFastTranscriber.StandardName;
         public Task<VideoCreator.Models.Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) =>
             throw new AsrException(Message, transient: false);

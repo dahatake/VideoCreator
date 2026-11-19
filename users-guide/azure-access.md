@@ -30,18 +30,19 @@ West Europe、West US、West US 2 です（2026-11 時点。Japan East は未対
 Foundry のプロジェクト、Video Indexer、Event Grid、追加のマネージド ID は、
 現在のアプリの実行経路には不要です。既存のものを削除する必要もありません。
 
-### この環境の確認結果（2026-11-18）
+### この環境の確認結果（2026-11-20）
 
 - サブスクリプション: `dahatake Internal Subscription`
   (`0e930937-43f5-484d-ba9e-1dd1151cf7ba`)
 - テナント: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - リソースグループ: `rg-videocreator-jpe`
-- リソース: `videocreator-ai-40800`（AIServices / S0 / Japan East）
-- 字幕用リソース: `videocreator-mai-9709`（AIServices / S0 / Southeast Asia。MAI-Transcribe-2 用に 2026-11 に追加）
-- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
-- Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
+- リソース（1つだけ）: `videocreator-mai-9709`（AIServices / S0 / Southeast Asia）。
+  チャット・埋め込み・画像生成・字幕（MAI-Transcribe-2）をすべてこの1つで賄います。
+  以前の `videocreator-ai-40800` は削除し、purge も済ませました。
+- Foundry / Speech の送信先: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - チャット: `gpt-chat-latest`
 - 埋め込み: `text-embedding-3-large`
+- Viva Engage 画像: `FLUX-1.1-pro`
 
 必要なリソースとデプロイは作成済みでした。重複したサービス・モデル容量は追加しません。
 追加の固定容量費用がないことと、利用が無料であることは別です。Speech の処理時間、
@@ -129,20 +130,19 @@ Speech User / OpenAI User はリソースのキーを取得するための権限
 az login --tenant 16b3c013-d300-468d-ac64-7eda0820b6d3
 ```
 
-アプリの **設定 → AI の接続** で、字幕に使う Speech 接続を選びます。
+アプリの **設定 → AI の接続** には、Azure の接続は **Microsoft Foundry の1つだけ**あります。
+字幕（Azure Speech）も同じリソースを使い、別の Speech 接続はありません。
 
-1. **Microsoft Foundry**: エンドポイント、チャット・埋め込み・Viva Engage 画像のデプロイ名、
-   **Microsoft Entra ID**、テナント ID。**接続テスト**で確認し、**テストして保存**します。
-2. Foundry の **テストして保存** で Speech も成功すると、**Azure Speech** に「字幕に使う Speech 接続」が表示されます。
-   **Microsoft Foundry の接続を使う** または **個別の Speech 接続を使う** を選び、**接続の選択を保存**します。
-   Foundry を選ぶと個別入力欄は隠れますが、保存済みの接続は残ります。「接続テスト」だけでは設定を変更しません。
-3. Foundry の Speech を確認できなければ、従来どおり **Azure Speech** で個別に設定できます。
-   明示的に Foundry を選んだ後でその接続が使えなくなった場合、別の送信先には自動で切り替わりません。
-   Foundry を再度 **テストして保存** するか、個別の接続に切り替えてください。
+1. **Microsoft Foundry**: 認証方式（**Microsoft Entra ID** か **API キー**）を最初に選びます。
+   選ばなかった方式の入力欄は隠れます。続けて、エンドポイント、チャット・埋め込み・Viva Engage 画像の
+   デプロイ名、テナント ID を入力します。**接続テスト**で確認し、**テストして保存**します。
+2. 接続テストはチャット・埋め込み・字幕の書き起こし（Speech）を確認します。
+   字幕の書き起こしに失敗すると保存できません。MAI-Transcribe-2 の対応リージョン外では標準モデルになります。
+3. 旧版で個別に保存した Speech 接続は使われず、次に設定を保存したときに消えます。
 
 #### Azure から選ぶ（エンドポイント・デプロイ名を入力しない）
 
-各接続の **Azure から選択** を押すと、サインイン中の Entra ID で見える Azure Speech /
+**Azure から選択** を押すと、サインイン中の Entra ID で見える
 Microsoft Foundry のリソースを一覧して選べます（テナント ID 欄が空なら既定のサインイン）。
 
 - Azure Resource Manager（`https://management.azure.com`）から、アクセスできる全

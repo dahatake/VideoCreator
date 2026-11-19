@@ -25,7 +25,7 @@ var outDir = Path.Combine(root, "spikes", "out", "scene-check"); Directory.Creat
 if (args.Length < 2 || args[0] != "scene") { Console.WriteLine("usage: scene <cacheDir> [parts=2,3,4]"); return; }
 var cache = args[1];
 var partsList = (args.FirstOrDefault(a => a.StartsWith("parts="))?[6..] ?? "2,3,4").Split(',').Select(int.Parse).ToArray();
-var endpoint = new Uri("https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1");
+var endpoint = new Uri("https://videocreator-mai-9709.cognitiveservices.azure.com/openai/v1");
 var cred = new AzureCliCredential();
 var embedder = new AzureOpenAIEmbedder(endpoint, "text-embedding-3-large", cred);
 var judge = new AzureOpenAISelector(endpoint, "gpt-4.1", cred);

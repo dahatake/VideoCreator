@@ -139,11 +139,12 @@ else {
 $config = Get-Content (Join-Path $root 'src\VideoCreator.App\appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $vc = $config.VideoCreator
 function Get-Setting([string]$EnvName, $Default) { $e = [Environment]::GetEnvironmentVariable($EnvName); if ($e) { $e } else { $Default } }
-$asrEndpoint = Get-Setting 'VideoCreator__Asr__Endpoint' $vc.Asr.Endpoint
 $asrProvider = Get-Setting 'VideoCreator__Asr__Provider' $vc.Asr.Provider
 $asrModel = Get-Setting 'VideoCreator__Asr__Model' $(if ($vc.Asr.PSObject.Properties['Model']) { $vc.Asr.Model } else { 'MAI-Transcribe-2' })
 $useMai = $asrModel -and $asrModel -ne 'standard'
 $llmEndpoint = Get-Setting 'VideoCreator__Llm__Endpoint' $vc.Llm.Endpoint
+# Captions use the same Microsoft Foundry resource: its origin is the Speech endpoint (VideoCreator__Asr__Endpoint is a verification-only override).
+$asrEndpoint = Get-Setting 'VideoCreator__Asr__Endpoint' $(if ($llmEndpoint -match '^(https://[^/]+)') { $Matches[1] + '/' } else { '' })
 $llmProvider = Get-Setting 'VideoCreator__Llm__Provider' $vc.Llm.Provider
 $deployment = Get-Setting 'VideoCreator__Llm__Deployment' $vc.Llm.Deployment
 $localOnly = (Get-Setting 'VideoCreator__LocalOnly' "$($vc.LocalOnly)") -eq 'true'

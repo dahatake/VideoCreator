@@ -30,16 +30,16 @@ West Europe, West US, West US 2입니다(2026-11 기준. Japan East는 미지원
 Foundry 프로젝트·Video Indexer·Event Grid·추가 관리 ID는 현재 앱 실행 경로에
 필요하지 않습니다. 기존 리소스를 삭제할 필요도 없습니다.
 
-### 이 환경의 확인 결과(2026-11-18)
+### 이 환경의 확인 결과(2026-11-20)
 
 - 구독: `dahatake Internal Subscription`
   (`0e930937-43f5-484d-ba9e-1dd1151cf7ba`)
 - 테넌트: `16b3c013-d300-468d-ac64-7eda0820b6d3`
 - 리소스 그룹: `rg-videocreator-jpe`
-- 리소스: `videocreator-ai-40800`(AIServices / S0 / Japan East)
-- 자막용 리소스: `videocreator-mai-9709`(AIServices / S0 / Southeast Asia. MAI-Transcribe-2용으로 2026-11에 추가)
-- Speech: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
-- Foundry: `https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
+- 리소스(하나뿐): `videocreator-mai-9709`(AIServices / S0 / Southeast Asia).
+  채팅·임베딩·이미지 생성·자막(MAI-Transcribe-2)을 모두 이 리소스가 처리합니다.
+  이전의 `videocreator-ai-40800`은 삭제하고 purge했습니다.
+- Foundry / Speech 대상: `https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - 채팅 배포: `gpt-chat-latest`
 - 임베딩 배포: `text-embedding-3-large`
 
@@ -118,17 +118,18 @@ RG 범위의 역할은 그 RG 안의 해당 리소스에 상속됩니다. 하나
 az login --tenant 16b3c013-d300-468d-ac64-7eda0820b6d3
 ```
 
-앱의 **설정 → AI 연결**에서 다음 두 연결을 각각 설정합니다.
+앱의 **설정 → AI 연결**에는 Azure 연결이 **Microsoft Foundry** 하나뿐입니다.
+자막(Azure Speech)도 같은 리소스를 사용하며 별도의 Speech 연결은 없습니다.
 
-1. **Azure Speech**: 엔드포인트, **Microsoft Entra ID**, 테넌트 ID.
-2. **Microsoft Foundry**: 엔드포인트, 채팅·임베딩 배포 이름,
-   **Microsoft Entra ID**, 테넌트 ID.
-3. 각각 **연결 테스트**, 이상이 없으면 **테스트 후 저장**을 선택합니다.
-   테스트만 하면 저장하지 않습니다. 저장 버튼은 다시 테스트한 후 저장합니다.
+1. **Microsoft Foundry**: 먼저 인증 방식(**Microsoft Entra ID** 또는 **API 키**)을 선택합니다.
+   선택하지 않은 방식의 입력란은 숨겨집니다. 이어서 엔드포인트, 채팅·임베딩·Viva Engage 이미지 배포 이름, 테넌트 ID를 입력합니다.
+2. **연결 테스트**, 이상이 없으면 **테스트 후 저장**을 선택합니다. 테스트는 채팅·임베딩·자막 받아쓰기(Speech)를 확인하며,
+   자막 받아쓰기에 실패하면 저장되지 않습니다. MAI-Transcribe-2 지원 지역 밖에서는 표준 모델을 씁니다. 테스트만 하면 저장하지 않습니다.
+3. 이전 버전에서 따로 저장한 Speech 연결은 사용되지 않으며 다음 저장 때 삭제됩니다.
 
 #### Azure에서 선택(엔드포인트·배포 이름 입력 없이)
 
-각 연결의 **Azure에서 선택**을 누르면 로그인한 Entra ID로 볼 수 있는 Azure Speech /
+**Azure에서 선택**을 누르면 로그인한 Entra ID로 볼 수 있는
 Microsoft Foundry 리소스를 나열하고 선택할 수 있습니다(테넌트 ID가 비어 있으면 기본 로그인).
 
 - Azure Resource Manager(`https://management.azure.com`)에서 액세스 가능한 모든 구독의

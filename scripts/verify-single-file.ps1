@@ -72,8 +72,8 @@ try {
     $root = (Get-ChildItem (Join-Path $temp 'extracted') -Recurse -Filter 'VideoCreator.App.dll' -File | Select-Object -First 1).DirectoryName
     if (-not $root) { throw 'The bundled application was not extracted.' }
     $bundled = Get-Content (Join-Path $root 'appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($RequireNeutralSettings -and ($bundled.VideoCreator.Asr.Endpoint -or $bundled.VideoCreator.Llm.Endpoint)) {
-        throw 'The bundled appsettings.json contains ASR/LLM endpoints; publish with -NeutralSettings.'
+    if ($RequireNeutralSettings -and $bundled.VideoCreator.Llm.Endpoint) {
+        throw 'The bundled appsettings.json contains an LLM endpoint; publish with -NeutralSettings.'
     }
     $www = Join-Path $root 'wwwroot'
     foreach ($file in Get-ChildItem $www -Recurse -File) {

@@ -65,7 +65,6 @@ if ($VersionSuffix) { $publishArgs += "-p:VersionSuffix=$VersionSuffix" }
 if ($NeutralSettings) {
     # Same settings as the repository, minus anyone's endpoints: the app reports "not configured" until the user sets them.
     $settings = Get-Content (Join-Path $root 'src/VideoCreator.App/appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $settings.VideoCreator.Asr.Endpoint = ''
     $settings.VideoCreator.Llm.Endpoint = ''
     $neutral = Join-Path $root "artifacts/single-file/appsettings.neutral.json"
     New-Item -ItemType Directory -Force (Split-Path $neutral) | Out-Null

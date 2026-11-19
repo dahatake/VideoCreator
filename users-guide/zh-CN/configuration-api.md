@@ -14,7 +14,7 @@
 
 界面显示语言通过浏览器内的语言切换保存；视频语音语言按项目指定。`POST /api/projects` 可传 `{"name":"Example","language":"en-US"}`，`PATCH /api/projects/{id}` 可传 `{"language":"ko-KR"}`。支持 `ja-JP`（省略时默认）、`en-US`、`zh-CN`、`ko-KR`。不支持的值返回 422；生成或导出过程中修改语言返回 409。修改后请生成新候选；已有编辑计划保留创建时的语言。
 
-通过 [appsettings.json](../../src/VideoCreator.App/appsettings.json) 的 `VideoCreator` 节、环境变量或命令行配置。环境变量用 `__` 分隔，如 `VideoCreator__Asr__Endpoint`。下表为 [AppOptions](../../src/VideoCreator.App/AppOptions.cs) 的默认值。请将发布文件中的具体端点改为自己的值。
+通过 [appsettings.json](../../src/VideoCreator.App/appsettings.json) 的 `VideoCreator` 节、环境变量或命令行配置。环境变量用 `__` 分隔，如 `VideoCreator__Llm__Endpoint`。下表为 [AppOptions](../../src/VideoCreator.App/AppOptions.cs) 的默认值。请将发布文件中的具体端点改为自己的值。
 
 | 配置 | 默认值与含义 |
 |---|---|
@@ -24,8 +24,8 @@
 | FfmpegBin / FontsDir / PresetsDir | 未指定时向仓库上级寻找 tools 等 |
 | FaceModel / UpscaleModel | 未指定时使用 tools 中的 UltraFace / Real-ESRGAN 模型 |
 | LocalOnly | `false`。`true` 强制不使用 LLM，但不停止 ASR |
-| Asr.Provider / Endpoint / Locale | `azure` / 空 / `ja-JP`。Provider 为 azure 且配置 Endpoint 时启用 ASR。应用生成时项目 `language` 优先于 Locale |
-| Asr.TenantId / Llm.TenantId | 未指定则使用 Azure Identity 默认值。Entra ID 租户；界面保存的对应连接优先 |
+| Asr.Provider / Locale / Model | `azure` / `ja-JP` / `MAI-Transcribe-2`。Provider 为 azure 且存在 Microsoft Foundry 连接时启用 ASR（目标和身份验证与 Foundry 相同，没有单独的 Endpoint 设置。`Asr.Endpoint` 是用于验证的固定目标覆盖项，通常不设置）。应用生成时项目 `language` 优先于 Locale |
+| Llm.TenantId | 未指定则使用 Azure Identity 默认值。Entra ID 租户；界面保存的连接优先 |
 | Llm.Provider | `azure-openai`。可选 `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 空 / `gpt-chat-latest`。填写自己的部署名称 |
 | Llm.CopilotCliPath / CopilotModel | 未指定时检测 CLI／使用默认模型 |
@@ -45,8 +45,8 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 配置的生命周期
 
-- MAI-Transcribe-2 通过[支持区域中的 Speech 资源](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)使用，无需单独部署模型。在设置的 Azure Speech 中选择单独连接，选择转写模型和资源，然后测试并保存。模型随连接保存并在重启后恢复，不改变 Foundry 聊天连接。Speech 测试和保存 API 接受可选的 `model`（`MAI-Transcribe-2` / `standard`）；省略时保留已保存的选择，未保存时使用 `Asr.Model`。不支持的区域会回退到标准模型，请检查测试返回的模型名称。草稿中的模型选择不会生效。服务按量计费，Azure 预算提醒不是支出的硬性上限。
-- LLM 方式与 Speech/Foundry/Copilot 连接保存在 `DataDir/ai-settings.json`，重启后仍优先于启动配置。连接测试通过后才保存；删除已保存连接后恢复启动配置。密钥和令牌使用 Windows DPAPI 加密，不支持的系统拒绝保存秘密。
+- MAI-Transcribe-2 通过[支持区域中的 Speech 资源](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)使用，无需单独部署模型。字幕使用与 Microsoft Foundry 相同资源的 Speech，因此没有单独的连接设置（模型为 `Asr.Model`）。Foundry 的测试和保存也会检查字幕转写并显示实际应答的模型。不支持的区域会回退到标准模型，请检查测试返回的模型名称。服务按量计费，Azure 预算提醒不是支出的硬性上限。
+- LLM 方式与 Foundry/Copilot 连接保存在 `DataDir/ai-settings.json`，重启后仍优先于启动配置。连接测试通过后才保存；删除已保存连接后恢复启动配置。旧版本单独保存的 Speech 连接不再使用，并在下次保存时删除。密钥和令牌使用 Windows DPAPI 加密，不支持的系统拒绝保存秘密。
 - 界面修改项目保存位置会持久化到 Store 的 setting，优先于启动配置。
 - 界面选择的模式与生成选项按项目保存到 Store，重启后恢复，生成时也记录到 Job.Options。
 - 工作流最后显示阶段及目标任务、编辑计划和导出保存到 Project.WorkflowState。引用无效时退回前一阶段。
@@ -71,11 +71,9 @@ dotnet run --project src\VideoCreator.App -c Release
 |---|---|---|
 | 诊断 | GET `/health` | FFmpeg、缺少的滤镜、ASR、LLM、模型等。仅配置与检测，不保证云端连通 |
 | 配置 | GET / PUT `/settings` | 读取／使用 `{"llm_provider":"none"}` 等切换 LLM |
-| Speech 连接 | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`。auth 为 `entra` / `key`，密钥放在 `api_key`。仅发送合成静音测试，不保存 |
-| Speech 连接 | PUT / DELETE `/settings/ai/speech` | PUT 使用相同请求重新测试，通过才保存；失败返回 422。DELETE 删除已保存连接及密钥并恢复启动配置 |
-| Foundry 连接 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | 相同身份验证字段加上 `deployment`、可选的 `embedding_deployment`。测试聊天与嵌入；强制禁用 LLM 时不可测试或保存 |
+| Foundry 连接 | POST `/settings/ai/foundry/test`、PUT / DELETE `/settings/ai/foundry` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","deployment":"…","embedding_deployment":"…","image_deployment":"…","auth":"entra","tenant_id":"<tenant-guid>"}`。auth 为 `entra` / `key`（密钥放在 `api_key`）。测试聊天、指定时的嵌入和字幕转写（一秒合成静音）；字幕失败则测试不通过。字幕没有自己的连接，使用此资源。强制禁用 LLM 时不可测试或保存 |
 | Azure 资源列表 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`（可省略）。用当前登录的 Entra ID 读取 ARM，返回 `subscriptions`、`accounts`（`endpoint`、`speech`、`foundry`、`key_auth_disabled`、`custom_domain`、`can_transcribe`/`can_chat`/`can_embed`；无法读取权限时为 `null`）和 `issues`（无法列出的订阅）。不读取密钥。失败返回 422（`arm_unauthorized`/`arm_forbidden`/`entra_signin` 等） |
-| 设置草稿 | GET `/settings/drafts`；PUT/DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 设置界面中未应用的输入。GET 只返回有草稿的部分。PUT 去除字符串首尾空白，空值存为 null，超过 2048 字符返回 422，丢弃范围外的枚举值，并返回带 `updated_at` 的草稿。不含密钥/令牌字段。DELETE 返回 204（未知部分返回 404）。草稿不会用于连接，保存、删除或更改保存位置成功后删除 |
+| 设置草稿 | GET `/settings/drafts`；PUT/DELETE `/settings/drafts/{foundry\|copilot\|projects_dir}` | 设置界面中未应用的输入。GET 只返回有草稿的部分。PUT 去除字符串首尾空白，空值存为 null，超过 2048 字符返回 422，丢弃范围外的枚举值，并返回带 `updated_at` 的草稿。不含密钥/令牌字段。DELETE 返回 204（未知部分返回 404）。草稿不会用于连接，保存、删除或更改保存位置成功后删除 |
 | Azure 部署列表 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`。返回 `deployments`（`name`、`model`、`chat`、`embeddings`、`provisioning_state`）。非 Cognitive Services 的 ID 在发送请求前返回 422（`invalid_input`） |
 | 保存位置 | GET `/settings/projects-dir` | path、source、configured_path、数量、迁移进度 |
 | 保存位置 | POST `/settings/projects-dir/plan` | 预检查 `{"path":"D:\\Videos\\VideoCreator","move":true}` |

@@ -177,11 +177,11 @@ jobs:
             echo "## Before the first start"
             echo
             echo "1. Azure CLI: \`winget install Microsoft.AzureCLI\` (Windows) / \`brew install azure-cli\` (macOS), then \`az login\`."
-            echo "   Your account needs **Cognitive Services User** on the Speech resource (and **Cognitive Services OpenAI User** for Microsoft Foundry)."
-            echo "2. Download \`appsettings.json\` into the same folder as the executable and set \`VideoCreator:Asr:Endpoint\`"
-            echo "   (\`https://<resource>.cognitiveservices.azure.com/\`) and, for AI selection, \`Llm:Endpoint\` / \`Llm:Deployment\`,"
+            echo "   Your account needs **Cognitive Services User** and **Cognitive Services OpenAI User** on the Microsoft Foundry resource (it also serves captions)."
+            echo "2. Download \`appsettings.json\` into the same folder as the executable and set \`VideoCreator:Llm:Endpoint\`"
+            echo "   (\`https://<resource>.cognitiveservices.azure.com/openai/v1\`) and \`Llm:Deployment\` (captions use Speech on the same resource),"
             echo "   or \`Llm:Provider\` = \`copilot\` (signed-in GitHub Copilot CLI) or \`none\`. Environment variables such as"
-            echo "   \`VideoCreator__Asr__Endpoint\` also work. The startup log shows which settings file was loaded."
+            echo "   \`VideoCreator__Llm__Endpoint\` also work. The startup log shows which settings file was loaded."
             echo "3. Start the executable. The UI opens at http://127.0.0.1:8765/ ; close the console or press Ctrl+C to stop."
             echo
             echo "**macOS:** extract and start from Terminal so \`az\` is on PATH:"

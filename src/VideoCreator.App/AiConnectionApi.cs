@@ -13,9 +13,6 @@ public static class AiConnectionApi
 {
     /// <summary>Empty <c>api_key</c> = keep the saved key (only for the same endpoint host).</summary>
     public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, string? ApiKey);
-    public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey, string? Model = null);
-    /// <summary>Choose the verified Foundry connection or the separate Speech settings for captions.</summary>
-    public sealed record SpeechSourceRequest(bool? UseFoundry);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
     public sealed record CopilotRequest(string? Auth, [property: System.Text.Json.Serialization.JsonPropertyName("github_token")] string? GitHubToken, string? Model = null, string? ReasoningEffort = null, string? ContextTier = null);
     /// <summary>Model: for the speech step, which transcription model answered ("MAI-Transcribe-2" or "standard").</summary>
@@ -40,33 +37,8 @@ public static class AiConnectionApi
         return f == null ? new { Source = "none", Auth = "entra" } : new { Source = "config", f.Endpoint, f.Deployment, f.EmbeddingDeployment, f.ImageDeployment, f.Auth, f.TenantId };
     }
 
-    public static object SpeechView(Runtime rt)
-    {
-        var saved = rt.AiSettings.Load();
-        var (active, source) = rt.EffectiveSpeech(saved);
-        var (separate, separateSource) = rt.SeparateSpeech(saved);
-        string? SafeEndpoint(SpeechConnection? s) => s == null ? null
-            : new UriBuilder(s.Endpoint) { UserName = "", Password = "", Query = "", Fragment = "" }.Uri.ToString();
-        return new
-        {
-            Source = source, Endpoint = SafeEndpoint(active), Auth = active?.Auth ?? "entra", active?.TenantId,
-            TestedAt = source == "app" ? saved.Speech?.TestedAt : null,
-            HasApiKey = source == "app" && saved.Speech?.ApiKeyProtected != null,
-            ApiKeyUnreadable = source == "app" && saved.Speech?.ApiKeyProtected != null && active?.ApiKey == null,
-            FoundryAvailable = rt.VerifiedFoundrySpeech(saved) != null,
-            UseFoundry = saved.UseFoundrySpeech ?? (source == "foundry"),
-            // preferred model; regions without MAI-Transcribe fall back to "standard" (the connection test reports the model that answered)
-            Model = rt.SpeechModel(active),
-            MaiRegions = AzureFastTranscriber.MaiRegions,
-            Separate = new
-            {
-                Source = separateSource, Endpoint = SafeEndpoint(separate), Auth = separate?.Auth ?? "entra", separate?.TenantId,
-                Model = rt.SpeechModel(separate),
-                HasApiKey = saved.Speech?.ApiKeyProtected != null,
-                ApiKeyUnreadable = saved.Speech?.ApiKeyProtected != null && separate?.ApiKey == null,
-            },
-        };
-    }
+    /// <summary>Captions use the Foundry connection; this is only the preferred model and where MAI-Transcribe is served (the connection test reports the model that answered).</summary>
+    public static object SpeechView(Runtime rt) => new { Model = rt.SpeechModel(), MaiRegions = AzureFastTranscriber.MaiRegions };
 
     public static object CopilotView(Runtime rt)
     {
@@ -111,42 +83,15 @@ public static class AiConnectionApi
             }
         }).WithSummary("Model deployments of one Azure AI account (chat / embedding capability from ARM)");
 
-        api.MapPost("/settings/ai/speech/test", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
-            Results.Json((await RunSpeechAsync(rt, req, ct)).Result, Json.Options))
-            .WithSummary("Test Speech fast transcription using one second of synthetic silence; saves nothing");
-        api.MapPut("/settings/ai/speech/source", Results<NoContent, ProblemHttpResult> (Runtime rt, SpeechSourceRequest req, CancellationToken ct) =>
-        {
-            ct.ThrowIfCancellationRequested();
-            if (req.UseFoundry is not { } useFoundry) return TypedResults.Problem(statusCode: 400, title: "Specify use_foundry.");
-            if (!rt.SetSpeechConnectionSource(useFoundry)) return TypedResults.Problem(statusCode: 409, title: "Foundry Speech is not verified.");
-            return TypedResults.NoContent();
-        }).WithSummary("Choose the caption Speech connection without editing either saved connection")
-            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status409Conflict);
-        api.MapPut("/settings/ai/speech", async (Runtime rt, SpeechRequest req, CancellationToken ct) =>
-        {
-            if (req.Auth == "key" && !rt.AiSettings.Protector.StoresSecrets) return Results.Json(Fail(NoSecretStorageCode, NoSecretStorageMessage), Json.Options, statusCode: 422);
-            var (result, conn) = await RunSpeechAsync(rt, req, ct);
-            if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
-            rt.SaveSpeech(conn, DateTimeOffset.Now);
-            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Speech);
-            return Results.Json(new { test = result, speech = SpeechView(rt) }, Json.Options);
-        }).WithSummary("Test, then save the Speech connection only when fast transcription succeeds");
-        api.MapDelete("/settings/ai/speech", (Runtime rt) =>
-        {
-            rt.AiSettings.Update(s => s with { Speech = null });
-            SettingsDrafts.Clear(rt.Store, SettingsDrafts.Speech);
-            return Results.Json(new { speech = SpeechView(rt) }, Json.Options);
-        }).WithSummary("Forget the separate Speech connection and key without changing the source preference");
-
         api.MapPost("/settings/ai/foundry/test", async (Runtime rt, FoundryRequest req, CancellationToken ct) =>
             Results.Json(await TestFoundryAsync(rt, req, ct), Json.Options))
-            .WithSummary("Test Foundry chat, optional embeddings, and optional shared Speech with synthetic silence; saves nothing");
+            .WithSummary("Test Foundry chat, optional embeddings, and the caption speech (one second of synthetic silence); saves nothing");
         api.MapPut("/settings/ai/foundry", async (Runtime rt, FoundryRequest req, CancellationToken ct) =>
         {
             if (req.Auth == "key" && !rt.AiSettings.Protector.StoresSecrets) return Results.Json(Fail(NoSecretStorageCode, NoSecretStorageMessage), Json.Options, statusCode: 422);
             var (result, conn) = await RunFoundryAsync(rt, req, ct);
             if (!result.Ok || conn == null) return Results.Json(result, Json.Options, statusCode: 422);
-            rt.SaveFoundry(conn, DateTimeOffset.Now, speechVerified: result.Steps.Any(s => s.Id == "speech" && s.Ok));
+            rt.SaveFoundry(conn, DateTimeOffset.Now);
             SettingsDrafts.Clear(rt.Store, SettingsDrafts.Foundry);
             return Results.Json(new { test = result, foundry = FoundryView(rt) }, Json.Options);
         }).WithSummary("Test, then save the Microsoft Foundry connection (only when the test passes)");
@@ -230,26 +175,6 @@ public static class AiConnectionApi
         return tenant;
     }
 
-    public static SpeechConnection SpeechInput(Runtime rt, SpeechRequest req)
-    {
-        var endpoint = SpeechConnection.NormalizeEndpoint(req.Endpoint).ToString();
-        var auth = req.Auth is "key" ? "key" : req.Auth is null or "entra" ? "entra" : throw new ArgumentException("認証方式は entra | key です");
-        var tenant = auth == "entra" ? Tenant(req.TenantId) : null;
-        var key = auth == "key" ? Clean(req.ApiKey) : null;
-        if (auth == "key" && key == null)
-        {
-            var saved = rt.AiSettings.Load().Speech;
-            if (saved is { Auth: "key", ApiKeyProtected: not null }
-                && new Uri(saved.Endpoint).GetLeftPart(UriPartial.Authority).Equals(new Uri(endpoint).GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
-                key = rt.AiSettings.Reveal(saved.ApiKeyProtected) ?? throw new ArgumentException("保存した API キーをこの Windows ユーザーでは読めません。キーを入力し直してください");
-            else throw new ArgumentException("API キーを入力してください。別の接続先に保存済みのキーは送信しません。");
-        }
-        var model = req.Model == null ? rt.AiSettings.Load().Speech?.Model : Clean(req.Model);
-        if (req.Model != null && model is not ("standard" or AzureFastTranscriber.MaiModel))
-            throw new ArgumentException("Speech model must be standard | MAI-Transcribe-2.");
-        return new SpeechConnection(endpoint, auth, tenant, key, model);
-    }
-
     public static FoundryConnection FoundryInput(Runtime rt, FoundryRequest req)
     {
         var endpoint = FoundryEndpoint.Normalize(req.Endpoint).ToString();
@@ -285,25 +210,6 @@ public static class AiConnectionApi
 
     static async Task<TestResult> TestFoundryAsync(Runtime rt, FoundryRequest req, CancellationToken ct) => (await RunFoundryAsync(rt, req, ct)).Result;
 
-    static async Task<(TestResult Result, SpeechConnection? Conn)> RunSpeechAsync(Runtime rt, SpeechRequest req, CancellationToken ct)
-    {
-        SpeechConnection c;
-        try { c = SpeechInput(rt, req); }
-        catch (ArgumentException e) { return (Fail("invalid_input", e.Message), null); }
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            using var cts = Timeout(ct, FoundryTimeout);
-            var probe = await rt.SpeechTranscriber(c, rt.Options.Asr.Locale).ProbeAsync(cts.Token);
-            return (new(true, [new("speech", true, sw.ElapsedMilliseconds, Model: SpeechModel(probe))], null, c.Endpoint), c);
-        }
-        catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
-        {
-            var diagnosis = Scrub(AiDiagnostics.Classify(e, "speech", c.Auth), c.ApiKey);
-            return (new(false, [new("speech", false, sw.ElapsedMilliseconds, diagnosis)], diagnosis), null);
-        }
-    }
-
     static async Task<(TestResult Result, FoundryConnection? Conn)> RunFoundryAsync(Runtime rt, FoundryRequest req, CancellationToken ct)
     {
         if (rt.LocalOnly) return (Fail(LocalOnlyCode, LocalOnlyMessage), null);
@@ -331,8 +237,9 @@ public static class AiConnectionApi
         var ok = await Run("chat", c.Deployment, t => ConnectionProbe.ChatAsync(rt.FoundrySelector(c, FoundryTimeout), t));
         if (ok && c.EmbeddingDeployment != null)
             ok = await Run("embedding", c.EmbeddingDeployment, t => rt.FoundryEmbedder(c, FoundryTimeout).EmbedAsync(["接続テスト"], t));
-        if (ok && Runtime.SharedSpeech(c) is { } shared)
-            await Run("speech", null, async t => speechModel = SpeechModel(await rt.SpeechTranscriber(shared, rt.Options.Asr.Locale).ProbeAsync(t)));
+        // captions use this same resource, so a failing speech step fails the whole test
+        if (ok && rt.Options.Asr.Provider == "azure" && Runtime.SharedSpeech(c) is { } shared)
+            ok = await Run("speech", null, async t => speechModel = SpeechModel(await rt.SpeechTranscriber(shared, rt.Options.Asr.Locale).ProbeAsync(t)));
         return (new TestResult(ok, steps, ok ? null : steps.FirstOrDefault(s => !s.Ok)?.Diagnosis, c.Endpoint), ok ? c : null);
     }
 

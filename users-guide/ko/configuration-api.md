@@ -14,7 +14,7 @@
 
 UI 표시 언어는 브라우저의 언어 선택으로 저장합니다. 동영상의 음성 언어는 프로젝트별로 지정합니다. `POST /api/projects`에는 `{"name":"Example","language":"en-US"}`, `PATCH /api/projects/{id}`에는 `{"language":"ko-KR"}`처럼 지정할 수 있습니다. 지원값은 `ja-JP`(생략 시 기본값)·`en-US`·`zh-CN`·`ko-KR`입니다. 미지원 값은 422, 생성·내보내기 중 언어 변경은 409를 반환합니다. 변경 후에는 새 후보를 생성하세요. 기존 편집 계획은 생성 당시 언어를 유지합니다.
 
-[appsettings.json](../../src/VideoCreator.App/appsettings.json)의 `VideoCreator` 섹션, 환경 변수, 명령줄로 설정합니다. 환경 변수는 `VideoCreator__Asr__Endpoint`처럼 구분자를 `__`로 씁니다. 아래 표는 [AppOptions](../../src/VideoCreator.App/AppOptions.cs)의 기본값입니다. 배포 파일의 실제 엔드포인트는 본인의 값으로 바꾸세요.
+[appsettings.json](../../src/VideoCreator.App/appsettings.json)의 `VideoCreator` 섹션, 환경 변수, 명령줄로 설정합니다. 환경 변수는 `VideoCreator__Llm__Endpoint`처럼 구분자를 `__`로 씁니다. 아래 표는 [AppOptions](../../src/VideoCreator.App/AppOptions.cs)의 기본값입니다. 배포 파일의 실제 엔드포인트는 본인의 값으로 바꾸세요.
 
 | 설정 | 기본값·의미 |
 |---|---|
@@ -24,8 +24,8 @@ UI 표시 언어는 브라우저의 언어 선택으로 저장합니다. 동영�
 | FfmpegBin / FontsDir / PresetsDir | 미지정 시 저장소 상위의 tools 등 탐색 |
 | FaceModel / UpscaleModel | 미지정 시 tools의 UltraFace / Real-ESRGAN 모델 |
 | LocalOnly | `false`. `true`이면 LLM 미사용 고정. ASR은 중지하지 않음 |
-| Asr.Provider / Endpoint / Locale | `azure` / 빈 값 / `ja-JP`. Provider가 azure이고 Endpoint가 설정되어 있으면 ASR 활성. 실제 전사 언어에는 프로젝트의 `language`(동영상 언어)를 우선 사용 |
-| Asr.TenantId / Llm.TenantId | 미지정 시 Azure Identity 기본값. Entra ID 테넌트이며 화면에 저장한 각 연결이 우선 |
+| Asr.Provider / Locale / Model | `azure` / `ja-JP` / `MAI-Transcribe-2`. Provider가 azure이고 Microsoft Foundry 연결이 있으면 ASR 활성(전송 대상·인증은 Foundry와 동일, 별도 Endpoint 설정 없음. `Asr.Endpoint`는 검증용으로 대상을 고정하는 덮어쓰기이며 보통 설정하지 않음). 실제 전사 언어에는 프로젝트의 `language`(동영상 언어)를 우선 사용 |
+| Llm.TenantId | 미지정 시 Azure Identity 기본값. Entra ID 테넌트이며 화면에 저장한 연결이 우선 |
 | Llm.Provider | `azure-openai`. `azure-openai` / `copilot` / `none` |
 | Llm.Endpoint / Deployment | 빈 값 / `gpt-chat-latest`. 본인 배포 이름 설정 |
 | Llm.CopilotCliPath / CopilotModel | 미지정 시 CLI 탐지/기본 모델 |
@@ -45,8 +45,8 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 설정의 수명
 
-- MAI-Transcribe-2는 별도 모델 배포가 아니라 [지원 지역의 Speech 리소스](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)를 통해 사용합니다. 설정의 Azure Speech에서 별도 연결을 선택하고 받아쓰기 모델과 리소스를 선택한 후 연결 테스트 및 테스트 후 저장을 실행하세요. 모델도 연결과 함께 저장·복원되며 Foundry 채팅 연결은 바뀌지 않습니다. Speech 테스트·저장 API는 선택적 `model`(`MAI-Transcribe-2` / `standard`)을 받으며 생략하면 저장된 선택, 없으면 `Asr.Model`을 사용합니다. 미지원 지역에서는 표준 모델로 전환되므로 테스트 결과의 모델을 확인하세요. 초안의 모델 선택은 적용되지 않습니다. 사용량 기반 요금이며 Azure 예산 알림은 지출의 하드 상한이 아닙니다.
-- LLM 방식 및 Speech/Foundry/Copilot 연결은 `DataDir/ai-settings.json`에 저장되어 재시작 후에도 시작 설정보다 우선합니다. 연결은 테스트 통과 후 저장하며 삭제하면 시작 설정으로 돌아갑니다. 키·토큰은 Windows DPAPI로 암호화하고 미지원 OS에서는 비밀 저장을 거부합니다.
+- MAI-Transcribe-2는 별도 모델 배포가 아니라 [지원 지역의 Speech 리소스](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)를 통해 사용합니다. 자막은 Microsoft Foundry와 같은 리소스의 Speech를 쓰므로 별도 연결 설정은 없습니다(모델은 `Asr.Model`). Foundry의 연결 테스트와 저장에서 자막 받아쓰기도 확인하고 응답한 모델을 표시합니다. 미지원 지역에서는 표준 모델로 전환되므로 테스트 결과의 모델을 확인하세요. 사용량 기반 요금이며 Azure 예산 알림은 지출의 하드 상한이 아닙니다.
+- LLM 방식 및 Foundry/Copilot 연결은 `DataDir/ai-settings.json`에 저장되어 재시작 후에도 시작 설정보다 우선합니다. 연결은 테스트 통과 후 저장하며 삭제하면 시작 설정으로 돌아갑니다. 이전 버전에서 따로 저장한 Speech 연결은 사용되지 않고 다음 저장 때 삭제됩니다. 키·토큰은 Windows DPAPI로 암호화하고 미지원 OS에서는 비밀 저장을 거부합니다.
 - 화면에서 바꾼 프로젝트 저장 위치는 Store의 setting에 영구 저장됩니다. 시작 설정보다 우선합니다.
 - 화면에서 선택한 패턴·생성 옵션은 프로젝트별로 Store에 저장하고 재시작 후에도 복원합니다. 생성 시 Job.Options에도 기록합니다.
 - 워크플로의 마지막 표시 단계와 대상 작업·편집 계획·내보내기는 Project.WorkflowState에 저장합니다. 참조가 무효하면 이전 단계로 돌아갑니다.
@@ -71,11 +71,9 @@ dotnet run --project src\VideoCreator.App -c Release
 |---|---|---|
 | 진단 | GET `/health` | FFmpeg·부족 필터·ASR·LLM·모델 등. 설정·탐지이며 클라우드 연결을 보장하지 않음 |
 | 설정 | GET / PUT `/settings` | 읽기/`{"llm_provider":"none"}` 등으로 LLM 전환 |
-| Speech 연결 | POST `/settings/ai/speech/test` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","auth":"entra","tenant_id":"<tenant-guid>"}`. auth는 `entra` / `key`이며 키는 `api_key`. 합성 무음 테스트만 하고 저장하지 않음 |
-| Speech 연결 | PUT / DELETE `/settings/ai/speech` | PUT은 같은 요청으로 재테스트하고 통과 시 저장. 실패는 422. DELETE는 저장 연결·키를 삭제하고 시작 설정 복원 |
-| Foundry 연결 | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | 같은 인증 필드에 `deployment` 및 선택적 `embedding_deployment` 추가. 채팅·임베딩 검증. LLM 미사용 고정이면 테스트·저장 불가 |
+| Foundry 연결 | POST `/settings/ai/foundry/test`, PUT / DELETE `/settings/ai/foundry` | `{"endpoint":"https://<resource>.cognitiveservices.azure.com/","deployment":"…","embedding_deployment":"…","image_deployment":"…","auth":"entra","tenant_id":"<tenant-guid>"}`. auth는 `entra` / `key`(키는 `api_key`). 채팅, 지정 시 임베딩, 자막 받아쓰기(1초 합성 무음)를 검증하며 자막이 실패하면 불합격. 자막은 자체 연결이 없고 이 리소스를 사용. LLM 미사용 고정이면 테스트·저장 불가 |
 | Azure 리소스 목록 | POST `/settings/ai/azure/resources` | `{"tenant_id":"<tenant-guid>"}`(생략 가능). 로그인한 Entra ID로 ARM을 읽어 `subscriptions`, `accounts`(`endpoint`, `speech`, `foundry`, `key_auth_disabled`, `custom_domain`, `can_transcribe`/`can_chat`/`can_embed`. 권한을 읽지 못하면 `null`), `issues`(나열하지 못한 구독)를 반환. 키는 읽지 않음. 실패 시 422(`arm_unauthorized`/`arm_forbidden`/`entra_signin` 등) |
-| 설정 초안 | GET `/settings/drafts`, PUT·DELETE `/settings/drafts/{speech\|foundry\|copilot\|projects_dir}` | 설정 화면의 적용 전 입력. GET은 초안이 있는 항목만 반환. PUT은 문자열 앞뒤 공백 제거, 빈 값은 null, 2048자 초과는 422, 범위 밖 열거값은 버리고 `updated_at`을 붙여 반환. 키·토큰 필드는 없음. DELETE는 204(알 수 없는 항목은 404). 초안은 연결에 사용되지 않으며 저장·삭제·저장 위치 변경 성공 시 삭제 |
+| 설정 초안 | GET `/settings/drafts`, PUT·DELETE `/settings/drafts/{foundry\|copilot\|projects_dir}` | 설정 화면의 적용 전 입력. GET은 초안이 있는 항목만 반환. PUT은 문자열 앞뒤 공백 제거, 빈 값은 null, 2048자 초과는 422, 범위 밖 열거값은 버리고 `updated_at`을 붙여 반환. 키·토큰 필드는 없음. DELETE는 204(알 수 없는 항목은 404). 초안은 연결에 사용되지 않으며 저장·삭제·저장 위치 변경 성공 시 삭제 |
 | Azure 배포 목록 | POST `/settings/ai/azure/deployments` | `{"tenant_id":"…","account_id":"/subscriptions/…/providers/Microsoft.CognitiveServices/accounts/<name>"}`. `deployments`(`name`, `model`, `chat`, `embeddings`, `provisioning_state`) 반환. Cognitive Services 이외의 ID는 요청 전에 422(`invalid_input`) |
 | 저장 위치 | GET `/settings/projects-dir` | path, source, configured_path, 건수, 이동 진행률 |
 | 저장 위치 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` 사전 확인 |

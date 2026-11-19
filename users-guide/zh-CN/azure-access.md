@@ -29,16 +29,16 @@ West Europe、West US、West US 2（截至 2026-11；Japan East 不支持）。
 **一个 Azure AI Services 资源可以同时提供上述三种能力。** 当前应用的执行路径
 不需要 Foundry 项目、Video Indexer、Event Grid 或额外的托管标识。也无需删除已有资源。
 
-### 此环境的检查结果（2026-11-18）
+### 此环境的检查结果（2026-11-20）
 
 - 订阅：`dahatake Internal Subscription`
   (`0e930937-43f5-484d-ba9e-1dd1151cf7ba`)
 - 租户：`16b3c013-d300-468d-ac64-7eda0820b6d3`
 - 资源组：`rg-videocreator-jpe`
-- 资源：`videocreator-ai-40800`（AIServices / S0 / Japan East）
-- 字幕用资源：`videocreator-mai-9709`（AIServices / S0 / Southeast Asia；2026-11 为 MAI-Transcribe-2 添加）
-- Speech：`https://videocreator-mai-9709.cognitiveservices.azure.com/`
-- Foundry：`https://videocreator-ai-40800.cognitiveservices.azure.com/openai/v1/`
+- 资源（唯一）：`videocreator-mai-9709`（AIServices / S0 / Southeast Asia）。
+  聊天、嵌入、图像生成和字幕（MAI-Transcribe-2）全部由它提供。
+  原 `videocreator-ai-40800` 已删除并 purge。
+- Foundry / Speech 目标：`https://videocreator-mai-9709.cognitiveservices.azure.com/`
 - 聊天部署：`gpt-chat-latest`
 - 嵌入部署：`text-embedding-3-large`
 
@@ -115,17 +115,18 @@ Speech User / OpenAI User 不是获取资源密钥的权限。
 az login --tenant 16b3c013-d300-468d-ac64-7eda0820b6d3
 ```
 
-在应用的 **设置 → AI 连接** 中分别配置以下两个连接：
+**设置 → AI 连接** 中只有一个 Azure 连接，即 **Microsoft Foundry**。
+字幕（Azure Speech）使用同一资源，没有单独的 Speech 连接。
 
-1. **Azure Speech**：资源终结点、**Microsoft Entra ID**、租户 ID。
-2. **Microsoft Foundry**：终结点、聊天和嵌入部署名称、
-   **Microsoft Entra ID**、租户 ID。
-3. 对每项选择 **测试连接**，确认成功后选择 **测试并保存**。
-   仅测试不会保存；保存操作会再次测试，成功后才持久化。
+1. **Microsoft Foundry**：先选择认证方式（**Microsoft Entra ID** 或 **API 密钥**），
+   未选方式的输入项会隐藏。然后输入终结点、聊天 / 嵌入 / Viva Engage 图像部署名称和租户 ID。
+2. 选择 **测试连接**，成功后选择 **测试并保存**。测试会检查聊天、嵌入和字幕转写（Speech），
+   字幕转写失败时不会保存。不在 MAI-Transcribe-2 支持区域时使用标准模型。仅测试不会保存。
+3. 旧版本单独保存的 Speech 连接不再使用，并在下次保存时删除。
 
 #### 从 Azure 选择（无需输入终结点和部署名称）
 
-在任一连接中选择 **从 Azure 选择**，即可列出当前登录的 Entra ID 可见的 Azure Speech /
+选择 **从 Azure 选择**，即可列出当前登录的 Entra ID 可见的
 Microsoft Foundry 资源并进行选择（租户 ID 为空时使用默认登录）。
 
 - 通过 Azure Resource Manager（`https://management.azure.com`）读取所有可访问订阅中的

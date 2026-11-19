@@ -147,7 +147,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| `Asr:Endpoint` | — | `https://<resource>.cognitiveservices.azure.com/`(사용자 지정 도메인 필수) |
+| `Asr:Provider` / `Model` | `azure` / `MAI-Transcribe-2` | 자막은 `Llm:Endpoint`와 같은 Microsoft Foundry 리소스의 Speech를 사용합니다 |
 | `Llm:Provider` | `azure-openai` | `azure-openai` / `copilot` / `none`(화면 설정 전환 가능) |
 | `Llm:Endpoint` / `Deployment` | — / `gpt-chat-latest` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
 | `Llm:SingleCallCharBudget` | 12000 | 초과 전사는 신호 필터링·분할(NFR-COST-03). 품질 우선 시 증가 |
@@ -169,7 +169,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 1. [Releases](https://github.com/dahatake/VideoCreator/releases)에서 플랫폼에 맞는 파일과 `appsettings.json`을 같은 폴더에 받습니다.
 2. IT 승인 아래 Azure CLI를 설치하고(Windows: `winget install Microsoft.AzureCLI`, macOS: `brew install azure-cli`) `az login`으로 로그인합니다. Speech 권한은 [빠른 시작](quickstart.md)과 같습니다. Copilot 선정에는 로그인된 Copilot CLI도 필요합니다.
-3. 관리자가 `VideoCreator:Asr:Endpoint`, `Llm:Endpoint` / `Llm:Deployment`를 설정하거나 `Llm:Provider`를 `copilot` / `none`으로 지정합니다. 배포용 설정에는 엔드포인트가 없습니다.
+3. 관리자가 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`를 설정하거나 `Llm:Provider`를 `copilot` / `none`으로 지정합니다. 자막 Speech도 같은 리소스를 사용합니다. 배포용 설정에는 엔드포인트가 없습니다.
 4. 실행 파일을 열면 기본 브라우저에 `http://127.0.0.1:8765/`가 열립니다. 콘솔을 닫거나 Ctrl+C로 종료합니다.
 
 macOS에서는 PATH의 `az`를 찾을 수 있도록 Terminal에서 실행합니다.
@@ -181,7 +181,7 @@ tar -xzf VideoCreator-<version>-osx-arm64.tar.gz
 
 macOS 버전은 임시 서명만 있으며 공증되지 않았습니다. 브라우저 다운로드가 차단되면 파일 확인 후 시스템 설정 → 개인정보 보호 및 보안에서 허용하거나 `xattr -d com.apple.quarantine VideoCreator`를 사용합니다. `gh release download` / `curl` 다운로드는 일반적으로 격리를 피합니다. Windows도 코드 서명이 없어 SmartScreen이 표시될 수 있습니다. 회사 통제를 우회하지 말고 IT 정책을 따르세요.
 
-설정 우선순위(뒤가 우선): 내장 기본값 → **실행 파일 옆** `appsettings.json` → `VideoCreator__Asr__Endpoint` 등 환경 변수 → `--VideoCreator:Asr:Endpoint=https://...` 등 실행 인수. 시작 로그의 `User settings file:`에서 읽은 파일을 확인합니다.
+설정 우선순위(뒤가 우선): 내장 기본값 → **실행 파일 옆** `appsettings.json` → `VideoCreator__Llm__Endpoint` 등 환경 변수 → `--VideoCreator:Llm:Endpoint=https://...` 등 실행 인수. 시작 로그의 `User settings file:`에서 읽은 파일을 확인합니다.
 
 실행 파일이 하나여도 디스크에 쓰기는 합니다. 첫 실행 시 .NET은 `%TEMP%\.net`(macOS: `$TMPDIR/.net`)에 종속 파일을 풀므로 쓰기 권한·공간이 필요합니다. `DOTNET_BUNDLE_EXTRACT_BASE_DIR`로 바꿀 수 있지만 다른 사용자가 수정할 수 있는 폴더는 피하세요. DB·캐시는 `%LOCALAPPDATA%\VideoCreator`(macOS: `~/Library/Application Support/VideoCreator`), 프로젝트는 비디오/VideoCreator(macOS: `~/Movies/VideoCreator`)에 저장합니다. 삭제한 프로젝트는 휴지통으로 갑니다. 영상·인증 정보·기존 프로젝트는 실행 파일에 포함되지 않습니다. Speech와 인터넷은 계속 필요하며 오프라인 버전이 아닙니다.
 

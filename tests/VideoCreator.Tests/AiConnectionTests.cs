@@ -137,13 +137,15 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Null(store.Reveal("not base64!"));
     }
 
-    WebApplicationFactory<Program> App(bool localOnly = false, HttpMessageHandler? speechHandler = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+    WebApplicationFactory<Program> App(bool localOnly = false, HttpMessageHandler? speechHandler = null, string llmEndpoint = "", string? asrProvider = null, string? asrEndpoint = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
     {
         b.UseSetting("VideoCreator:DataDir", Path.Combine(_root, "data"));
         b.UseSetting("VideoCreator:ProjectsDir", Path.Combine(_root, "projects"));
         b.UseSetting("VideoCreator:OpenBrowser", "false");
         b.UseSetting("VideoCreator:LocalOnly", localOnly ? "true" : "false");
-        b.UseSetting("VideoCreator:Llm:Endpoint", "");
+        b.UseSetting("VideoCreator:Llm:Endpoint", llmEndpoint);
+        if (asrProvider != null) b.UseSetting("VideoCreator:Asr:Provider", asrProvider);
+        if (asrEndpoint != null) b.UseSetting("VideoCreator:Asr:Endpoint", asrEndpoint);
         if (speechHandler != null) b.ConfigureServices(services => services.AddSingleton(new HttpClient(speechHandler)));
     });
 
@@ -278,7 +280,7 @@ public sealed class AiConnectionTests : IDisposable
     [Theory]
     [InlineData("key")]
     [InlineData("entra")]
-    public async Task Verified_Foundry_is_used_for_Speech_only_without_a_saved_Speech_override(string auth)
+    public async Task Captions_use_the_Foundry_resource_and_follow_it(string auth)
     {
         using var handler = new SpeechHandler();
         await using var app = App(speechHandler: handler);
@@ -286,15 +288,9 @@ public sealed class AiConnectionTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
         var rt = app.Services.GetRequiredService<Runtime>();
         rt.CredentialFactory = _ => new SpeechCredential();
-        var original = rt.Speech;
+        Assert.Null(rt.Speech);   // no Foundry connection → no captions
         const string endpoint = "https://shared.cognitiveservices.azure.com/";
-        var foundry = new FoundryConnection(endpoint + "openai/v1/", "gpt", null, auth, ApiKey: auth == "key" ? "shared-key" : null);
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow);
-        Assert.Equal(original, rt.Speech);
-
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
-        Assert.Equal(original, rt.Speech);
-        rt.AiSettings.Update(s => s with { UseFoundrySpeech = null }); // Legacy settings had no explicit source.
+        rt.SaveFoundry(new FoundryConnection(endpoint + "openai/v1/", "gpt", null, auth, ApiKey: auth == "key" ? "shared-key" : null), DateTimeOffset.UtcNow);
         Assert.Equal(endpoint, rt.Speech!.Endpoint);
         var file = Path.Combine(_root, "probe.wav");
         await File.WriteAllBytesAsync(file, [0], ct); // The fake transport only checks routing and authentication.
@@ -308,56 +304,68 @@ public sealed class AiConnectionTests : IDisposable
             Assert.Equal(auth == "entra" ? "Bearer speech-test-token" : null, request.Authorization);
         });
         using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", ct));
-        Assert.Equal("foundry", settings.RootElement.GetProperty("speech").GetProperty("source").GetString());
+        var speech = settings.RootElement.GetProperty("speech");
+        Assert.Equal(AzureFastTranscriber.MaiModel, speech.GetProperty("model").GetString());
+        Assert.False(speech.TryGetProperty("endpoint", out _));   // one connection: there is nothing separate to show
         Assert.Equal(endpoint.TrimEnd('/'), settings.RootElement.GetProperty("transmission").GetProperty("asr_endpoint").GetString());
         Assert.DoesNotContain("shared-key", settings.RootElement.GetRawText());
 
-        var dedicated = new SpeechConnection("https://dedicated.cognitiveservices.azure.com/");
-        rt.SaveSpeech(dedicated, DateTimeOffset.UtcNow);
-        Assert.Equal(dedicated, rt.Speech);
-        rt.AiSettings.Update(s => s with { Speech = null, Foundry = null });
-        Assert.Equal(original, rt.Speech);
+        rt.SaveFoundry(new FoundryConnection("https://gateway.example.com/openai/v1/", "gpt", null), DateTimeOffset.UtcNow);
+        Assert.Null(rt.Speech);   // never forward the Azure credential to a host that is not the resource itself
+        rt.AiSettings.Update(s => s with { Foundry = null });
+        Assert.Null(rt.Speech);
     }
 
     [Fact]
-    public async Task Speech_source_choice_preserves_separate_credentials_and_never_switches_away_from_selected_foundry()
+    public async Task Captions_follow_the_configured_Foundry_endpoint_and_stay_usable_without_an_LLM()
+    {
+        using var handler = new SpeechHandler();
+        await using var app = App(localOnly: true, speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1");
+        var rt = app.Services.GetRequiredService<Runtime>();
+        Assert.Equal("https://configured.cognitiveservices.azure.com/", rt.Speech!.Endpoint);
+        Assert.NotNull(rt.Asr);
+        Assert.Null(rt.Llm);   // local-only: no LLM, captions still work
+
+        await using var off = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrProvider: "none");
+        Assert.Null(off.Services.GetRequiredService<Runtime>().Asr);
+
+        // verification fixtures may pin captions to a loopback port so no audio can reach the cloud
+        await using var fixture = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrEndpoint: "http://127.0.0.1:1/");
+        Assert.Equal("http://127.0.0.1:1/", fixture.Services.GetRequiredService<Runtime>().Speech!.Endpoint);
+    }
+
+    [Theory]
+    [InlineData("PUT", "/api/settings/ai/speech")]
+    [InlineData("DELETE", "/api/settings/ai/speech")]
+    [InlineData("POST", "/api/settings/ai/speech/test")]
+    [InlineData("PUT", "/api/settings/ai/speech/source")]
+    [InlineData("PUT", "/api/settings/drafts/speech")]
+    public async Task There_is_no_separate_Speech_connection_to_configure(string method, string url)
     {
         await using var app = App();
         using var http = Client(app);
+        using var response = await http.SendAsync(new HttpRequestMessage(new HttpMethod(method), url) { Content = JsonContent.Create(new { endpoint = "https://x.cognitiveservices.azure.com/" }) }, TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed, response.StatusCode.ToString());
+    }
+
+    [Fact]
+    public async Task A_legacy_separate_Speech_section_in_the_saved_settings_is_ignored_and_dropped_on_the_next_save()
+    {
         var ct = TestContext.Current.CancellationToken;
+        Directory.CreateDirectory(Path.Combine(_root, "data"));
+        var path = Path.Combine(_root, "data", "ai-settings.json");
+        await File.WriteAllTextAsync(path, """
+            {"foundry":{"endpoint":"https://shared.cognitiveservices.azure.com/openai/v1/","deployment":"gpt","auth":"entra","tested_at":"2026-01-01T00:00:00+00:00","speech_verified":true},
+             "speech":{"endpoint":"https://old-separate.cognitiveservices.azure.com/","auth":"key","api_key_protected":"AAAA","tested_at":"2026-01-01T00:00:00+00:00"},
+             "use_foundry_speech":false}
+            """, ct);
+        await using var app = App();
         var rt = app.Services.GetRequiredService<Runtime>();
-        const string url = "/api/settings/ai/speech/source";
-        const string shared = "https://shared.cognitiveservices.azure.com/";
-        const string separate = "https://dedicated.cognitiveservices.azure.com/";
-        var foundry = new FoundryConnection(shared + "openai/v1/", "gpt", null);
-        rt.SaveSpeech(new SpeechConnection(separate, "key", ApiKey: "test-dedicated-key"), DateTimeOffset.UtcNow);
-        var savedSpeech = rt.AiSettings.Load().Speech;
-
-        Assert.Equal(HttpStatusCode.BadRequest, (await http.PutAsJsonAsync(url, new { }, ct)).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await http.PutAsJsonAsync(url, new { use_foundry = true }, ct)).StatusCode);
-        Assert.Null(rt.AiSettings.Load().UseFoundrySpeech);
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
-        Assert.Equal(separate, rt.Speech!.Endpoint);
-
-        Assert.Equal(HttpStatusCode.NoContent, (await http.PutAsJsonAsync(url, new { use_foundry = true }, ct)).StatusCode);
-        var reloaded = new AiSettingsStore(rt.AiSettings.Path, rt.AiSettings.Protector).Load();
-        Assert.True(reloaded.UseFoundrySpeech);
-        Assert.Equal(savedSpeech, reloaded.Speech);
-        Assert.Equal(shared, rt.Speech!.Endpoint);
-        using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", ct));
-        var speech = settings.RootElement.GetProperty("speech");
-        Assert.True(speech.GetProperty("foundry_available").GetBoolean());
-        Assert.Equal(separate, speech.GetProperty("separate").GetProperty("endpoint").GetString());
-        Assert.Equal(shared.TrimEnd('/'), settings.RootElement.GetProperty("transmission").GetProperty("asr_endpoint").GetString());
-        Assert.DoesNotContain("test-dedicated-key", settings.RootElement.GetRawText());
-
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: false);
-        Assert.Null(rt.Speech);
-        Assert.Null(rt.Asr);
-        Assert.Equal(HttpStatusCode.NoContent, (await http.PutAsJsonAsync(url, new { use_foundry = false }, ct)).StatusCode);
-        Assert.Equal("test-dedicated-key", rt.Speech!.ApiKey);
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
-        Assert.Equal(separate, rt.Speech!.Endpoint);
+        Assert.Equal("https://shared.cognitiveservices.azure.com/", rt.Speech!.Endpoint);
+        rt.AiSettings.Update(s => s);
+        var rewritten = await File.ReadAllTextAsync(path, ct);
+        Assert.DoesNotContain("old-separate", rewritten);
+        Assert.DoesNotContain("AAAA", rewritten);
     }
 
     sealed class MaiRegionHandler(bool regionServesMai) : HttpMessageHandler
@@ -372,82 +380,6 @@ public sealed class AiConnectionTests : IDisposable
                 ? new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("""{"code":"InvalidRequest","message":"Enhanced mode with model is currently not supported yet."}""") }
                 : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"durationMilliseconds":1000,"phrases":[]}""") };
         }
-    }
-
-    [Fact]
-    public async Task Selected_Speech_model_is_tested_saved_restored_and_used_without_changing_Foundry()
-    {
-        using var handler = new SpeechHandler();
-        await using var app = App(speechHandler: handler);
-        using var http = Client(app);
-        var ct = TestContext.Current.CancellationToken;
-        var rt = app.Services.GetRequiredService<Runtime>();
-        rt.CredentialFactory = _ => new SpeechCredential();
-        var foundry = new FoundryConnection("https://chat.cognitiveservices.azure.com/openai/v1/", "gpt", null);
-        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
-        var savedFoundry = rt.AiSettings.Load().Foundry;
-        const string endpoint = "https://model-selection.cognitiveservices.azure.com/";
-
-        foreach (var model in new[] { "standard", AzureFastTranscriber.MaiModel })
-        {
-            handler.Requests.Clear();
-            var before = rt.AiSettings.Load().Speech;
-            var body = new { endpoint, auth = "entra", model };
-            using var test = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
-            using var result = JsonDocument.Parse(await test.Content.ReadAsStringAsync(ct));
-            Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
-            Assert.Equal(model, result.RootElement.GetProperty("steps")[0].GetProperty("model").GetString());
-            Assert.Equal(before, rt.AiSettings.Load().Speech);
-            Assert.Equal(model == AzureFastTranscriber.MaiModel, Assert.Single(handler.Requests).Body.Contains("enhancedMode"));
-
-            using var save = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
-            Assert.Equal(HttpStatusCode.OK, save.StatusCode);
-            var restored = new AiSettingsStore(rt.AiSettings.Path, rt.AiSettings.Protector).Load();
-            Assert.Equal(model, restored.Speech!.Model);
-            Assert.Equal(model, restored.Speech.ToConnection(rt.AiSettings).Model);
-            Assert.Equal(model == "standard" ? AzureFastTranscriber.StandardName : AzureFastTranscriber.MaiName, rt.Asr!.Name);
-            Assert.Equal(savedFoundry, restored.Foundry);
-            using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", ct));
-            Assert.Equal(model, settings.RootElement.GetProperty("speech").GetProperty("model").GetString());
-            Assert.Equal(model, settings.RootElement.GetProperty("speech").GetProperty("separate").GetProperty("model").GetString());
-        }
-
-        handler.Requests.Clear();
-        using var invalid = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra", model = "unknown" }, ct);
-        Assert.Equal((HttpStatusCode)422, invalid.StatusCode);
-        Assert.Empty(handler.Requests);
-        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech!.Model);
-
-        handler.Status = HttpStatusCode.Forbidden;
-        using var failed = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra", model = "standard" }, ct);
-        Assert.Equal((HttpStatusCode)422, failed.StatusCode);
-        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
-
-        handler.Status = HttpStatusCode.OK;
-        using var legacy = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra" }, ct);
-        Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
-        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
-
-        using var draft = await http.PutAsJsonAsync("/api/settings/drafts/speech", new { endpoint, auth = "entra", model = "standard" }, ct);
-        Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
-        using var drafts = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct));
-        Assert.Equal("standard", drafts.RootElement.GetProperty("speech").GetProperty("model").GetString());
-        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
-    }
-
-    [Fact]
-    public async Task Selecting_Mai_on_an_unsupported_endpoint_reports_standard_instead_of_claiming_Mai()
-    {
-        using var handler = new MaiRegionHandler(regionServesMai: false);
-        await using var app = App(speechHandler: handler);
-        using var http = Client(app);
-        app.Services.GetRequiredService<Runtime>().CredentialFactory = _ => new SpeechCredential();
-        using var response = await http.PostAsJsonAsync("/api/settings/ai/speech/test",
-            new { endpoint = "https://selected-mai-unsupported.cognitiveservices.azure.com/", auth = "entra", model = AzureFastTranscriber.MaiModel },
-            TestContext.Current.CancellationToken);
-        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
-        Assert.Equal("standard", result.RootElement.GetProperty("steps")[0].GetProperty("model").GetString());
     }
 
     [Fact]
@@ -550,68 +482,6 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Throws<ArgumentException>(() => SpeechConnection.NormalizeEndpoint(endpoint));
 
     [Fact]
-    public async Task Speech_tests_before_saving_protects_keys_and_prevents_reuse_on_a_different_destination()
-    {
-        using var handler = new SpeechHandler();
-        await using var app = App(speechHandler: handler);
-        using var http = Client(app);
-        var ct = TestContext.Current.CancellationToken;
-        var rt = app.Services.GetRequiredService<Runtime>();
-        const string endpoint = "https://speech.cognitiveservices.azure.com/";
-        const string secret = "speech-secret-not-for-display";
-        var body = new { endpoint, auth = "key", api_key = secret };
-
-        var test = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
-        Assert.Contains("\"ok\":true", await test.Content.ReadAsStringAsync(ct));
-        Assert.Null(rt.AiSettings.Load().Speech);
-        var saved = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
-        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
-        Assert.DoesNotContain(secret, await saved.Content.ReadAsStringAsync(ct));
-        Assert.DoesNotContain(secret, File.ReadAllText(rt.AiSettings.Path));
-        Assert.Equal(secret, rt.Speech!.ApiKey);
-        Assert.Equal("key", rt.Speech.Auth);
-        Assert.Equal("key", new AiSettingsStore(rt.AiSettings.Path, AiSettingsStore.DefaultProtector()).Load().Speech!.Auth);
-        var audioPath = Path.Combine(_root, "generation.flac");
-        await File.WriteAllBytesAsync(audioPath, [1, 2, 3], ct);
-        await rt.AsrForLanguage("ko-KR")!.TranscribeAsync(audioPath, 1, ["project phrase"], 3, ct);
-        Assert.Equal(secret, handler.Requests[^1].Key);
-        Assert.Null(handler.Requests[^1].Authorization);
-        Assert.Contains("\"locales\":[\"ko-KR\"]", handler.Requests[^1].Body);
-        Assert.Contains("project phrase", handler.Requests[^1].Body);
-        Assert.Contains("generation.flac", handler.Requests[^1].Body);
-
-        var count = handler.Requests.Count;
-        foreach (var other in new[] { "https://other.cognitiveservices.azure.com/", "https://speech.cognitiveservices.azure.com:8443/" })
-        {
-            var rejected = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint = other, auth = "key", api_key = "" }, ct);
-            Assert.Equal((HttpStatusCode)422, rejected.StatusCode);
-            Assert.Contains("invalid_input", await rejected.Content.ReadAsStringAsync(ct));
-        }
-        Assert.Equal(count, handler.Requests.Count);
-        var reused = AiConnectionApi.SpeechInput(rt, new(endpoint, "key", null, ""));
-        Assert.Equal(secret, reused.ApiKey);
-
-        handler.Status = HttpStatusCode.Forbidden;
-        handler.Response = """{"error":{"message":"rejected speech-secret-not-for-display"}}""";
-        var failure = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
-        Assert.Equal((HttpStatusCode)422, failure.StatusCode);
-        var failedBody = await failure.Content.ReadAsStringAsync(ct);
-        Assert.Contains("speech_forbidden", failedBody);
-        Assert.DoesNotContain(secret, failedBody);
-        Assert.Equal(secret, rt.Speech.ApiKey);
-
-        rt.SaveSpeech(new SpeechConnection(endpoint, "entra", "16b3c013-d300-468d-ac64-7eda0820b6d3"), DateTimeOffset.Now);
-        Assert.Null(rt.AiSettings.Load().Speech!.ApiKeyProtected);
-        Assert.Null(rt.Speech.ApiKey);
-        Assert.Equal("16b3c013-d300-468d-ac64-7eda0820b6d3", rt.Speech.TenantId);
-        Assert.DoesNotContain(secret, await http.GetStringAsync("/api/settings", ct));
-
-        await http.DeleteAsync("/api/settings/ai/speech", ct);
-        Assert.Null(rt.AiSettings.Load().Speech);
-        Assert.Equal(rt.Options.Asr.Endpoint, rt.Speech!.Endpoint);
-    }
-
-    [Fact]
     public async Task Settings_drafts_survive_a_restart_carry_no_secret_are_never_used_and_end_when_saved()
     {
         const string secret = "draft-secret-that-must-not-be-kept";
@@ -621,80 +491,57 @@ public sealed class AiConnectionTests : IDisposable
         {
             using var http = Client(first);
             var rt = first.Services.GetRequiredService<Runtime>();
-            var before = rt.Speech?.Endpoint;
-            var put = await http.PutAsJsonAsync("/api/settings/drafts/speech", new { endpoint = draftEndpoint, auth = "key", tenant_id = "", api_key = secret }, ct);
+            var put = await http.PutAsJsonAsync("/api/settings/drafts/foundry", new { endpoint = draftEndpoint, deployment = "gpt", auth = "key", tenant_id = "", api_key = secret }, ct);
             Assert.Equal(HttpStatusCode.OK, put.StatusCode);
             (await http.PutAsJsonAsync("/api/settings/drafts/copilot", new { auth = "token", github_token = secret, model = "gpt-5", reasoning_effort = "high", context_tier = "huge" }, ct)).EnsureSuccessStatusCode();
             (await http.PutAsJsonAsync("/api/settings/drafts/projects_dir", new { path = @"D:\Videos", move = "keep" }, ct)).EnsureSuccessStatusCode();
             Assert.Equal((HttpStatusCode)422, (await http.PutAsJsonAsync("/api/settings/drafts/foundry", new { endpoint = new string('x', 3000) }, ct)).StatusCode);
-            Assert.Equal(before, rt.Speech?.Endpoint);   // a draft is not a connection
-            Assert.Null(rt.AiSettings.Load().Speech);
+            Assert.Null(rt.Foundry);   // a draft is not a connection
+            Assert.Null(rt.Speech);
             Assert.All(rt.Store.RawAll(), d => Assert.DoesNotContain(secret, d.Json));
         }
 
-        using var handler = new SpeechHandler();
-        await using var second = App(speechHandler: handler);
-        second.Services.GetRequiredService<Runtime>().CredentialFactory = _ => new SpeechCredential();
+        await using var second = App();
         using (var http = Client(second))
         {
             using (var drafts = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct)))
             {
                 var root = drafts.RootElement;
-                Assert.Equal(draftEndpoint, root.GetProperty("speech").GetProperty("endpoint").GetString());
-                Assert.Equal("key", root.GetProperty("speech").GetProperty("auth").GetString());
-                Assert.False(root.GetProperty("speech").TryGetProperty("tenant_id", out _));
-                Assert.False(root.GetProperty("speech").TryGetProperty("api_key", out _));
+                Assert.Equal(draftEndpoint, root.GetProperty("foundry").GetProperty("endpoint").GetString());
+                Assert.Equal("key", root.GetProperty("foundry").GetProperty("auth").GetString());
+                Assert.False(root.GetProperty("foundry").TryGetProperty("tenant_id", out _));
+                Assert.False(root.GetProperty("foundry").TryGetProperty("api_key", out _));
+                Assert.False(root.TryGetProperty("speech", out _));   // no separate Speech connection any more
                 Assert.Equal("gpt-5", root.GetProperty("copilot").GetProperty("model").GetString());
                 Assert.False(root.GetProperty("copilot").TryGetProperty("context_tier", out _));   // not a known tier
                 Assert.Equal("keep", root.GetProperty("projects_dir").GetProperty("move").GetString());
-                Assert.False(root.TryGetProperty("foundry", out _));   // rejected as too long
                 Assert.DoesNotContain(secret, root.GetRawText());
             }
 
-            var saved = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint = "https://speech.cognitiveservices.azure.com/", auth = "entra" }, ct);
-            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await http.DeleteAsync("/api/settings/ai/foundry", ct)).StatusCode);   // forgetting a connection ends its draft too
             Assert.Equal(HttpStatusCode.NoContent, (await http.DeleteAsync("/api/settings/drafts/copilot", ct)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await http.DeleteAsync("/api/settings/drafts/other", ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.DeleteAsync("/api/settings/drafts/speech", ct)).StatusCode);
             using var after = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct));
-            Assert.False(after.RootElement.TryGetProperty("speech", out _));   // saved → the draft is done
+            Assert.False(after.RootElement.TryGetProperty("foundry", out _));
             Assert.False(after.RootElement.TryGetProperty("copilot", out _));
             Assert.Equal(JsonValueKind.Object, after.RootElement.GetProperty("projects_dir").ValueKind);
         }
     }
 
     [Fact]
-    public async Task Speech_remains_usable_without_an_LLM_and_secret_storage_limitations_are_explicit()
-    {
-        using var handler = new SpeechHandler();
-        await using var app = App(localOnly: true, speechHandler: handler);
-        using var http = Client(app);
-        var ct = TestContext.Current.CancellationToken;
-        var rt = app.Services.GetRequiredService<Runtime>();
-        var body = new { endpoint = "https://speech.cognitiveservices.azure.com/", auth = "key", api_key = "speech-secret" };
-        var success = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
-        Assert.Contains("\"ok\":true", await success.Content.ReadAsStringAsync(ct));
-        Assert.Single(handler.Requests);
-        rt.AiSettings = new AiSettingsStore(rt.AiSettings.Path, new NoSecretStorage());
-        var refused = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
-        Assert.Equal((HttpStatusCode)422, refused.StatusCode);
-        Assert.Contains("secret_storage_unavailable", await refused.Content.ReadAsStringAsync(ct));
-        Assert.Null(rt.AiSettings.Load().Speech);
-        Assert.Single(handler.Requests);
-    }
-
-    [Fact]
-    public async Task An_unreadable_Speech_key_does_not_break_Settings_and_fails_transcription_visibly()
+    public async Task An_unreadable_Foundry_key_does_not_break_Settings_and_fails_transcription_visibly()
     {
         await using var app = App();
         using var http = Client(app);
         var rt = app.Services.GetRequiredService<Runtime>();
-        rt.AiSettings.Update(s => s with { Speech = new("https://speech.cognitiveservices.azure.com/", "key", null, "unreadable", DateTimeOffset.Now) });
+        rt.AiSettings.Update(s => s with { Foundry = new("https://shared.cognitiveservices.azure.com/openai/v1/", "gpt", null, "key", null, "unreadable", DateTimeOffset.Now) });
         using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", TestContext.Current.CancellationToken));
-        Assert.True(settings.RootElement.GetProperty("speech").GetProperty("api_key_unreadable").GetBoolean());
+        Assert.True(settings.RootElement.GetProperty("foundry").GetProperty("api_key_unreadable").GetBoolean());
         var asr = rt.AsrForLanguage("ja-JP");
         Assert.NotNull(asr);
         var error = await Assert.ThrowsAsync<AsrException>(() => asr.TranscribeAsync("missing.flac", 1, [], 2, TestContext.Current.CancellationToken));
-        Assert.Contains("Speech の API キー", error.Message);
+        Assert.Contains("Microsoft Foundry の API キー", error.Message);
     }
 
     /// <summary>ARM as observed live: an empty first page with a nextLink, rich <c>properties.endpoints</c>, per-scope permissions.</summary>

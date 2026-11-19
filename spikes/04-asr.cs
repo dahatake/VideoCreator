@@ -14,7 +14,7 @@ var root = Directory.GetCurrentDirectory();
 var bin = Path.Combine(root, "tools", "ffmpeg", "bin");
 var media = Path.Combine(root, "spikes", "media");
 var outDir = Path.Combine(root, "spikes", "out"); Directory.CreateDirectory(outDir);
-var endpoint = Environment.GetEnvironmentVariable("VC_SPEECH_ENDPOINT") ?? "https://videocreator-ai-40800.cognitiveservices.azure.com/";
+var endpoint = Environment.GetEnvironmentVariable("VC_SPEECH_ENDPOINT") ?? "https://videocreator-mai-9709.cognitiveservices.azure.com/";
 int fails = 0;
 void Check(bool ok, string msg) { Console.WriteLine($"{(ok ? "PASS" : "FAIL")}  {msg}"); if (!ok) fails++; }
 

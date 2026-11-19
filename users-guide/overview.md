@@ -155,7 +155,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | キー | 既定 | 説明 |
 |---|---|---|
-| `Asr:Endpoint` | — | `https://<resource>.cognitiveservices.azure.com/`（カスタムドメイン必須） |
+| `Asr:Provider` / `Model` | `azure` / `MAI-Transcribe-2` | 字幕は `Llm:Endpoint` と同じ Microsoft Foundry リソースの Speech を使います |
 | `Llm:Provider` | `azure-openai` | `azure-openai` / `copilot` / `none`（画面の「設定」からも切替可） |
 | `Llm:Endpoint` / `Deployment` | — / `gpt-chat-latest` | `https://<resource>.cognitiveservices.azure.com/openai/v1` |
 | `Llm:SingleCallCharBudget` | 12000 | これを超える書き起こしは信号で絞り込み分割（NFR-COST-03）。品質優先なら大きくする |
@@ -180,7 +180,7 @@ dotnet run --project src/VideoCreator.App -c Release
 1. [Releases](https://github.com/dahatake/VideoCreator/releases) から自分の OS / CPU 用のファイルと `appsettings.json` を同じフォルダーにダウンロードします
 2. Azure CLI を入れて `az login`（Windows: `winget install Microsoft.AzureCLI`、macOS: `brew install azure-cli`）。
    必要なロールは[必要なもの](#必要なもの)と同じです。Copilot を使う場合はサインイン済みの Copilot CLI
-3. `appsettings.json` の `VideoCreator:Asr:Endpoint`、`Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を自分の値にします
+3. `appsettings.json` の `VideoCreator:Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を自分の値にします。字幕の Speech も同じリソースを使います
 4. 実行ファイルを起動します。既定ブラウザーで <http://127.0.0.1:8765/> が開き、コンソールを閉じるか Ctrl+C で終了します
 
 macOS では Terminal から起動します（`az` を PATH から見つけるため）。
@@ -195,7 +195,7 @@ macOS 版はアドホック署名のみで公証（notarize）していません
 （`gh release download` や `curl` で取得すると不要）。Windows 版もコード署名していないため、SmartScreen の確認が出ることがあります。
 
 **設定の優先順位**（後ろほど優先）: 同梱の既定値 → **実行ファイルと同じフォルダーの `appsettings.json`** →
-環境変数（`VideoCreator__Asr__Endpoint` など）→ 起動引数（`--VideoCreator:Asr:Endpoint=https://...`）。
+環境変数（`VideoCreator__Llm__Endpoint` など）→ 起動引数（`--VideoCreator:Llm:Endpoint=https://...`）。
 起動ログの `User settings file:` に読み込んだファイルが表示されます。配布版に同梱の設定にはエンドポイントが入っていません。
 
 **ファイルは1個**ですが、実行中にファイルを一切作らない方式ではありません。初回起動時に .NET が一時フォルダー
