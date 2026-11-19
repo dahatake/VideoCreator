@@ -78,6 +78,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 保存位置 | GET `/settings/projects-dir` | path、source、configured_path、数量、迁移进度 |
 | 保存位置 | POST `/settings/projects-dir/plan` | 预检查 `{"path":"D:\\Videos\\VideoCreator","move":true}` |
 | 保存位置 | PUT `/settings/projects-dir` | 以相同格式实际修改／迁移 |
+| 保存位置 | POST `/projects/restore` | 从保存文件夹中的 `.videocreator\state.json` 恢复此电脑没有的项目；返回 `scanned`、`restored`、`already_present`、`failed`、`missing_sources`（不覆盖已有项目） |
 | 模式 | GET `/presets` | 启动时已加载的预设 |
 | Project | GET / POST `/projects` | 列表／以 `{"name":"工作名称","language":"zh-CN"}` 创建。language 支持 ja-JP、en-US、zh-CN、ko-KR，默认 ja-JP |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 详情（`resume_state` 返回恢复阶段和目标 ID）／`{"name":"新名称","language":"zh-CN"}`／删除。修改语言后需重新生成，已有 EditPlan 保留原语言 |

@@ -78,6 +78,7 @@ dotnet run --project src\VideoCreator.App -c Release
 | 저장 위치 | GET `/settings/projects-dir` | path, source, configured_path, 건수, 이동 진행률 |
 | 저장 위치 | POST `/settings/projects-dir/plan` | `{"path":"D:\\Videos\\VideoCreator","move":true}` 사전 확인 |
 | 저장 위치 | PUT `/settings/projects-dir` | 같은 형식으로 실제 변경/이동 |
+| 저장 위치 | POST `/projects/restore` | 저장 폴더의 `.videocreator\state.json`에서 이 PC에 없는 프로젝트를 복원. `scanned`, `restored`, `already_present`, `failed`, `missing_sources` 반환(기존 프로젝트는 덮어쓰지 않음) |
 | 패턴 | GET `/presets` | 시작 시 로드한 프리셋 |
 | Project | GET / POST `/projects` | 목록/`{"name":"작업 이름"}`으로 생성 |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 상세(`resume_state`에 재개 단계·대상 ID 반환)/`{"name":"새 이름"}`/삭제 |

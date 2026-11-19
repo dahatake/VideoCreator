@@ -78,6 +78,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 | Storage | GET `/settings/projects-dir` | path, source, configured_path, counts, move progress |
 | Storage | POST `/settings/projects-dir/plan` | Preflight `{"path":"D:\\Videos\\VideoCreator","move":true}` |
 | Storage | PUT `/settings/projects-dir` | Same body; change/move |
+| Storage | POST `/projects/restore` | Restore projects this computer lacks from `.videocreator\state.json` in the projects folder; returns `scanned`, `restored`, `already_present`, `failed`, `missing_sources` (never overwrites existing projects) |
 | Patterns | GET `/presets` | Presets loaded at startup |
 | Project | GET / POST `/projects` | List / create `{"name":"Project name"}` |
 | Project | GET / PATCH / DELETE `/projects/{id}` | Details (`resume_state` includes stage/IDs) / `{"name":"New name"}` / delete |
