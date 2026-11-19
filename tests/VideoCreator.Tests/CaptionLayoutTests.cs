@@ -86,7 +86,7 @@ public class CaptionLayoutTests
     public void Caption_line_chars_are_derived_from_font_and_safe_zone()
     {
         foreach (var p in Fixtures.Presets.Values)
-            Assert.Equal(p.Telop.IsVariety ? 10 : 14, AssWriter.CaptionLineChars(p));
+            Assert.Equal(p.Telop.IsVariety ? 10 : p.Telop.IsShort ? 11 : 14, AssWriter.CaptionLineChars(p));
         var p4 = Fixtures.Presets["P4"];
         var big = p4 with { Telop = p4.Telop with { Caption = p4.Telop.Caption with { FontPx = 110 } } };
         int n = AssWriter.CaptionLineChars(big);

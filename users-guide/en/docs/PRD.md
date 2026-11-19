@@ -515,9 +515,11 @@ ASL **targets require calibration**, from report heuristics R§3.2/§15.5.
 | P7 | Interview |30–60|2|2–6 speaker|1.2|Few|①②④/speaker colors|One master|Optional|v1.x|
 | P8 | Process/cooking/DIY |20–60|1.5|1–2,longer result|.5|Few|②④⑥|ASMR|Recommended|v1.x|
 | P9 | Minimal/ambient |30–90|3|3–8|None|None|None default|Original only|Optional|v1.x|
-| P12 | Short video (vertical 9:16) |15–60|2|1.5–3|0.5|Medium|①②④|Original (−14 LUFS, no BGM)|On|v1.x|
+| P12 | Short video (vertical 9:16) |15–60|2|1.5–3|0.5|Medium|①②④ + speaker colours, persistent title bar|Original (−14 LUFS, no BGM) + more SFX|On|v1.x|
 
-P12 is the short template, with `"short": true`. From any source it always renders at 1080×1920 (9:16), with no opening, closing, scene-change cards or part splitting (so the hook stays in the first 2 seconds; quips are telops, not cards). The length cap is 60 seconds because a short longer than one minute is blocked worldwide when it receives a Content ID claim (YouTube Help 15424877). It is separate from the main patterns in §8.2 and **can be selected together** with another pattern (FR-SHORT-01).
+P12 is the short template, with `"short": true`. From any source it always renders at 1080×1920 (9:16), with no opening, closing, scene-change cards or part splitting (so the hook stays in the first 2 seconds; quips are telops, not cards). The length cap is 60 seconds because a short longer than one minute is blocked worldwide when it receives a Content ID claim (YouTube Help 15424877). It is separate from the main patterns in §8.2 and **can be selected together** with another pattern (FR-SHORT-01). It uses the shorts look (`telop.look = "short"`): a title bar at the top from the first frame to the last, a big title at the start, big captions coloured per speaker, and one punch telop at a time. The values come from measuring 20 reference shorts (IMPLEMENTATION §24).
+
+The telop look (`telop.look`) changes only in templates whose genre fits (IMPLEMENTATION §23). Variety (P1, P3) uses `variety`, explainer/quiz (P6, P10) `study` (captions with a speaker-colour stroke, a question-box headline: white box, red frame), corporate/presentation (P7, P11) `corporate` (captions on a framed dark box, a cream keyword pill, fades instead of bounces). P2, P4, P5, P8 and P9 keep `standard`.
 
 ### 8.2 Combination
 
@@ -1087,7 +1089,7 @@ Because Shorts lack A/B testing,C-7,publish different patterns from the same sou
       "type": "object",
       "properties": {
         "types": {"type": "array", "items": {"enum": ["caption", "emphasis", "tsukkomi", "headline", "sfx", "counter"]}},
-        "look": {"enum": ["standard", "variety"]},
+        "look": {"enum": ["standard", "variety", "study", "corporate", "short"]},
         "caption": {
           "type": "object",
           "properties": {

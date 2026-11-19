@@ -150,7 +150,7 @@ public static class PlanBuilder
             }
         }
         telops = telops.OrderBy(t => t.Start).ThenBy(t => t.Type).ToList();
-        if (p.Telop.IsVariety) telops = TelopExtras.OnePunchAtATime(telops, notes);
+        if (p.Telop.OnePunch) telops = TelopExtras.OnePunchAtATime(telops, notes);
         if (maskWords.Count > 0) telops = telops.Select(t => t with { Text = Masking.MaskText(t.Text, maskWords) }).ToList();
         var bleeps = Masking.ToOutput(clips, maskSpans);
         if (maskWords.Count > 0) notes.Add($"伏せ字: {maskWords.Count} 語を ● にし、{bleeps.Count} か所の音声をピー音にしました");

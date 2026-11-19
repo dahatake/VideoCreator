@@ -1,6 +1,6 @@
 {
   "id": "P10",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "画面解説（画面＋ワイプ）",
   "genre": "解説/チュートリアル",
   "available": true,
@@ -37,6 +37,7 @@
       "emphasis",
       "headline"
     ],
+    "look": "study",
     "caption": {
       "max_lines": 1,
       "margin_v": 620,

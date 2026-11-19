@@ -118,7 +118,10 @@ public class VarietyTests : IAsyncLifetime
         Assert.Contains($@"Dialogue: 0,0:00:00.00,0:00:02.00,Halo,,0,0,0,,{{\blur10}}芝が言って｛た｝", ass);
         Assert.Contains($@"Dialogue: 1,0:00:00.00,0:00:02.00,Caption,,0,0,0,,{{\c{AssWriter.Variety.KeywordRed}}}芝が{{\c&HFFFFFF&}}言って｛た｝", ass);
         Assert.Contains($"Style: Tsukkomi,{AssWriter.FontName},180,&H00FFFFFF,&H0000FFFF,{AssWriter.Variety.BoxRed}", ass);   // red zabuton
-        Assert.Contains("Dialogue: 2,0:00:03.00,", ass);
+        // punch telops are layered (§23): the underlay (black outer stroke / white frame) sits on its own lower layer, the main event above it
+        Assert.Contains($"Dialogue: {AssWriter.Variety.LayerPunchUnder},0:00:03.00,0:00:04.00,TsukkomiUnder,", ass);
+        Assert.Contains($"Dialogue: {AssWriter.Variety.LayerPunch},0:00:03.00,0:00:04.00,Tsukkomi,", ass);
+        Assert.Contains($@"Dialogue: {AssWriter.Variety.LayerPunchUnder},0:00:00.50,0:00:02.00,EmphUnder,,0,0,0,,{{\blur{AssWriter.Variety.EmphGlowBlur}}}", ass);   // soft glow under the punch
         // standard presets are not affected: no halo, no colouring
         var std = AssWriter.Write(Plan(Fixtures.Presets["P4"], plan.Telops), Fixtures.Presets["P4"]);
         Assert.DoesNotContain("Halo", std); Assert.DoesNotContain(AssWriter.Variety.KeywordRed, std);

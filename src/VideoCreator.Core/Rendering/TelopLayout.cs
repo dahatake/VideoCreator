@@ -12,7 +12,8 @@ public static class TelopLayout
         public bool Intersects(Rect other) => Left < other.Right && Right > other.Left && Top < other.Bottom && Bottom > other.Top;
     }
 
-    public sealed record Placement(Rect? Bounds, int FontSize, bool Positioned, string? Reason = null);
+    /// <param name="Hidden">Body-time spans in which the telop is not drawn (shorts title bar: the cuts where a face is under its fixed place).</param>
+    public sealed record Placement(Rect? Bounds, int FontSize, bool Positioned, string? Reason = null, IReadOnlyList<(double Start, double End)>? Hidden = null);
     public const double FacePadding = 32, PopScale = 1.12;
 
     public static Dictionary<string, Placement> Resolve(EditPlan plan, Preset p)
@@ -23,7 +24,8 @@ public static class TelopLayout
         var geo = AssWriter.Geo(p, plan.Canvas);
         var captionBand = AssWriter.Band(TelopType.Caption, p, plan.Canvas)!.Value;
         var captionBounds = new Rect(0, captionBand.Top - 32, w, captionBand.Bottom + 32);
-        foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Type == TelopType.Caption ? 0 : 1).ThenBy(t => t.Start).ThenBy(t => t.Type))
+        // the shorts title bar never moves, so it is placed before the telops that move around it
+        foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Type == TelopType.Caption ? 0 : p.Telop.IsShort && t.Type == TelopType.Headline ? 1 : 2).ThenBy(t => t.Start).ThenBy(t => t.Type))
         {
             var (size, outline, scaleX) = AssWriter.Metrics(t.Style, p);
             int fit = AssWriter.FitFontSize(t.Text, size, outline, w, geo.MarginR, scaleX, plan.Language, geo.MarginL);
@@ -42,6 +44,15 @@ public static class TelopLayout
                 result[t.Id] = new(original, fit, false);
                 continue;
             }
+            if (p.Telop.IsShort && t.Type == TelopType.Headline)
+            {
+                var (barTop, barBottom) = AssWriter.Short.BarRows(geo, fit);
+                var bar = result[t.Id] = TitleBar(plan, t, original with { Top = barTop, Bottom = barBottom }, fit);
+                // later telops must not be pushed up under the bar where it is drawn
+                if (bar.Bounds is { } barRect)
+                    foreach (var (vs, ve) in Visible(bar, t.Start, t.End)) occupied.Add((t with { Start = vs, End = ve }, barRect));
+                continue;
+            }
             var faces = Obstacles(plan, t, out bool known);
             if (!known)
             {
@@ -49,8 +60,7 @@ public static class TelopLayout
                 continue;
             }
             // Reserve animation overshoot on all sides instead of shrinking the face-protection margin.
-            fit = AssWriter.FitFontSize(t.Text, size, outline + 6, w, geo.MarginR, (int)Math.Ceiling(scaleX * PopScale), plan.Language, geo.MarginL);
-            height = fit * 1.5 * PopScale + 2 * outline + 16;
+            // The shorts look tries smaller sizes before giving up: a big face in a selfie leaves no room for a 200 px punch telop or the title bar.
             var blocked = faces.Concat(occupied.Where(x => x.Telop.Start < t.End && x.Telop.End > t.Start).Select(x => x.Bounds)).ToList();
             if (plan.Telops.Any(c => c.Enabled && c.Type == TelopType.Caption && c.Start < t.End && c.End > t.Start)) blocked.Add(captionBounds);
             var screenOffset = 0.0;
@@ -60,16 +70,69 @@ public static class TelopLayout
                     blocked.Add(new(0, clip.Reframe.BoxY, w, clip.Reframe.BoxY + clip.Reframe.BoxH));
                 screenOffset += clip.Length;
             }
-            double min = geo.Safe.Top, max = h - geo.Safe.Bottom - height;
-            var candidates = new[] { Math.Clamp(top, min, Math.Max(min, max)), min, max }
-                .Concat(blocked.SelectMany(b => new[] { b.Bottom + 8, b.Top - height - 8 }))
-                .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - top));
-            var bounds = candidates.Select(y => new Rect(geo.MarginL, y, w - geo.MarginR, y + height))
-                .FirstOrDefault(b => blocked.All(o => !b.Intersects(o)));
+            Rect? bounds = null;
+            foreach (double scale in p.Telop.IsShort ? ShrinkSteps : [1.0])
+            {
+                int px = (int)Math.Round(size * scale);
+                if (scale < 1 && px < MinShrunkPx) break;
+                fit = AssWriter.FitFontSize(t.Text, px, outline + 6, w, geo.MarginR, (int)Math.Ceiling(scaleX * PopScale), plan.Language, geo.MarginL);
+                height = fit * 1.5 * PopScale + 2 * outline + 16;
+                double min = geo.Safe.Top, max = h - geo.Safe.Bottom - height;
+                var candidates = new[] { Math.Clamp(top, min, Math.Max(min, max)), min, max }
+                    .Concat(blocked.SelectMany(b => new[] { b.Bottom + 8, b.Top - height - 8 }))
+                    .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - top));
+                double hgt = height;
+                bounds = candidates.Select(y => new Rect(geo.MarginL, y, w - geo.MarginR, y + hgt))
+                    .FirstOrDefault(b => blocked.All(o => !b.Intersects(o)));
+                if (bounds != null) break;
+            }
             result[t.Id] = new(bounds, fit, true, bounds == null ? "顔・字幕と重ならない表示場所がないため表示しません" : null);
             if (bounds != null) occupied.Add((t, bounds));
         }
         return result;
+    }
+
+    /// <summary>Shorts look: sizes tried in turn when a telop has no free place at full size; never below <see cref="MinShrunkPx"/>.</summary>
+    static readonly double[] ShrinkSteps = [1.0, 0.8, 0.65, 0.5];
+    public const int MinShrunkPx = 48;
+
+    /// <summary>
+    /// Shorts title bar: it stays at its fixed place at the top (an editor never moves it), and is left out only in the cuts where a face —
+    /// or unknown faces — would be under it. Hidden everywhere = not shown, with the reason.
+    /// </summary>
+    static Placement TitleBar(EditPlan plan, Telop t, Rect bar, int fit)
+    {
+        var hidden = new List<(double Start, double End)>();
+        double off = 0;
+        foreach (var c in plan.Timeline)
+        {
+            double s = Math.Max(t.Start, off), e = Math.Min(t.End, off + c.Length);
+            off += c.Length;
+            if (e - s <= 1e-6) continue;
+            var faces = Obstacles(plan, t with { Start = s, End = e }, out bool known);
+            if (!known || faces.Any(f => f.Intersects(bar)))
+            {
+                if (hidden.Count > 0 && Math.Abs(hidden[^1].End - s) < 1e-6) hidden[^1] = (hidden[^1].Start, e);
+                else hidden.Add((s, e));
+            }
+        }
+        double shown = t.End - t.Start - hidden.Sum(h => h.End - h.Start);
+        if (shown < 0.5) return new(null, fit, false, "顔と重ならずに上部のタイトル帯を出せるカットがないため表示しません");
+        return new(bar, fit, false, Hidden: hidden.Count > 0 ? hidden : null);
+    }
+
+    /// <summary>The spans of [start, end) in which a telop with this placement is drawn.</summary>
+    public static List<(double Start, double End)> Visible(Placement placement, double start, double end)
+    {
+        var res = new List<(double, double)>();
+        double at = start;
+        foreach (var (hs, he) in (placement.Hidden ?? []).OrderBy(h => h.Start))
+        {
+            if (hs > at + 1e-6) res.Add((at, Math.Min(hs, end)));
+            at = Math.Max(at, he);
+        }
+        if (end > at + 1e-6) res.Add((at, end));
+        return res;
     }
 
     /// <summary>

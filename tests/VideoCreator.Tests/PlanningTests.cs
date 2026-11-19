@@ -105,6 +105,18 @@ public class PlanningTests
         for (int i = 1; i < em.Count; i++) Assert.True(em[i].Start >= em[i - 1].End - 0.001);
     }
 
+    [Fact]
+    public void Study_only_marks_selected_emphasis_for_two_stage_reveal()
+    {
+        var clip = new Clip { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = Tr.Duration };
+        var study = TelopBuilder.Build([clip], Tr, Fixtures.Presets["P6"], "", "", ["100円のものだけ"], []);
+        Assert.Contains(study, t => t.Type == TelopType.Emphasis && t.Text == "100円のものだけ" && t.Animation == "two-stage");
+        Assert.All(study.Where(t => t.Type == TelopType.Emphasis && t.Text != "100円のものだけ"), t => Assert.Equal("pop", t.Animation));
+
+        var standard = TelopBuilder.Build([clip], Tr, Fixtures.Presets["P4"], "", "", ["100円のものだけ"], []);
+        Assert.Contains(standard, t => t.Type == TelopType.Emphasis && t.Text == "100円のものだけ" && t.Animation == "pop");
+    }
+
     [Fact] // regression from E2E: greedy breaking produced 「おっと　かごがもういっぱい」 + orphan 「ですよ」
     public void Caption_lines_are_balanced_without_orphans()
     {

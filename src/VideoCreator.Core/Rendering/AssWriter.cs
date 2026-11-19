@@ -6,7 +6,7 @@ using VideoCreator.Presets;
 namespace VideoCreator.Rendering;
 
 /// <summary>ASS (libass) writer — styles follow R§3.3 / C-4; text escaped (NFR-SEC-06).</summary>
-public static class AssWriter
+public static partial class AssWriter
 {
     public const string FontName = "M PLUS 1p ExtraBold";   // OFL, bundled in tools/fonts (Q-6)
     public static string FontFor(string language) => language switch
@@ -76,29 +76,74 @@ public static class AssWriter
     /// Variety look (preset telop.look = "variety"), from measurements of Japanese variety videos (docs/IMPLEMENTATION.md §12):
     /// captions ≈ 10 % of the width per character, condensed (長体) with a dark halo so white text reads on a white set;
     /// punch telops (emphasis / tsukkomi) ≈ 15–20 % of the width per character and only one at a time; emphasis words red inside captions.
+    /// Punch telops are layered (§23, measured on アメトーーク!: fill → white inner stroke → black outer stroke → ≈ 16 px soft shadow). Windows OCR at
+    /// Shorts-grid size (270 px wide, 5 phrases × 3 backgrounds) read the white inner stroke worse than before (22 % vs 46 %: the bright ring makes
+    /// letters look hollow), and the soft shadow better (69 %), so the emphasis keeps yellow + black and gains the soft shadow as a blurred dark
+    /// glow on an underlay event; the tsukkomi box gets a white frame and the SFX a black outer stroke the same way.
     /// </summary>
     public static class Variety
     {
         public const int CaptionScaleX = 85, CaptionOutline = 10, HaloOutline = 24, HaloBlur = 10;
         public const int EmphPx = 210, EmphOutline = 14, TsukkomiPx = 180, TsukkomiPad = 20, SfxPx = 160, HeadlinePx = 56, HeadlinePad = 14;
+        /// <summary>Emphasis glow (underlay outline, blurred), white inner strokes inside the black outer stroke of the SFX (SfxOutline is the whole stroke),
+        /// the red tsukkomi box inside its white frame (TsukkomiPad).</summary>
+        public const int EmphGlow = 24, EmphGlowBlur = 6, SfxOutline = 16, SfxInner = 9, TsukkomiInnerPad = 14, UnderBlur = 2;
         /// <summary>The punch band sits this far above the caption baseline band (caption ≤ 128 px · 1.3 line box + outlines).</summary>
         public const int PunchLift = 200;
         /// <summary>&amp;HBBGGRR: red for emphasis words inside captions; red tsukkomi box; light-cyan headline bar with navy text.</summary>
         public const string KeywordRed = "&H2A2AE8&", BoxRed = "&H001C1CE6", BarCyan = "&H00F5E6A0", BarNavy = "&H00803010";
-        public const int LayerHalo = 0, LayerCaption = 1, LayerPunch = 2, LayerTop = 3, LayerCard = 4;
+        public const int LayerHalo = 0, LayerCaption = 1, LayerPunchUnder = 2, LayerPunch = 3, LayerTop = 4, LayerCard = 5;
+    }
+
+    /// <summary>
+    /// Study look (telop.look = "study"), measured on a QuizKnock quiz video (docs/IMPLEMENTATION.md §23): the speaker's colour carries the caption
+    /// (here as the stroke: a coloured fill inside a cream stroke, as in the reference, was read 0–10 % by Windows OCR at Shorts-grid size; a white fill 94 %),
+    /// with a thin dark edge (underlay event); the headline is a question box — white box, red frame, near-black text.
+    /// The stroke totals and the headline padding equal the standard look's, so every band and the P10 screen layout stay where they were.
+    /// </summary>
+    public static class Study
+    {
+        public const int CaptionStroke = 5, CaptionEdge = 7, HeadlinePad = 10, HeadlineFramePad = 14;
+        /// <summary>&amp;HAABBGGRR. Strokes: green #007040, purple #9A0C9D, blue #0050B4 — each ≥ 6:1 against the white fill (WCAG 2.x; ≥ 5:1 as libass renders them).</summary>
+        public const string White = "&H00FFFFFF", Edge = "&H00202020", Paper = "&H00FFFFFF", FrameRed = "&H001E1ED8", Ink = "&H00202020";
+        public static readonly string[] Strokes = ["&H00407000", "&H009D0C9A", "&H00B45000"];
+    }
+
+    /// <summary>
+    /// Corporate look (telop.look = "corporate"), measured on the Microsoft Ignite 2026 keynote (docs/IMPLEMENTATION.md §23): no heavy strokes —
+    /// white text on a dark box with a thin frame (the frame takes the speaker's colour), the keyword in a cream pill with dark text,
+    /// and short fades (Fluent motion "normal" 200 ms) instead of a bounce.
+    /// </summary>
+    public static class Corporate
+    {
+        public const int CaptionPad = 10, FramePad = 14, EmphPad = 14, HeadlinePad = 14, HeadlineFramePad = 16, FadeInMs = 200, FadeOutMs = 120;
+        /// <summary>The keyword pill sits this far above the caption baseline (caption box 1.3 line + frame, pill padding, 8 px gap).</summary>
+        public const int EmphLift = 140;
+        /// <summary>&amp;HAABBGGRR: opaque box #1B1B1B (a translucent box would show the frame underlay through it), frame #A0A0A0 at 69 %, pill #FFFFE0 (measured), ink #1A1A1A;
+        /// speaker frames = Microsoft logo blue, orange-red, green.</summary>
+        public const string Box = "&H001B1B1B", Frame = "&H50A0A0A0", Pill = "&H00E0FFFF", Ink = "&H001A1A1A";
+        public static readonly string[] SpeakerFrames = ["&H00EFA400", "&H002250F2", "&H0000BA7F"];
     }
 
     /// <summary>(font size, outline or box padding, ScaleX) of a style — the one table used for fitting (here) and for the QA bands.</summary>
     public static (int Size, int Outline, int ScaleX) Metrics(string style, Preset p)
     {
         var c = p.Telop.Caption;
+        if (p.Telop.IsShort) return ShortMetrics(style, p);
         if (p.Telop.IsVariety)
             return style switch
             {
                 "Emph" => (Variety.EmphPx, Variety.EmphOutline, 100), "Hook" => (84, 18, 100), "Headline" => (Variety.HeadlinePx, Variety.HeadlinePad, 100),
-                "Counter" => (96, 10, 100), "Sfx" => (Variety.SfxPx, 10, 100), "Tsukkomi" => (Variety.TsukkomiPx, Variety.TsukkomiPad, 100),
+                "Counter" => (96, 10, 100), "Sfx" => (Variety.SfxPx, Variety.SfxOutline, 100), "Tsukkomi" => (Variety.TsukkomiPx, Variety.TsukkomiPad, 100),
                 _ => (c.FontPx, Variety.CaptionOutline, Variety.CaptionScaleX),
             };
+        if (p.Telop.IsCorporate)
+            return style switch
+            {
+                "Emph" => ((int)(c.FontPx * 1.25), Corporate.EmphPad, 100), "Hook" => (84, 18, 100), "Headline" => (60, Corporate.HeadlineFramePad, 100),
+                "Counter" => (96, 10, 100), "Sfx" => (120, 10, 100), "Tsukkomi" => (64, 12, 100), _ => (c.FontPx, Corporate.FramePad, 100),
+            };
+        if (p.Telop.IsStudy && (style == "Caption" || style.StartsWith("CapS"))) return (c.FontPx, Study.CaptionEdge, 100);
         return style switch
         {
             "Emph" => ((int)(c.FontPx * 1.25), 9, 100), "Hook" => (84, 18, 100), "Headline" => (60, 14, 100), "Counter" => (96, 10, 100), "Sfx" => (120, 10, 100), "Tsukkomi" => (64, 12, 100),
@@ -115,6 +160,20 @@ public static class AssWriter
     {
         var c = p.Telop.Caption; int H = canvasHeight;
         var g = Geo(p, canvasWidth, canvasHeight); int mv = g.CaptionMarginV;
+        if (p.Telop.IsShort) return ShortBand(type, p, g, H);
+        if (p.Telop.IsCorporate)
+        {
+            // boxes (BorderStyle 3) are visible, so the band includes the padding and frame; the keyword pill sits above the caption box
+            int fp = Corporate.FramePad, ep = Corporate.EmphPad; double ePx = (int)(c.FontPx * 1.25);
+            return type switch
+            {
+                TelopType.Caption => (H - mv - c.FontPx * 1.3 * c.MaxLines - fp, H - mv + fp),
+                TelopType.Emphasis => (H - mv - Corporate.EmphLift - ePx * 1.3 - ep, H - mv - Corporate.EmphLift + ep),
+                TelopType.Tsukkomi => (H - g.TsukkomiMarginV - 90, H - g.TsukkomiMarginV),
+                TelopType.Counter => (g.CounterMarginV, g.CounterMarginV + 120),
+                _ => null,
+            };
+        }
         if (!p.Telop.IsVariety)
             return type switch
             {
@@ -155,7 +214,7 @@ public static class AssWriter
     public static string Write(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement>? layout = null)
     {
         layout ??= TelopLayout.Resolve(plan, p);
-        var ass = p.Telop.IsVariety ? WriteVariety(plan, p, layout) : WriteStandard(plan, p, layout);
+        var ass = p.Telop.IsShort ? WriteShort(plan, p, layout) : p.Telop.IsVariety ? WriteVariety(plan, p, layout) : p.Telop.IsStudy || p.Telop.IsCorporate ? WriteLayered(plan, p, layout) : WriteStandard(plan, p, layout);
         var font = FontFor(plan.Language);
         return string.Join("\n", ass.Split('\n').Select(line => line.StartsWith("Style:", StringComparison.Ordinal)
             ? line.Replace("," + FontName + ",", "," + font + ",", StringComparison.Ordinal) : line));
@@ -173,12 +232,16 @@ public static class AssWriter
         for (int i = 0; i < outlines.Length; i++)
             sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H00000000,0,0,0,0,{sx},100,0,0,1,{Variety.CaptionOutline},0,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
         int punchV = g.CaptionMarginV + Variety.PunchLift;
+        // punch telops: main event = the telop; underlay event on its own layer (else libass would push it aside) = glow / black outer stroke / white frame
         sb.AppendLine($"Style: Emph,{FontName},{Variety.EmphPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{Variety.EmphOutline},4,2,{g.MarginL},{g.MarginR},{punchV},1");
-        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
+        sb.AppendLine($"Style: EmphUnder,{FontName},{Variety.EmphPx},&HFF000000,&H0000FFFF,&H60000000,&H00000000,0,0,0,0,100,100,0,0,1,{Variety.EmphGlow},0,2,{g.MarginL},{g.MarginR},{punchV},1");
+        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiInnerPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
+        sb.AppendLine($"Style: TsukkomiUnder,{FontName},{Variety.TsukkomiPx},&HFF000000,&H0000FFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
         sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
         sb.AppendLine($"Style: Headline,{FontName},{Variety.HeadlinePx},{Variety.BarNavy},&H0000FFFF,{Variety.BarCyan},{Variety.BarCyan},0,0,0,0,100,100,0,0,3,{Variety.HeadlinePad},0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
         sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,{g.MarginL},{g.MarginR},{g.CounterMarginV},1");
-        sb.AppendLine($"Style: Sfx,{FontName},{Variety.SfxPx},&H002020E0,&H0000FFFF,&H00FFFFFF,&H80000000,0,0,0,0,100,100,0,0,1,10,3,5,{g.MarginL},{g.MarginR},0,1");
+        sb.AppendLine($"Style: Sfx,{FontName},{Variety.SfxPx},&H002020E0,&H0000FFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,{Variety.SfxInner},0,5,{g.MarginL},{g.MarginR},0,1");
+        sb.AppendLine($"Style: SfxUnder,{FontName},{Variety.SfxPx},&HFF000000,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,{Variety.SfxOutline},3,5,{g.MarginL},{g.MarginR},0,1");
         CardStyle(sb, g);
         EventsHeader(sb);
         var ins = Planning.InsertMap.Active(plan);
@@ -195,16 +258,131 @@ public static class AssWriter
             var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, g.MarginR, scaleX, plan.Language, g.MarginL));
             if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
-            var fx = Fx(t, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
+            var fx = Fx(t with { Animation = null }, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
+            string? under = style switch { "Emph" => "EmphUnder", "Sfx" => "SfxUnder", "Tsukkomi" => "TsukkomiUnder", _ => null };
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
             {
                 if (caption) sb.AppendLine($@"Dialogue: {Variety.LayerHalo},{Time(s)},{Time(e)},Halo,,0,0,0,,{{\blur{Variety.HaloBlur}}}{fx}{string.Join(@"\N", lines.Select(Escape))}");
+                if (under != null)
+                    sb.AppendLine($@"Dialogue: {Variety.LayerPunchUnder},{Time(s)},{Time(e)},{under},,0,0,0,,{under switch { "EmphUnder" => $@"{{\blur{Variety.EmphGlowBlur}}}", "SfxUnder" => $@"{{\blur{Variety.UnderBlur}}}", _ => "" }}{fx}{text}");
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{text}");
             }
         }
         CardEvents(sb, plan, g, Variety.LayerCard);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Study and corporate looks (§23): the standard layout and sizes, restyled; strokes and frames that need two colours are an underlay event
+    /// (transparent text, wider outline or box) on its own layer directly below the main event.
+    /// </summary>
+    static string WriteLayered(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
+    {
+        bool corp = p.Telop.IsCorporate;
+        var c = p.Telop.Caption; var g = Geo(p, plan.Canvas);
+        var sb = new StringBuilder();
+        Header(sb, plan);
+        void S(string name, int size, string primary, string outlineColour, string back, int border, int outline, int shadow, int align, int marginV) =>
+            sb.AppendLine($"Style: {name},{FontName},{size},{primary},&H0000FFFF,{outlineColour},{back},0,0,0,0,100,100,0,0,{border},{outline},{shadow},{align},{g.MarginL},{g.MarginR},{marginV},1");
+        int emphPx = (int)(c.FontPx * 1.25);
+        if (corp)
+        {
+            S("Caption", c.FontPx, "&H00FFFFFF", Corporate.Box, Corporate.Box, 3, Corporate.CaptionPad, 0, 2, g.CaptionMarginV);
+            S("CapFrame", c.FontPx, "&HFF000000", Corporate.Frame, Corporate.Frame, 3, Corporate.FramePad, 0, 2, g.CaptionMarginV);
+            for (int i = 0; i < Corporate.SpeakerFrames.Length; i++)
+            {
+                S($"CapS{i + 1}", c.FontPx, "&H00FFFFFF", Corporate.Box, Corporate.Box, 3, Corporate.CaptionPad, 0, 2, g.CaptionMarginV);
+                S($"CapFrameS{i + 1}", c.FontPx, "&HFF000000", Corporate.SpeakerFrames[i], Corporate.SpeakerFrames[i], 3, Corporate.FramePad, 0, 2, g.CaptionMarginV);
+            }
+            S("Emph", emphPx, Corporate.Ink, Corporate.Pill, Corporate.Pill, 3, Corporate.EmphPad, 0, 2, g.CaptionMarginV + Corporate.EmphLift);
+            S("Hook", 84, Corporate.Ink, Corporate.Pill, Corporate.Pill, 3, 18, 0, 8, g.HeadlineMarginV);
+            S("Headline", 60, "&H00FFFFFF", Corporate.Box, Corporate.Box, 3, Corporate.HeadlinePad, 0, 8, g.HeadlineMarginV);
+            S("HeadlineFrame", 60, "&HFF000000", Corporate.Frame, Corporate.Frame, 3, Corporate.HeadlineFramePad, 0, 8, g.HeadlineMarginV);
+        }
+        else
+        {
+            S("Caption", c.FontPx, Study.White, Study.Strokes[0], "&H00000000", 1, Study.CaptionStroke, 0, 2, g.CaptionMarginV);
+            S("CapEdge", c.FontPx, "&HFF000000", Study.Edge, "&H80000000", 1, Study.CaptionEdge, 2, 2, g.CaptionMarginV);
+            for (int i = 0; i < Study.Strokes.Length; i++) S($"CapS{i + 1}", c.FontPx, Study.White, Study.Strokes[i], "&H00000000", 1, Study.CaptionStroke, 0, 2, g.CaptionMarginV);
+            S("Emph", emphPx, "&H0000F0FF", "&H00000000", "&H80000000", 1, 9, 3, 2, g.CaptionMarginV + EmphLift);
+            S("Hook", 84, "&H00FFFFFF", "&H00D47800", "&H00D47800", 3, 18, 0, 8, g.HeadlineMarginV);
+            S("Headline", 60, Study.Ink, Study.Paper, Study.Paper, 3, Study.HeadlinePad, 0, 8, g.HeadlineMarginV);
+            S("HeadlineFrame", 60, "&HFF000000", Study.FrameRed, Study.FrameRed, 3, Study.HeadlineFramePad, 0, 8, g.HeadlineMarginV);
+        }
+        S("Counter", 96, "&H0000E0FF", "&H00000000", "&H80000000", 1, 10, 3, 8, g.CounterMarginV);
+        S("Sfx", 120, "&H002020E0", "&H00FFFFFF", "&H80000000", 1, 10, 3, 5, 0);
+        S("Tsukkomi", 64, "&H00202020", "&H00FFFFFF", "&H00FFFFFF", 3, 12, 0, 2, g.TsukkomiMarginV);
+        CardStyle(sb, g);
+        EventsHeader(sb);
+        const int CaptionUnder = 0, CaptionLayer = 1, PunchLayer = 2, TopUnder = 3, TopLayer = 4, CardLayer = 5;
+        var ins = Planning.InsertMap.Active(plan);
+        foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Start))
+        {
+            var placement = layout[t.Id];
+            if (placement.Bounds == null) continue;
+            bool caption = t.Type == TelopType.Caption, top = t.Type is TelopType.Hook or TelopType.Headline;
+            var style = t.Style;
+            if (caption && p.Telop.SpeakerColors && t.Speaker is > 0) style = $"CapS{(t.Speaker.Value - 1) % 3 + 1}";
+            var (size, outline, _) = Metrics(style, p);
+            var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
+            var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, g.MarginR, language: plan.Language, marginL: g.MarginL));
+            if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
+            var fx = Fx(t with { Animation = null }, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
+            if (corp && t.Animation == "pop")
+                fx = fx.Length > 0 ? fx.Insert(1, $@"\fad({Corporate.FadeInMs},{Corporate.FadeOutMs})") : $@"{{\fad({Corporate.FadeInMs},{Corporate.FadeOutMs})}}";
+            string? under = style switch
+            {
+                "Caption" => corp ? "CapFrame" : "CapEdge",
+                _ when style.StartsWith("CapS", StringComparison.Ordinal) => corp ? "CapFrame" + style[3..] : "CapEdge",
+                "Headline" => "HeadlineFrame",
+                _ => null,
+            };
+            int layer = caption ? CaptionLayer : top ? TopLayer : PunchLayer;
+            var text = string.Join(@"\N", lines.Select(Escape));
+            foreach (var (phaseStart, phaseEnd, phaseText) in StudyStages(t, p, text))
+            foreach (var (s, e) in ins.Count == 0 ? [(phaseStart, phaseEnd)] : Planning.InsertMap.Span(ins, phaseStart, phaseEnd))
+            {
+                if (under != null) sb.AppendLine($"Dialogue: {(top ? TopUnder : CaptionUnder)},{Time(s)},{Time(e)},{under},,0,0,0,,{fx}{phaseText}");
+                sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{phaseText}");
+            }
+        }
+        CardEvents(sb, plan, g, CardLayer);
+        return sb.ToString();
+    }
+
+    const double StudyRevealDelay = 0.8;
+
+    static List<(double Start, double End, string Text)> StudyStages(Telop telop, Preset preset, string text)
+    {
+        int split = preset.Telop.IsStudy && telop.Type == TelopType.Emphasis && telop.Animation == "two-stage"
+            ? StudyRevealBoundary(telop.Text) : -1;
+        if (split < 0 || telop.End - telop.Start < 2 * StudyRevealDelay)
+            return [(telop.Start, telop.End, text)];
+
+        // Keep the full phrase's width during stage one so the visible prefix remains in its final position.
+        return [
+            (telop.Start, telop.Start + StudyRevealDelay,
+                Escape(telop.Text[..split]) + @"{\alpha&HFF&}" + Escape(telop.Text[split..])),
+            (telop.Start + StudyRevealDelay, telop.End, Escape(telop.Text)),
+        ];
+    }
+
+    static int StudyRevealBoundary(string text)
+    {
+        var boundaries = StringInfo.ParseCombiningCharacters(text);
+        if (boundaries.Length < 2) return -1;
+
+        double width = Planning.JapaneseText.DisplayWidth(text), target = width / 2;
+        int split = -1; double distance = double.MaxValue;
+        for (int i = 1; i < boundaries.Length; i++)
+        {
+            double left = Planning.JapaneseText.DisplayWidth(text[..boundaries[i]]);
+            if (left < 2 || width - left < 2) continue;
+            double candidate = Math.Abs(left - target);
+            if (candidate < distance) { split = boundaries[i]; distance = candidate; }
+        }
+        return split;
     }
 
     static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement, int sfxY)

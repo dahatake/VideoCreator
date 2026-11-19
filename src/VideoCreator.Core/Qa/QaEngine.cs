@@ -335,6 +335,8 @@ public sealed class QaEngine(FFmpeg ff)
             var t = cand[i]; var bounds = layout[t.Id].Bounds!;
             foreach (double bodyTime in new[] { t.Start + Math.Min(0.25, (t.End - t.Start) / 4), (t.Start + t.End) / 2, t.End - Math.Min(0.1, (t.End - t.Start) / 4) }.Distinct())
             {
+                // a shorts title bar is left out in the cuts where a face is under it: nothing is drawn there to overlap
+                if (!TelopLayout.Visible(layout[t.Id], t.Start, t.End).Any(v => bodyTime >= v.Start && bodyTime < v.End)) continue;
                 var mid = InsertMap.ToFinal(ins, bodyTime);
                 var faces = await Faces!.DetectAtAsync(rendered, mid, ct); checkedN++;
                 foreach (var f in faces)

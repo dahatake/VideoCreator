@@ -1,6 +1,6 @@
 {
   "id": "P7",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "対談スイッチング",
   "genre": "ビジネス/ポッドキャスト",
   "available": true,
@@ -36,6 +36,7 @@
       "emphasis",
       "headline"
     ],
+    "look": "corporate",
     "caption": {
       "max_lines": 1,
       "margin_v": 620,
@@ -66,6 +67,10 @@
     "sound": "マスター音声1本"
   },
   "examples": [
+    {
+      "title": "Satya Nadella opens Microsoft Ignite 2026",
+      "url": "https://www.youtube.com/watch?v=Nv8-Km25Qj4"
+    },
     {
       "title": "PIVOT 公式チャンネル",
       "url": "https://www.youtube.com/watch?v=JOE7Y_b7RlE"

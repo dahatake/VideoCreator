@@ -1,6 +1,6 @@
 {
   "id": "P3",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "バラエティ・テロップ",
   "genre": "エンタメ（日本）",
   "available": true,
@@ -74,6 +74,10 @@
     "sound": "効果音多め"
   },
   "examples": [
+    {
+      "title": "アメトーーク!『ネタ書いてる芸人vsネタ書いてない芸人』",
+      "url": "https://www.youtube.com/watch?v=sJSn1sRtZzo"
+    },
     {
       "title": "東海オンエア: 即帰宅の京都旅",
       "url": "https://www.youtube.com/watch?v=SJdhLwEKDc4"

@@ -1,6 +1,6 @@
 {
   "id": "P12",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "ショート動画（縦 9:16）",
   "genre": "全ジャンル（Shorts / TikTok / Reels）",
   "available": true,
@@ -41,17 +41,19 @@
       "emphasis",
       "headline"
     ],
+    "look": "short",
+    "speaker_colors": true,
     "caption": {
       "max_lines": 1,
       "margin_v": 620,
       "margin_r": 160,
-      "font_px": 78,
+      "font_px": 112,
       "max_cps": 6,
-      "max_chars_per_line": 14
+      "max_chars_per_line": 11
     }
   },
   "audio": {
-    "sfx": "light",
+    "sfx": "heavy",
     "bgm_duck_db": -15,
     "loudnorm": {
       "tp": -1.5,
@@ -66,16 +68,24 @@
   "card": {
     "opening": "最も強い一言・驚き・問いを冒頭2秒に（オープニング動画は入れない）",
     "tempo": "無音を詰めたジャンプカット＋パンチイン、15〜60秒",
-    "telop": "全文字幕・強調・見出し（スマホの操作ボタンを避ける）",
-    "sound": "原音を -14 LUFS に整え、終わりを冒頭につなげる"
+    "telop": "最初から最後まで上部にタイトル帯、冒頭に大きな題字、話者ごとに色を変えた大きな字幕、決め言葉は1つずつ（スマホの操作ボタンを避ける）",
+    "sound": "題字・強調・ツッコミの出に効果音、原音を -14 LUFS に整え、終わりを冒頭につなげる"
   },
   "examples": [
+    {
+      "title": "QuizKnock: ショート一覧",
+      "url": "https://www.youtube.com/@QuizKnock/shorts"
+    },
+    {
+      "title": "Snow Man official【ガチ反省会】YouTubeで何が見たい？",
+      "url": "https://www.youtube.com/shorts/wqXXl_BMgrY"
+    },
     {
       "title": "YouTube ヘルプ: 3 分間の YouTube ショートについて",
       "url": "https://support.google.com/youtube/answer/15424877"
     }
   ],
-  "selection_rules": "スマホで縦に見るショート動画として、元動画を見ていない人にも単体で意味が通る15〜60秒を選ぶ。冒頭2秒に結果・驚き・強い主張・問いがあり、最後にオチ（ペイオフ）があること。説明の前置き・挨拶・自己紹介から始めない。",
+  "selection_rules": "スマホで縦に見るショート動画として、元動画を見ていない人にも単体で意味が通る15〜60秒を選ぶ。冒頭2秒に結果・驚き・強い主張・問いがあり、最後にオチ（ペイオフ）があること。説明の前置き・挨拶・自己紹介から始めない。headline は最初から最後まで画面上部に出るタイトル帯なので、企画名・問い・状況を10字以内で（例:「〇〇クイズ」「ガチ反省会」「〜って何？」）。hook_text は冒頭に大きく出す題字なので、最も強い一言を8字以内で。どちらも書き起こしの言葉から作る。",
   "planner": "speech",
   "reframe": "auto"
 }

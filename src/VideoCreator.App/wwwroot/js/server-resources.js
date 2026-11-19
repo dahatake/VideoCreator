@@ -57,9 +57,9 @@ export const presetDisplays = {
     ko: ['화면 해설(화면+작은 창)', '해설·튜토리얼', '화자의 얼굴로 시작', '조작 중 화면 자동 확대, 멈추면 화자', '자막·요점', '마스터 음성 하나'],
   },
   P12: {
-    en: ['Short video (portrait 9:16)', 'All genres (Shorts / TikTok / Reels)', 'Strongest line, surprise or question in the first 2 s (no opening video)', 'Silence-trimmed jump cuts and punch-ins, 15–60 s', 'Full captions, emphasis and headlines (clear of the phone UI)', 'Original audio at −14 LUFS; the end leads back to the start', 'YouTube Help: About 3-minute YouTube Shorts'],
-    'zh-CN': ['短视频（竖屏 9:16）', '全类型（Shorts / TikTok / Reels）', '前 2 秒展示最有力的一句话、惊喜或问题（不加片头视频）', '去除静音的跳剪与放大，15～60 秒', '全文字幕、强调及标题（避开手机操作按钮）', '原声调整至 −14 LUFS，结尾衔接开头', 'YouTube 帮助：关于 3 分钟的 YouTube Shorts'],
-    ko: ['쇼츠 영상(세로 9:16)', '모든 장르(Shorts / TikTok / Reels)', '첫 2초에 강한 한마디·놀라움·질문(오프닝 영상 없음)', '무음 제거 점프 컷·펀치인, 15~60초', '전체 자막·강조·제목(휴대폰 버튼을 피함)', '원음을 −14 LUFS로, 끝이 처음으로 이어짐', 'YouTube 고객센터: 3분 길이의 YouTube Shorts 정보'],
+    en: ['Short video (portrait 9:16)', 'All genres (Shorts / TikTok / Reels)', 'Strongest line, surprise or question in the first 2 s (no opening video)', 'Silence-trimmed jump cuts and punch-ins, 15–60 s', 'Title bar at the top from start to end, a big opening title, big captions coloured per speaker, one punch line at a time (clear of the phone UI)', 'Sound effects on the title, emphasis and quips; original audio at −14 LUFS; the end leads back to the start', 'QuizKnock: Shorts', 'Snow Man official [Honest review meeting] What do you want to see on YouTube?', 'YouTube Help: About 3-minute YouTube Shorts'],
+    'zh-CN': ['短视频（竖屏 9:16）', '全类型（Shorts / TikTok / Reels）', '前 2 秒展示最有力的一句话、惊喜或问题（不加片头视频）', '去除静音的跳剪与放大，15～60 秒', '顶部标题条从头到尾显示，开头大标题，按说话人着色的大字幕，关键语一次一个（避开手机操作按钮）', '在大标题、强调和吐槽出现时加音效，原声调整至 −14 LUFS，结尾衔接开头', 'QuizKnock：短视频', 'Snow Man official【认真反省会】想在 YouTube 上看什么？', 'YouTube 帮助：关于 3 分钟的 YouTube Shorts'],
+    ko: ['쇼츠 영상(세로 9:16)', '모든 장르(Shorts / TikTok / Reels)', '첫 2초에 강한 한마디·놀라움·질문(오프닝 영상 없음)', '무음 제거 점프 컷·펀치인, 15~60초', '위쪽 타이틀 바를 처음부터 끝까지, 시작에 큰 제목, 화자별 색의 큰 자막, 결정적 한마디는 하나씩(휴대폰 버튼을 피함)', '큰 제목·강조·츳코미에 효과음, 원음을 −14 LUFS로, 끝이 처음으로 이어짐', 'QuizKnock: 쇼츠', 'Snow Man official【진지한 반성회】YouTube에서 무엇을 보고 싶나요?', 'YouTube 고객센터: 3분 길이의 YouTube Shorts 정보'],
   },
 };
 

@@ -1,6 +1,6 @@
 {
   "id": "P11",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "人物背景＋資料PiP",
   "genre": "プレゼンテーション",
   "available": true,
@@ -13,6 +13,7 @@
   },
   "telop": {
     "types": ["caption"],
+    "look": "corporate",
     "caption": { "max_lines": 1, "margin_v": 640, "margin_r": 160, "font_px": 64, "max_cps": 6, "max_chars_per_line": 14, "avoid_faces": true }
   },
   "audio": { "sfx": "none", "bgm": "none", "loudnorm": { "tp": -1.5, "i": -14 } },
@@ -23,6 +24,7 @@
     "telop": "逐語字幕と顔を避けた資料表示",
     "sound": "主映像の音声1本（副映像は音声同期のみ）"
   },
+  "examples": [{ "title": "Satya Nadella opens Microsoft Ignite 2026", "url": "https://www.youtube.com/watch?v=Nv8-Km25Qj4" }],
   "selection_rules": "プレゼンテーションの説明が目的から結論まで伝わる発話区間を選ぶ。挨拶や準備中より、スライドを使った説明を優先する。",
   "planner": "pip",
   "screen": { "min_hold_sec": 2, "lead_sec": 0.3, "tail_sec": 0.5, "hook_presenter_sec": 2, "main_min_scale": 0.72 },

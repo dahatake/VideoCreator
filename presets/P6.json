@@ -1,6 +1,6 @@
 {
   "id": "P6",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "解説・講義（要点テロップ）",
   "genre": "ビジネス",
   "available": true,
@@ -40,6 +40,7 @@
       "headline",
       "counter"
     ],
+    "look": "study",
     "caption": {
       "max_lines": 1,
       "margin_v": 620,
@@ -72,6 +73,10 @@
     "sound": "原音を明瞭に"
   },
   "examples": [
+    {
+      "title": "QuizKnock: 嘘クイズには答えちゃダメ！疑心暗鬼フラッシュクイズ！",
+      "url": "https://www.youtube.com/watch?v=blT0lRalHOQ"
+    },
     {
       "title": "中田敦彦のYouTube大学",
       "url": "https://www.youtube.com/watch?v=qh5t4WMroyU"

@@ -881,3 +881,100 @@ Cuts a vertical short for YouTube Shorts, TikTok and Instagram Reels from the so
 - Problems found and fixed during this check:
   - Exporting P12 in a new data folder failed. The sound-effect library (`sfx_pop.wav` etc.) was prepared only when scene-change cards, quips or BGM were on, so it was not prepared for a short. The renderer silently skips missing sound effects, but the export provenance record (`RenderProvenance`) failed while hashing that file. `PipelineRunner` now prepares the library at generation time when sound effects are on, and also at export time when the plan contains sound effects.
   - The QA length check (`QaEngine` DurationRange) had a 180-second upper bound. For a short, `Target.Max` (60 s) is the upper bound, confirming that the whole file, including any opening, fits within 60 seconds.
+
+## 23. Stronger telop looks matched to the genre (variety, study, corporate)
+
+Telops are made louder only in the templates whose genre calls for it. Each genre is "loud" in a different way, so frames of three reference videos were measured and turned into numbers. Captions (the spoken words) stay verbatim, and the safe zone, face avoidance and QA are reused unchanged.
+
+| Look (`telop.look`) | Templates | Reference |
+|---|---|---|
+| `variety` (stronger, 1.2.0) | P1, P3 | [Ametalk! "Comedians who write their material vs. those who don't"](https://www.youtube.com/watch?v=sJSn1sRtZzo) |
+| `study` (new, 1.1.0) | P6, P10 | [QuizKnock "Don't answer the fake quiz! Paranoid flash quiz!"](https://www.youtube.com/watch?v=blT0lRalHOQ) |
+| `corporate` (new, 1.1.0) | P7, P11 | [Satya Nadella opens Microsoft Ignite 2026](https://www.youtube.com/watch?v=Nv8-Km25Qj4) |
+| `standard` (unchanged) | P2, P4, P5, P8, P9 | — |
+
+### Measurements (source frames at 1920×1080, measured with [spikes/27-telop-looks.cs](../../../spikes/27-telop-looks.cs), FFmpeg and Python; the videos are not stored in the repository)
+
+- **Ametalk!**: punch telops are layered "fill → white inner stroke ≈ 4 px → black outer stroke ≈ 5 px → ≈ 16 px soft shadow". Glyphs are 128–164 px tall (12–15 % of the frame height). A telop appears whole in one frame (no scale animation), 0.53 s after the shot change. Information sits in gradient boxes.
+- **QuizKnock**: captions have a per-speaker colour fill (green #008049, purple #AA0EAD) with a cream stroke ≈ 5 px and a thin dark edge. Questions are a white box with a red frame and black text. Yellow punch telops also appear in one frame; the second half follows 0.8 s later (staged reveal).
+- **Ignite**: no captions or lower thirds over the speaker. Text is only on slides: the keyword in a cream pill (#FFFFE0) with dark text, the rest in dark boxes with a thin light frame. Changes are hard cuts or ≈ 0.2 s fades, never a bounce.
+
+### How editors work (research)
+
+No first-hand account from the programmes' staff was found. The usual industry workflow is: transcript → telop script (an AD or director writes time, wording and type) → a telop operator sets them in the programme's design → typo and compliance check. Sources: [the TV AD's job](https://www.f-its.co.jp/telecareer/tv-edit-ad-job-202501/), [Yoshimoto Broad Tech, editing](https://www.yoshimoto-broad-tech.jp/recruit/case/edit.html), [QuizKnock's production steps (question writing, proofreading)](https://realsound.jp/tech/2023/12/post-1505551.html). The app already has the same shape — "transcript → the AI picks types and words (only verbatim matches) → looks come from the template's table → QA" — so only the final "table of looks" changed. Reading-speed figures (Netflix Japanese subtitles 4–7 characters/s, [Netflix Japanese Timed Text Style Guide](https://partnerhelp.netflixstudios.com/hc/en-us/articles/215767517-Japanese-Timed-Text-Style-Guide)) are within the existing 6 characters/s limit, so they were not changed.
+
+### How it works (`Variety`, `Study`, `Corporate`, `Metrics` and `Band` in [AssWriter.cs](../../../src/VideoCreator.Core/Rendering/AssWriter.cs))
+
+- **Two-colour strokes and frames are drawn by an underlay event**: one ASS event has a single outline colour. An event with transparent text and a wider outline (or a larger box) is placed on a **separate layer** directly below (on the same layer libass would push the events apart). Position, animation and shrink-to-fit are the same as the main event's.
+- **variety**: the punch keeps its yellow fill, black stroke 14 and shadow, and gains a blurred dark glow (underlay, outline 24, `\blur6`). The red tsukkomi box gets a white frame (box 14, frame 20) and SFX a black outer stroke (white 9, black 16). The outer extents are unchanged, so the bands are unchanged.
+- **study**: captions have a white fill with a speaker-colour stroke (green #007040, purple #9A0C9D, blue #0050B4, 5 px) and a dark outer edge (7 px, underlay). The headline is a "question box": white box, red frame (#D81E1E, 4 px), black text. The outer extents equal the standard look's, so the bands and the P10 screen layout (`ScreenPlanner`) are unchanged.
+- **corporate**: captions are white text on an opaque dark box (#1B1B1B) with a thin frame (underlay). In P7 the frame's colour tells the speakers apart (Microsoft logo blue, orange-red, green). The keyword is a cream pill with dark text, 140 px above the caption box. The headline is a dark box with a thin frame. Instead of the `pop` bounce, `\fad(200,120)` (Fluent motion "Normal", 200 ms). Boxes are visible, so `Band` includes the box and frame.
+
+### Rejected designs (decided by a third party)
+
+The judge was Windows OCR (Japanese): rendered frames scaled to a Shorts grid tile (270 px wide), compared by character-bigram recall (`spikes/27-telop-looks.cs ocr`).
+
+| Design | OCR recall | Decision |
+|---|---|---|
+| Punch as in the reference: "fill → white inner → black outer" (5 phrases × 3 backgrounds) | 0.22 (before 0.46) | Rejected. The bright inner ring makes letters look hollow when small. A red fill gives 0.22–0.30 |
+| Punch: yellow + black stroke + blurred dark glow | **0.69** (before 0.46) | Adopted |
+| Caption (study) as in the reference: colour fill + cream stroke | 0.00–0.10 (before 0.60–0.73) | Rejected. It passed WCAG (contrast 5.8) but could not be read |
+| Caption (study): white fill + speaker-colour stroke | **0.94** (before 0.89) | Adopted |
+| Caption (corporate): translucent box | — | Rejected. The underlay frame's colour showed through, so the box colour changed per speaker (confirmed on pixels) |
+
+### Verification
+
+- **Other templates unchanged**: the same plan was written to ASS for every template from the previous commit (git worktree) and from the change, and compared byte by byte. Only P1, P3, P6, P7, P10 and P11 changed; P2, P4, P5, P8 and P9 are identical. P12 changes with the shorts look (§24); rechecked after the parallel work finished, with the same result.
+- **What libass draws** ([TelopLookTests.cs](../../../tests/VideoCreator.Tests/TelopLookTests.cs)): for P6 and P7, captions, punch telops and headlines are drawn on grey; their pixel bounding boxes lie inside the safe zone, a caption and a punch shown together never touch, and corporate boxes lie inside their `Band`. In P7 the frame pixels have the speaker's colour while the box pixels are #1B1B1B for every speaker (a translucent box fails). The variety layer order is in [VarietyTests.cs](../../../tests/VideoCreator.Tests/VarietyTests.cs); the existing rendered-band tests still pass.
+- **Readability (Windows OCR, 3 backgrounds: bright studio, quiz set, dark keynote; every telop of P1, P3, P6, P7, P10 and P11)**: mean recall 0.74 → 0.76 (90 items). No caption got worse. P7 captions 0.67 → 1.00, headline 0.58 → 0.75; P6 and P10 captions 0.89 → 0.94. The small dips of the P6/P10 punch and counter (one item each) are OCR noise from the neighbouring caption: their styles are byte-identical to before.
+- **Contrast (WCAG 2.x; in brackets, as libass renders the colours in TV range)**: study white vs stroke 6.2–7.5 (5.1–6.2), headline text vs box 16.3 (11.9), corporate white vs box 17.2 (12.5), pill text 17.1 (12.5).
+
+Limitations: the references are long landscape videos; they were converted to vertical Shorts by the ratio to the frame width. The reference's white inner stroke and colour-filled captions are not used, because readability when small comes first. Variety and study presentation telops now appear at their start time without scaling. In study, selected emphasis phrases reveal a prefix first and the full phrase 0.8 seconds later when the text and display duration allow it. Corporate fades and other templates' existing behavior are unchanged.
+
+## 24. Making the short (P12) flashier, matched to measurements of reference shorts
+
+The "flashiness" of reference shorts was turned into numbers and applied to P12's look, structure and sound. Not by impression: the references and the app's output were measured with the same yardstick, the gap was closed, and the output was measured again.
+
+### Investigation (raw material and method)
+- **Material**: 10 QuizKnock shorts (36–121 s) and 10 variety shorts from the official Snow Man channel (31–60 s; dance and song promotions were left out as a different genre). They were fetched into a temporary folder only for measuring and are not in the repository; only the numbers are kept.
+- **Method** ([spikes/25-shorts-style.cs](../../../spikes/25-shorts-style.cs)): frames at 2 fps go through Windows OCR (Japanese) to measure text lines, glyph height, position and colour. Cuts come from ffmpeg `scdet`, sound from `ebur128` and `silencedetect`. Glyph heights are OCR values, and the app's output is measured the same way, so no font conversion is needed.
+- **Editors' practice** (public sources): in an interview with QuizKnock's editors, the top priority for shorts is "not letting viewers get bored"; captions are "one colour per person", key moments alternate close and wide shots, and sound effects are layered. No first-hand source on Snow Man's editing was found, so only the measurements were used for it.
+
+### Results (medians; the app is the three videos talk, duo and motiv, see Verification)
+
+| Metric | QuizKnock | Snow Man | P12 before | P12 after |
+|---|---|---|---|---|
+| Frames with text | 97% | 59% | 93% | 95% |
+| Frames with text at the top (top 25 % of the height) = title bar | 93% | 20% | 91% | 95% |
+| Text in the first 2 s | 100% | 100% | 100% | 100% |
+| Caption glyph height (OCR, px) | 69 | 94 | 48 | 68 |
+| Largest glyph in a frame (px) | 102 | 105 | 49 | 85 |
+| Text lines per frame | 2.7 | 1.7 | 2.3 | 2.1 |
+| Telop appearances per minute | 55 | 53 | 51 | 49 |
+| Integrated loudness (LUFS) | -14.1 | -19.5 | -14.0 | -14.0 |
+| Length (s) | 54 | 52 | 29 | 29 |
+
+What this shows:
+- The flashiness comes from a **title bar that is always on at the top** (QuizKnock 93 %), **big captions** (about 1.4× the old size) and **the size of the biggest text**. Cutting speed (ASL 3.5 s) and telop frequency were already about the same before.
+- Snow Man does not keep a title bar on (20 %); its core is big speech telops coloured per speaker (94 px). Common to both: big captions and text in the first 2 seconds.
+
+### Changes (`telop.look = "short"`, P12 1.1.0; other templates unchanged)
+
+| Item | What |
+|---|---|
+| Title bar | The AI headline in white on a red box with a white frame, shown at the top **from the first frame to the last** (150 px, shrunk to fit the width). Fixed at the top edge of the safe zone and never moved; left out only in the cuts where a face is under it (editors never move the bar). Not shown when every cut has a face there |
+| Big title | The opening hook, 180 px yellow with a white inner and black outer stroke, under the bar for 2.5 s |
+| Captions | 112 px (was 78), condensed to 90 %, 11 characters per line, **a fill colour per speaker** (yellow, light blue, light green), a black stroke plus a wider black edge on the layer below and a blurred halo. Captions stay verbatim |
+| Punch telops | Emphasis, tsukkomi and onomatopoeia are big (200, 170, 160 px) and **one at a time**. When there is no room beside a face they are shrunk to 0.8, 0.65 or 0.5× (at least 48 px) instead of dropped, and never pushed under the title bar |
+| Sound | Sound effects set to heavy (on the big title, emphasis and tsukkomi) |
+| AI instructions | Headline: the project, question or situation in at most 10 characters (e.g. "〇〇クイズ", "ガチ反省会"); big title: the strongest line in at most 8 characters. Both made from words in the transcript |
+
+### Verification
+- **Measured again with the same yardstick**: before (HEAD in a git worktree) and after, [spikes/26-short-render.cs](../../../spikes/26-short-render.cs) renders P12 from the same inputs: the audio of a two-speaker talk over ① a test pattern (a colourful background), ② a landscape picture of two NASA portraits side by side ([spikes/faces](../../../spikes/faces), using the app's face detector), and ③ one real vertical selfie. As the results table shows, text size and the title bar are now within the references' range.
+- **Legibility when small (third party: Windows OCR)**: the rendered videos were shrunk to the size of the Shorts feed (270 px wide) before OCR, and the share of the planned caption characters that were read was compared. Before 76 % → after **83 %** (talk 84→89 %, duo 79→87 %, selfie 68→71 %). Intermediate designs were rejected by OCR:
+  - Red emphasis words inside captions: selfie 68→56–59 % ("日本語" read as "五ロ"); a white stroke did not help. The emphasis word is shown separately as a big emphasis telop, so captions keep one colour.
+  - "Dark fill + white stroke" captions as in the references: 60 % overall (the thin fill collapses when shrunk).
+- **Problem found and fixed**: in the selfie, an emphasis telop pushed up by the face was drawn under the title bar (found by the OCR comparison). The bar is now placed first and occupies its area while it is shown.
+- **Automated tests** ([ShortPresetTests.cs](../../../tests/VideoCreator.Tests/ShortPresetTests.cs)): the bar starts at 0 s (other templates still start at 2.5 s); it is left out only in cuts with a face under it; punch telops shrink to avoid faces; nothing is pushed under the bar (confirmed to fail before the fix); per-speaker fills; what libass draws stays inside the bands and the safe zone. 509 of 510 tests pass (1 skipped as before).
+
+Limitations: the references are 20 videos and include channel habits. The share of coloured captions is higher than the references' (34–64 %) because of the speaker colours. In a selfie with a very large face, punch telops may be left out (the title bar is shown in 56 % of frames). The real test is the "viewed vs. swiped away" share in YouTube Analytics after posting, which the app cannot measure.

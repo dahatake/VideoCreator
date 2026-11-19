@@ -175,4 +175,117 @@ public sealed class ShortPresetTests : IAsyncLifetime
         var saved = Rt.Store.Get<Project>(Kinds.Project, _id)!.GenerationSettings;
         Assert.Equal(("P6", "with"), (saved.PresetId, saved.Short));
     }
+
+    // ---- the shorts look (telop.look = "short", docs/IMPLEMENTATION.md §24) ----
+
+    static readonly MediaInfo Vertical = Fixtures.Landscape(8) with { Width = 1080, Height = 1920 };
+    static EditPlan ShortPlan(List<Clip> clips, List<Telop> telops, Func<double, FaceBox[]> faces) => new()
+    {
+        EditplanId = "e", ProjectId = "p", Preset = P12.Ref, Audio = new() { Master = "a" }, Timeline = clips, Telops = telops,
+        TelopFaces = new() { ["a"] = new(Vertical, Enumerable.Range(0, 18).Select(i => new FaceSample(i * 0.5, [.. faces(i * 0.5)])).ToList()) },
+    };
+
+    [Fact] // measured: the title bar is on in 93 % of QuizKnock short frames; the hook is a big title over the opening seconds, not instead of the bar
+    public void The_title_bar_runs_from_the_first_frame_in_the_short_look_only()
+    {
+        var tr = new Transcript { Provider = "t", Duration = 10, Words = [new("w1", 0.2, 1, "帰れません", 1), new("w2", 1, 2, "。", 1), new("w3", 3, 4, "百円だけ", 2), new("w4", 4, 5, "。", 2)] };
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 8, Reframe = new() { Mode = "fit" } } };
+        Telop Bar(Preset p) => TelopBuilder.Build(clips, tr, p, "帰れません", "百円だけ", [], []).Single(t => t.Type == TelopType.Headline);
+        Assert.Equal(0, Bar(P12).Start);
+        Assert.Equal(TelopBuilder.HookSeconds, Bar(Fixtures.Presets["P4"]).Start);
+    }
+
+    [Fact] // the bar never moves: it is left out only in the cut where a face is under it
+    public void The_title_bar_is_hidden_only_in_cuts_where_a_face_is_under_it()
+    {
+        var clips = new List<Clip>
+        {
+            new() { ClipId = "c1", AssetId = "a", SrcIn = 0, SrcOut = 4, Reframe = new() { Mode = "fit" } },
+            new() { ClipId = "c2", AssetId = "a", SrcIn = 4, SrcOut = 8, Reframe = new() { Mode = "fit" } },
+        };
+        var bar = new Telop { Id = "h", Type = TelopType.Headline, Text = "百円だけ", Start = 0, End = 8, Style = "Headline" };
+        // a close-up whose head reaches the top in the first cut, a lower face in the second (detector samples within 0.5 s of a cut count for it)
+        var plan = ShortPlan(clips, [bar], t => [t < 3 ? new FaceBox(0.3, 0.1, 0.4, 0.15, 1) : new FaceBox(0.3, 0.55, 0.4, 0.15, 1)]);
+        var placed = VideoCreator.Rendering.TelopLayout.Resolve(plan, P12)["h"];
+        Assert.NotNull(placed.Bounds);
+        Assert.Equal([(0.0, 4.0)], placed.Hidden);
+        var events = VideoCreator.Rendering.AssWriter.Write(plan, P12).Split('\n').Where(l => l.StartsWith("Dialogue:") && l.Contains(",Headline,")).ToList();
+        Assert.Equal("0:00:04.00,0:00:08.00", Assert.Single(events).Split(',')[1] + "," + events[0].Split(',')[2]);
+
+        var everywhere = ShortPlan(clips, [bar], _ => [new FaceBox(0.3, 0.1, 0.4, 0.15, 1)]);
+        Assert.Null(VideoCreator.Rendering.TelopLayout.Resolve(everywhere, P12)["h"].Bounds);
+    }
+
+    [Fact] // a big face leaves no room for a 200 px punch telop: the short look shrinks it (down to 48 px) instead of dropping it
+    public void A_punch_telop_shrinks_to_fit_beside_a_big_face_in_the_short_look()
+    {
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 4, Reframe = new() { Mode = "fit" } } };
+        var emph = new Telop { Id = "e", Type = TelopType.Emphasis, Text = "見せ場です", Start = 0, End = 3, Style = "Emph", Animation = "pop" };
+        var face = new FaceBox(0.1, 0.12, 0.8, 0.3, 1);
+        var shortPlan = ShortPlan(clips, [emph], _ => [face]);
+        var placed = VideoCreator.Rendering.TelopLayout.Resolve(shortPlan, P12)["e"];
+        var bounds = Assert.IsType<VideoCreator.Rendering.TelopLayout.Rect>(placed.Bounds);
+        Assert.InRange(placed.FontSize, VideoCreator.Rendering.TelopLayout.MinShrunkPx, VideoCreator.Rendering.AssWriter.Short.EmphPx - 1);
+        Assert.False(bounds.Intersects(VideoCreator.Rendering.TelopLayout.Project(face, clips[0], Vertical, shortPlan.Canvas, 1)));
+        // a face over the whole free height: nothing fits even at the smallest size
+        Assert.Null(VideoCreator.Rendering.TelopLayout.Resolve(ShortPlan(clips, [emph], _ => [new FaceBox(0.1, 0.12, 0.8, 0.55, 1)]), P12)["e"].Bounds);
+    }
+
+    [Fact] // one fill colour per speaker (QuizKnock's editors: 「1人1色」); no red keyword inside the caption (OCR misread it at feed size, §24)
+    public void Captions_are_filled_per_speaker_without_keyword_colours()
+    {
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 4, Reframe = new() { Mode = "fit" } } };
+        var cap = new Telop { Id = "c1", Type = TelopType.Caption, Text = "一万円なんて", Start = 0, End = 2, Speaker = 2 };
+        var emph = new Telop { Id = "e", Type = TelopType.Emphasis, Text = "一万円", Start = 0, End = 1.5, Style = "Emph", Animation = "pop" };
+        var ass = VideoCreator.Rendering.AssWriter.Write(ShortPlan(clips, [cap, emph], _ => []), P12);
+        var line = ass.Split('\n').Single(l => l.StartsWith("Dialogue:") && l.Contains(",CapS2,"));
+        Assert.EndsWith(",,一万円なんて", line.TrimEnd());
+        Assert.Contains($"Style: CapS2,{VideoCreator.Rendering.AssWriter.FontName},112,{VideoCreator.Rendering.AssWriter.Short.SpeakerFills[1]},", ass);
+        Assert.Single(ass.Split('\n'), l => l.StartsWith("Dialogue:") && l.Contains(",CapEdge,") && l.TrimEnd().EndsWith("一万円なんて"));
+        Assert.Equal(11, VideoCreator.Rendering.AssWriter.CaptionLineChars(P12));
+    }
+
+    [Fact] // the bands and the title-bar rows used for face avoidance and QA must contain what libass actually draws, inside the safe zone
+    public async Task Rendered_short_telops_stay_inside_their_bands_and_the_safe_zone()
+    {
+        var ff = Fixtures.Ff ?? throw new InvalidOperationException("run scripts/get-tools.ps1");
+        const int W = 1080, H = 1920;
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 4, Reframe = new() { Mode = "fit" } } };
+        var g = VideoCreator.Rendering.AssWriter.Geo(P12, W, H);
+        var cases = new (TelopType Type, string Style, string Text)[]
+        {
+            (TelopType.Headline, "Headline", "ガチ反省会"), (TelopType.Headline, "Headline", "100円のものだけで1万円"), (TelopType.Hook, "Hook", "帰れません"),
+            (TelopType.Caption, "Caption", "芝が言ってたんですけど"), (TelopType.Emphasis, "Emph", "アウトです"),
+        };
+        foreach (var (type, style, text) in cases)
+        {
+            var plan = ShortPlan(clips, [new Telop { Id = "x", Type = type, Text = text, Start = 0, End = 3, Style = style }], _ => []);
+            var ass = Path.Combine(_root, $"short_{style}_{text.Length}.ass");
+            await File.WriteAllTextAsync(ass, VideoCreator.Rendering.AssWriter.Write(plan, P12), new System.Text.UTF8Encoding(false), Ct);
+            using var ms = new MemoryStream();
+            await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", $"color=black:s={W}x{H}:r=10:d=4",
+                "-vf", $"subtitles={FFmpeg.FilterPath(ass)}:fontsdir={FFmpeg.FilterPath(ff.FontsDir)},select='eq(n,10)'", "-fps_mode", "passthrough", "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-"], Ct, stdout: ms);
+            var buf = ms.ToArray(); Assert.Equal(W * H, buf.Length);
+            int x1 = W, x2 = -1, y1 = H, y2 = -1;
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (buf[y * W + x] > 48) { x1 = Math.Min(x1, x); x2 = Math.Max(x2, x); y1 = Math.Min(y1, y); y2 = Math.Max(y2, y); }
+            Assert.True(x2 > 0, $"{style}: nothing drawn");
+            var placed = VideoCreator.Rendering.TelopLayout.Resolve(plan, P12)["x"];
+            var (top, bottom) = type == TelopType.Headline ? (placed.Bounds!.Top, placed.Bounds.Bottom) : VideoCreator.Rendering.AssWriter.Band(type, P12, H)!.Value;
+            Assert.True(y1 >= top && y2 <= bottom, $"{style} 「{text}」: drawn y{y1}-{y2}, band {top:F0}-{bottom:F0}");
+            Assert.True(y1 >= g.Safe.Top && y2 <= H - g.Safe.Bottom && x1 >= g.Safe.Left && x2 <= W - g.Safe.Right, $"{style}: drawn x{x1}-{x2} y{y1}-{y2} outside the safe zone");
+        }
+    }
+
+    [Fact] // found in the rendered selfie: an emphasis pushed up by the face was drawn under the title bar
+    public void A_telop_moved_up_by_a_face_never_lands_under_the_title_bar()
+    {
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "a", SrcIn = 0, SrcOut = 8, Reframe = new() { Mode = "fit" } } };
+        var bar = new Telop { Id = "h", Type = TelopType.Headline, Text = "百円だけ", Start = 0, End = 8, Style = "Headline" };
+        var emph = new Telop { Id = "e", Type = TelopType.Emphasis, Text = "日本語", Start = 0, End = 2, Style = "Emph", Animation = "pop" };
+        // the face fills the middle: the only free rows are at the top, where the bar is
+        var plan = ShortPlan(clips, [emph, bar], _ => [new FaceBox(0.15, 0.3, 0.7, 0.42, 1)]);
+        var layout = VideoCreator.Rendering.TelopLayout.Resolve(plan, P12);
+        var barRect = Assert.IsType<VideoCreator.Rendering.TelopLayout.Rect>(layout["h"].Bounds);
+        Assert.True(layout["e"].Bounds is not { } e || !e.Intersects(barRect), $"emphasis {layout["e"].Bounds} under the bar {barRect}");
+    }
 }

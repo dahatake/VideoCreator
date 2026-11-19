@@ -68,10 +68,18 @@ public sealed record PresetTelop
     public CaptionStyle Caption { get; init; } = new();
     /// <summary>Fixed caption colour per speaker (FR-TEL-10), for conversations.</summary>
     public bool SpeakerColors { get; init; }
-    /// <summary>standard | variety. variety = Japanese variety-show look (docs/IMPLEMENTATION.md §12): condensed captions with a dark halo,
-    /// emphasis words in red inside captions, one big punch telop at a time, Q-bar headline.</summary>
+    /// <summary>standard | variety | study | corporate. variety = Japanese variety-show look (docs/IMPLEMENTATION.md §12, §23): condensed captions
+    /// with a dark halo, emphasis words in red inside captions, one big punch telop at a time with layered strokes, Q-bar headline.
+    /// study = quiz/explainer look (§23): colour-filled captions with a cream stroke, question-box headline, instant entrances, and staged selected emphasis.
+    /// corporate = keynote look (§23): captions on a framed dark box, keyword pill, fades instead of bounces.
+    /// short = vertical-shorts look (§24, P12): a title bar from the first frame, a big opening title, big captions coloured per speaker, one punch at a time.</summary>
     public string Look { get; init; } = "standard";
     public bool IsVariety => Look == "variety";
+    public bool IsStudy => Look == "study";
+    public bool IsCorporate => Look == "corporate";
+    public bool IsShort => Look == "short";
+    /// <summary>Looks whose big punch telops (emphasis, tsukkomi, onomatopoeia) are shown one at a time (TelopExtras.OnePunchAtATime).</summary>
+    public bool OnePunch => IsVariety || IsShort;
 }
 
 public sealed record PresetLoudnorm(double I = -14, double TP = -1.5);
@@ -172,7 +180,7 @@ public static class PresetStore
         Req(p.Cut.PunchInScale is >= 1.0 and <= 1.3, "punch_in_scale 1.0..1.3");
         var c = p.Telop.Caption;
         Req(c.FontPx is >= 48 and <= 128, "caption.font_px 48..128");
-        Req(p.Telop.Look is "standard" or "variety", "telop.look must be standard|variety");
+        Req(p.Telop.Look is "standard" or "variety" or "study" or "corporate" or "short", "telop.look must be standard|variety|study|corporate|short");
         Req(c.MaxCharsPerLine is >= 8 and <= 16, "caption.max_chars_per_line 8..16");
         Req(c.MaxLines is 1 or 2, "caption.max_lines 1..2");
         Req(c.MaxCps is >= 3 and <= 10, "caption.max_cps 3..10");
