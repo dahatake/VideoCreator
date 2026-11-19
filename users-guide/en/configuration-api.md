@@ -45,6 +45,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 
 ## Setting lifetimes
 
+- MAI-Transcribe-2 is used through a [Speech resource in a supported region](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe), not a separate model deployment. In Settings > Azure Speech, choose a separate connection, select the transcription model and resource, then test and save. The model persists with the connection across restarts without changing Foundry chat. Speech test/save APIs accept optional `model` (`MAI-Transcribe-2` / `standard`); omission preserves the saved choice or uses `Asr.Model` if none is saved. Unsupported regions fall back to standard, so check the model reported by the test. Draft model selections do not take effect. Billing is usage-based; Azure budget alerts are not hard spending caps.
 - UI LLM selection and Speech/Foundry/Copilot connections persist in `DataDir/ai-settings.json` across restart and override startup configuration. Connections save only after a passing test; removing one restores startup configuration. Keys/tokens use Windows DPAPI; unsupported OSes refuse secret storage.
 - UI project-location changes persist in Store settings and override startup configuration.
 - Patterns/generation options persist per project, restore after restart, and are recorded in Job.Options on generation.

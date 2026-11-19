@@ -13,7 +13,7 @@ public static class AiConnectionApi
 {
     /// <summary>Empty <c>api_key</c> = keep the saved key (only for the same endpoint host).</summary>
     public sealed record FoundryRequest(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, string? ApiKey);
-    public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey);
+    public sealed record SpeechRequest(string? Endpoint, string? Auth, string? TenantId, string? ApiKey, string? Model = null);
     /// <summary>Choose the verified Foundry connection or the separate Speech settings for captions.</summary>
     public sealed record SpeechSourceRequest(bool? UseFoundry);
     /// <summary>Empty <c>github_token</c> = keep the saved token. Null model / effort / tier = the runtime's default.</summary>
@@ -56,11 +56,12 @@ public static class AiConnectionApi
             FoundryAvailable = rt.VerifiedFoundrySpeech(saved) != null,
             UseFoundry = saved.UseFoundrySpeech ?? (source == "foundry"),
             // preferred model; regions without MAI-Transcribe fall back to "standard" (the connection test reports the model that answered)
-            Model = string.IsNullOrWhiteSpace(rt.Options.Asr.Model) || rt.Options.Asr.Model.Trim().Equals("standard", StringComparison.OrdinalIgnoreCase) ? "standard" : rt.Options.Asr.Model.Trim(),
+            Model = rt.SpeechModel(active),
             MaiRegions = AzureFastTranscriber.MaiRegions,
             Separate = new
             {
                 Source = separateSource, Endpoint = SafeEndpoint(separate), Auth = separate?.Auth ?? "entra", separate?.TenantId,
+                Model = rt.SpeechModel(separate),
                 HasApiKey = saved.Speech?.ApiKeyProtected != null,
                 ApiKeyUnreadable = saved.Speech?.ApiKeyProtected != null && separate?.ApiKey == null,
             },
@@ -243,7 +244,10 @@ public static class AiConnectionApi
                 key = rt.AiSettings.Reveal(saved.ApiKeyProtected) ?? throw new ArgumentException("保存した API キーをこの Windows ユーザーでは読めません。キーを入力し直してください");
             else throw new ArgumentException("API キーを入力してください。別の接続先に保存済みのキーは送信しません。");
         }
-        return new SpeechConnection(endpoint, auth, tenant, key);
+        var model = req.Model == null ? rt.AiSettings.Load().Speech?.Model : Clean(req.Model);
+        if (req.Model != null && model is not ("standard" or AzureFastTranscriber.MaiModel))
+            throw new ArgumentException("Speech model must be standard | MAI-Transcribe-2.");
+        return new SpeechConnection(endpoint, auth, tenant, key, model);
     }
 
     public static FoundryConnection FoundryInput(Runtime rt, FoundryRequest req)

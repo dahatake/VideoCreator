@@ -44,7 +44,7 @@ Automatic subtitles use Azure Speech Fast Transcription. Ask your Azure administ
 
 Azure is metered. Configure **the deployment name you created**, not a model name. Setup creates neither resources nor deployments.
 
-After launch, **Settings → AI connections** lets you configure Speech and Foundry independently,
+After launch, **Settings → AI connections** lets you configure Foundry and Speech independently,
 choose **API key / Microsoft Entra ID**, test and save. For shared users, assign Speech User /
 OpenAI User in the resource group's IAM; each user signs in to the same tenant on their PC.
 Keys also require Azure local authentication to be enabled. See [Azure access](azure-access.md)

@@ -45,6 +45,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 配置的生命周期
 
+- MAI-Transcribe-2 通过[支持区域中的 Speech 资源](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)使用，无需单独部署模型。在设置的 Azure Speech 中选择单独连接，选择转写模型和资源，然后测试并保存。模型随连接保存并在重启后恢复，不改变 Foundry 聊天连接。Speech 测试和保存 API 接受可选的 `model`（`MAI-Transcribe-2` / `standard`）；省略时保留已保存的选择，未保存时使用 `Asr.Model`。不支持的区域会回退到标准模型，请检查测试返回的模型名称。草稿中的模型选择不会生效。服务按量计费，Azure 预算提醒不是支出的硬性上限。
 - LLM 方式与 Speech/Foundry/Copilot 连接保存在 `DataDir/ai-settings.json`，重启后仍优先于启动配置。连接测试通过后才保存；删除已保存连接后恢复启动配置。密钥和令牌使用 Windows DPAPI 加密，不支持的系统拒绝保存秘密。
 - 界面修改项目保存位置会持久化到 Store 的 setting，优先于启动配置。
 - 界面选择的模式与生成选项按项目保存到 Store，重启后恢复，生成时也记录到 Job.Options。

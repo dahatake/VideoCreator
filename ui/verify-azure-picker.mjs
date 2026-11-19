@@ -10,7 +10,7 @@ page.on('pageerror', e => errors.push(e.message));
 const settings = {
   llm_provider: 'none', local_only: false, copilot_cli: null, asr_configured: false, azure_configured: false, secret_protection: 'dpapi',
   transmission: { llm_disabled: false },
-  speech: { source: 'none', auth: 'key' },
+  speech: { source: 'none', auth: 'key', model: 'standard', mai_regions: ['eastus'] },
   foundry: { source: 'none', auth: 'key' },
   copilot: { source: 'config', auth: 'user' },
 };
@@ -60,7 +60,7 @@ try {
     calls.push(['save', route.request().postDataJSON()]);
     if (saveFoundry) {
       settings.foundry = { source: 'app', auth: 'entra' };
-      settings.speech = { source: 'app', endpoint: 'https://dedicated.cognitiveservices.azure.com/', auth: 'entra',
+      settings.speech = { ...settings.speech, source: 'app', endpoint: 'https://dedicated.cognitiveservices.azure.com/', auth: 'entra',
         foundry_available: true, use_foundry: false, separate: { source: 'app', endpoint: 'https://dedicated.cognitiveservices.azure.com/', auth: 'entra' } };
       return route.fulfill({ json: { test: { ok: true, steps: [{ id: 'chat', ok: true, ms: 1 }, { id: 'speech', ok: true, ms: 1 }] } } });
     }
@@ -73,6 +73,20 @@ try {
       endpoint: body.use_foundry ? catalog.accounts[0].endpoint : settings.speech.separate.endpoint };
     return route.fulfill({ status: 204 });
   });
+  let actualSpeechModel = 'MAI-Transcribe-2';
+  for (const suffix of ['speech/test', 'speech']) {
+    await page.route(`**/api/settings/ai/${suffix}`, route => {
+      const body = route.request().postDataJSON();
+      calls.push([suffix, body]);
+      const result = { ok: true, steps: [{ id: 'speech', ok: true, ms: 1, model: actualSpeechModel }], endpoint: body.endpoint };
+      if (suffix === 'speech') {
+        settings.speech = { ...settings.speech, model: body.model,
+          separate: { ...settings.speech.separate, model: body.model } };
+        return route.fulfill({ json: { test: result } });
+      }
+      return route.fulfill({ json: result });
+    });
+  }
   await page.goto(base);
   await page.locator('#settings-btn').click();
   await page.locator('#sPick').waitFor();
@@ -85,7 +99,7 @@ try {
   await page.locator('#sResBox').waitFor({ state: 'visible' });
   assert.deepEqual(calls[0], ['resources', { tenant_id: 'contoso.onmicrosoft.com' }]);
   assert.match(await page.locator('#sPickStatus').innerText(), /3 件のリソース（2 件のサブスクリプション/);
-  assert.equal(await page.getByLabel('リソース').first().evaluate(el => el.id), 'sResource', 'select has an accessible name');
+  assert.equal(await page.locator('#aiSpeech').getByLabel('リソース').evaluate(el => el.id), 'sResource', 'select has an accessible name');
   assert.equal(await page.locator('#sEndpoint').evaluate(el => el.value), 'https://ai-both.cognitiveservices.azure.com/');
   assert.equal(await page.locator('#sEntraBox').isVisible(), true, 'key auth disabled → switched to Entra ID');
   assert.equal(await page.locator('#sKeyBox').isVisible(), false);
@@ -181,6 +195,23 @@ try {
   await sourceRequest;
   await page.locator('#sSeparate').waitFor();
   assert.equal(await page.locator('#sEndpoint').evaluate(el => el.value), 'https://dedicated.cognitiveservices.azure.com/');
+  assert.equal(await page.locator('#sTranscriptionModel').inputValue(), 'standard');
+  await page.locator('#sTranscriptionModel').selectOption('MAI-Transcribe-2');
+  const testSpeech = page.waitForResponse(r => r.url().endsWith('/speech/test'));
+  await page.locator('#sTest').click();
+  await testSpeech;
+  assert.equal(calls.at(-1)[1].model, 'MAI-Transcribe-2');
+  await page.locator('#sResult').getByText(/MAI-Transcribe-2/).first().waitFor();
+  assert.equal(settings.speech.model, 'standard', 'testing does not apply the model');
+  actualSpeechModel = 'standard';
+  await page.locator('#sTest').click();
+  await page.locator('#sResult fluent-message-bar[intent="warning"]').waitFor();
+  assert.match(await page.locator('#sResult').innerText(), /対応リージョン/);
+  actualSpeechModel = 'MAI-Transcribe-2';
+  await page.locator('#sSave').click();
+  await page.locator('#aiFlash').getByText(/Speech の接続を保存/).waitFor();
+  assert.equal(await page.locator('#sTranscriptionModel').inputValue(), 'MAI-Transcribe-2', 'saved model is restored');
+  assert.equal(calls.at(-1)[1].model, 'MAI-Transcribe-2');
   assert.deepEqual(errors, []);
   console.log('PASS: Azure picker and Speech source selection, visibility, persistence, and destination.');
 } finally {

@@ -139,7 +139,7 @@ public sealed class Runtime
     }
 
     public void SaveSpeech(SpeechConnection c, DateTimeOffset testedAt) =>
-        AiSettings.Update(s => s with { Speech = new SavedSpeech(c.Endpoint, c.Auth, c.TenantId, c.UsesKey ? AiSettings.Protect(c.ApiKey) : null, testedAt) });
+        AiSettings.Update(s => s with { Speech = new SavedSpeech(c.Endpoint, c.Auth, c.TenantId, c.UsesKey ? AiSettings.Protect(c.ApiKey) : null, testedAt, c.Model) });
 
     public IHighlightSelector FoundrySelector(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout);
@@ -147,9 +147,15 @@ public sealed class Runtime
     public ITextEmbedder FoundryEmbedder(FoundryConnection c, TimeSpan? timeout = null) =>
         new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
 
+    public string SpeechModel(SpeechConnection? c)
+    {
+        var model = (c?.Model ?? _o.Asr.Model)?.Trim();
+        return string.IsNullOrEmpty(model) || model.Equals("standard", StringComparison.OrdinalIgnoreCase) ? "standard" : model;
+    }
+
     public AzureFastTranscriber SpeechTranscriber(SpeechConnection c, string language) => c.UsesKey
-        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language, _o.Asr.Model)
-        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language, _o.Asr.Model);
+        ? new AzureFastTranscriber(new Uri(c.Endpoint), c.ApiKey ?? throw new InvalidOperationException("Saved Speech API key cannot be read. Enter it again in Settings."), _http, language, SpeechModel(c))
+        : new AzureFastTranscriber(new Uri(c.Endpoint), Credential(c.TenantId), _http, language, SpeechModel(c));
 
     public ITranscriber? Asr => AsrForLanguage(_o.Asr.Locale);
 

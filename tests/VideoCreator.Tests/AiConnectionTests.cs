@@ -375,6 +375,82 @@ public sealed class AiConnectionTests : IDisposable
     }
 
     [Fact]
+    public async Task Selected_Speech_model_is_tested_saved_restored_and_used_without_changing_Foundry()
+    {
+        using var handler = new SpeechHandler();
+        await using var app = App(speechHandler: handler);
+        using var http = Client(app);
+        var ct = TestContext.Current.CancellationToken;
+        var rt = app.Services.GetRequiredService<Runtime>();
+        rt.CredentialFactory = _ => new SpeechCredential();
+        var foundry = new FoundryConnection("https://chat.cognitiveservices.azure.com/openai/v1/", "gpt", null);
+        rt.SaveFoundry(foundry, DateTimeOffset.UtcNow, speechVerified: true);
+        var savedFoundry = rt.AiSettings.Load().Foundry;
+        const string endpoint = "https://model-selection.cognitiveservices.azure.com/";
+
+        foreach (var model in new[] { "standard", AzureFastTranscriber.MaiModel })
+        {
+            handler.Requests.Clear();
+            var before = rt.AiSettings.Load().Speech;
+            var body = new { endpoint, auth = "entra", model };
+            using var test = await http.PostAsJsonAsync("/api/settings/ai/speech/test", body, ct);
+            using var result = JsonDocument.Parse(await test.Content.ReadAsStringAsync(ct));
+            Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Equal(model, result.RootElement.GetProperty("steps")[0].GetProperty("model").GetString());
+            Assert.Equal(before, rt.AiSettings.Load().Speech);
+            Assert.Equal(model == AzureFastTranscriber.MaiModel, Assert.Single(handler.Requests).Body.Contains("enhancedMode"));
+
+            using var save = await http.PutAsJsonAsync("/api/settings/ai/speech", body, ct);
+            Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+            var restored = new AiSettingsStore(rt.AiSettings.Path, rt.AiSettings.Protector).Load();
+            Assert.Equal(model, restored.Speech!.Model);
+            Assert.Equal(model, restored.Speech.ToConnection(rt.AiSettings).Model);
+            Assert.Equal(model == "standard" ? AzureFastTranscriber.StandardName : AzureFastTranscriber.MaiName, rt.Asr!.Name);
+            Assert.Equal(savedFoundry, restored.Foundry);
+            using var settings = JsonDocument.Parse(await http.GetStringAsync("/api/settings", ct));
+            Assert.Equal(model, settings.RootElement.GetProperty("speech").GetProperty("model").GetString());
+            Assert.Equal(model, settings.RootElement.GetProperty("speech").GetProperty("separate").GetProperty("model").GetString());
+        }
+
+        handler.Requests.Clear();
+        using var invalid = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra", model = "unknown" }, ct);
+        Assert.Equal((HttpStatusCode)422, invalid.StatusCode);
+        Assert.Empty(handler.Requests);
+        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech!.Model);
+
+        handler.Status = HttpStatusCode.Forbidden;
+        using var failed = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra", model = "standard" }, ct);
+        Assert.Equal((HttpStatusCode)422, failed.StatusCode);
+        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
+
+        handler.Status = HttpStatusCode.OK;
+        using var legacy = await http.PutAsJsonAsync("/api/settings/ai/speech", new { endpoint, auth = "entra" }, ct);
+        Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
+        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
+
+        using var draft = await http.PutAsJsonAsync("/api/settings/drafts/speech", new { endpoint, auth = "entra", model = "standard" }, ct);
+        Assert.Equal(HttpStatusCode.OK, draft.StatusCode);
+        using var drafts = JsonDocument.Parse(await http.GetStringAsync("/api/settings/drafts", ct));
+        Assert.Equal("standard", drafts.RootElement.GetProperty("speech").GetProperty("model").GetString());
+        Assert.Equal(AzureFastTranscriber.MaiModel, rt.Speech.Model);
+    }
+
+    [Fact]
+    public async Task Selecting_Mai_on_an_unsupported_endpoint_reports_standard_instead_of_claiming_Mai()
+    {
+        using var handler = new MaiRegionHandler(regionServesMai: false);
+        await using var app = App(speechHandler: handler);
+        using var http = Client(app);
+        app.Services.GetRequiredService<Runtime>().CredentialFactory = _ => new SpeechCredential();
+        using var response = await http.PostAsJsonAsync("/api/settings/ai/speech/test",
+            new { endpoint = "https://selected-mai-unsupported.cognitiveservices.azure.com/", auth = "entra", model = AzureFastTranscriber.MaiModel },
+            TestContext.Current.CancellationToken);
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(result.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("standard", result.RootElement.GetProperty("steps")[0].GetProperty("model").GetString());
+    }
+
+    [Fact]
     public async Task Mai_transcription_sends_verbatim_enhanced_mode_without_maxSpeakers_and_reports_the_model()
     {
         using var handler = new MaiRegionHandler(regionServesMai: true);

@@ -21,7 +21,7 @@ public sealed class AsrException(string message, bool transient) : Exception(mes
     public bool MaiUnavailable => StatusCode == HttpStatusCode.BadRequest && Message.Contains("Enhanced mode", StringComparison.OrdinalIgnoreCase);
 }
 
-public sealed record SpeechConnection(string Endpoint, string Auth = "entra", string? TenantId = null, string? ApiKey = null)
+public sealed record SpeechConnection(string Endpoint, string Auth = "entra", string? TenantId = null, string? ApiKey = null, string? Model = null)
 {
     public bool UsesKey => Auth == "key";
 

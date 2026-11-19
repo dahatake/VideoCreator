@@ -40,6 +40,9 @@ try {
   await page.goto(base); await open(page);
   assert.equal(await page.locator('#sDraft fluent-message-bar').count(), 0, 'no draft notice when nothing is pending');
   const original = await page.locator('#sEndpoint').evaluate(e => e.value);
+  const originalModel = await page.locator('#sTranscriptionModel').inputValue();
+  const draftModel = originalModel === 'standard' ? 'MAI-Transcribe-2' : 'standard';
+  await page.locator('#sTranscriptionModel').selectOption(draftModel);
   await page.locator('#sEndpoint').evaluate(e => { e.value = ''; });
   await page.locator('#sEndpoint').pressSequentially('https://draft.cognitiveservices.azure.com/');
   await page.locator('#sAuth fluent-radio[value=key]').click();
@@ -52,6 +55,7 @@ try {
   const stored = await (await page.request.get(`${base}/api/settings/drafts`, { headers })).json();
   assert.equal(stored.speech.endpoint, 'https://draft.cognitiveservices.azure.com/');
   assert.equal(stored.speech.auth, 'key');
+  assert.equal(stored.speech.model, draftModel);
   assert.equal(stored.projects_dir.path, 'D:\\Drafts\\Videos');
   assert.ok(!JSON.stringify(stored).includes('secret-typed'), 'a key is never part of a draft');
   const settings = await (await page.request.get(`${base}/api/settings`, { headers })).json();
@@ -59,6 +63,7 @@ try {
 
   await page.reload(); await open(page);
   assert.equal(await page.locator('#sEndpoint').evaluate(e => e.value), 'https://draft.cognitiveservices.azure.com/');
+  assert.equal(await page.locator('#sTranscriptionModel').inputValue(), draftModel);
   assert.equal(await page.locator('#sAuth fluent-radio[value=key]').evaluate(e => e.checked), true);
   assert.equal(await page.locator('#sKeyBox').evaluate(e => e.hidden), false, 'the key box follows the restored auth');
   assert.equal(await page.locator('#sKey').evaluate(e => e.value), '');
@@ -70,6 +75,7 @@ try {
   // putting the saved values back removes the draft
   await page.locator('#sEndpoint').evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input')); }, original);
   await page.locator('#sAuth fluent-radio[value=entra]').click();
+  await page.locator('#sTranscriptionModel').selectOption(originalModel);
   await page.waitForFunction(() => !document.querySelector('#sDraft fluent-message-bar'));
   await page.waitForTimeout(800);
   assert.equal((await (await page.request.get(`${base}/api/settings/drafts`, { headers })).json()).speech, undefined);

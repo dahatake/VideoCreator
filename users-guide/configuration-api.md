@@ -43,6 +43,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 設定の寿命
 
+- MAI-Transcribe-2 は個別のモデルデプロイではなく、[対応リージョンの Speech リソース](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)から利用します。設定の「Azure Speech」で個別の接続を選び、書き起こしモデルとリソースを選択して「接続テスト」「テストして保存」を実行します。モデルも接続と一緒に保存・復元され、Foundry のチャット接続は変わりません。Speech のテスト・保存 API は任意の `model`（`MAI-Transcribe-2` / `standard`）を受け付け、省略時は保存済みの選択、未保存なら `Asr.Model` を使います。非対応リージョンでは標準モデルへ切り替わるため、テスト結果のモデル名を確認してください。下書きのモデル選択は適用されません。従量課金で、Azure の予算アラートは利用額のハード上限ではありません。
 - LLM方式・Speech／Foundry／Copilotの画面設定は `DataDir/ai-settings.json` に保存され、再起動後も起動設定より優先。接続情報はテスト合格後に保存。保存した接続を削除すると起動設定へ戻ります。キー・トークンはWindows DPAPIで暗号化し、非対応OSでは保存を拒否します。
 - プロジェクト保存先の画面変更はStoreのsettingに永続化。起動設定より優先。
 - パターン・生成オプションの画面選択はプロジェクトごとにStoreへ保存し、再起動後も復元。生成時にはJob.Optionsにも記録。

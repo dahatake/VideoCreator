@@ -45,6 +45,7 @@ dotnet run --project src\VideoCreator.App -c Release
 
 ## 설정의 수명
 
+- MAI-Transcribe-2는 별도 모델 배포가 아니라 [지원 지역의 Speech 리소스](https://learn.microsoft.com/azure/ai-services/speech-service/mai-transcribe)를 통해 사용합니다. 설정의 Azure Speech에서 별도 연결을 선택하고 받아쓰기 모델과 리소스를 선택한 후 연결 테스트 및 테스트 후 저장을 실행하세요. 모델도 연결과 함께 저장·복원되며 Foundry 채팅 연결은 바뀌지 않습니다. Speech 테스트·저장 API는 선택적 `model`(`MAI-Transcribe-2` / `standard`)을 받으며 생략하면 저장된 선택, 없으면 `Asr.Model`을 사용합니다. 미지원 지역에서는 표준 모델로 전환되므로 테스트 결과의 모델을 확인하세요. 초안의 모델 선택은 적용되지 않습니다. 사용량 기반 요금이며 Azure 예산 알림은 지출의 하드 상한이 아닙니다.
 - LLM 방식 및 Speech/Foundry/Copilot 연결은 `DataDir/ai-settings.json`에 저장되어 재시작 후에도 시작 설정보다 우선합니다. 연결은 테스트 통과 후 저장하며 삭제하면 시작 설정으로 돌아갑니다. 키·토큰은 Windows DPAPI로 암호화하고 미지원 OS에서는 비밀 저장을 거부합니다.
 - 화면에서 바꾼 프로젝트 저장 위치는 Store의 setting에 영구 저장됩니다. 시작 설정보다 우선합니다.
 - 화면에서 선택한 패턴·생성 옵션은 프로젝트별로 Store에 저장하고 재시작 후에도 복원합니다. 생성 시 Job.Options에도 기록합니다.

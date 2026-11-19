@@ -10,7 +10,7 @@ namespace VideoCreator.App;
 /// </summary>
 public static class SettingsDrafts
 {
-    public sealed record SpeechDraft(string? Endpoint, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
+    public sealed record SpeechDraft(string? Endpoint, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default, string? Model = null);
     public sealed record FoundryDraft(string? Endpoint, string? Deployment, string? EmbeddingDeployment, string? ImageDeployment, string? Auth, string? TenantId, DateTimeOffset UpdatedAt = default);
     public sealed record CopilotDraft(string? Auth, string? Model, string? ReasoningEffort, string? ContextTier, DateTimeOffset UpdatedAt = default);
     public sealed record ProjectsDirDraft(string? Path, string? Move, DateTimeOffset UpdatedAt = default);
@@ -39,7 +39,8 @@ public static class SettingsDrafts
         api.MapGet("/settings/drafts", (Runtime rt) => Results.Json(View(rt.Store), Json.Options))
             .WithSummary("Unsaved settings-screen input (no keys or tokens); restored when the dialog opens");
         api.MapPut("/settings/drafts/speech", (Runtime rt, SpeechDraft d) =>
-            Put(rt, Speech, () => new SpeechDraft(Text(d.Endpoint), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
+            Put(rt, Speech, () => new SpeechDraft(Text(d.Endpoint), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now,
+                OneOf(d.Model, "standard", Asr.AzureFastTranscriber.MaiModel))));
         api.MapPut("/settings/drafts/foundry", (Runtime rt, FoundryDraft d) =>
             Put(rt, Foundry, () => new FoundryDraft(Text(d.Endpoint), Text(d.Deployment), Text(d.EmbeddingDeployment), Text(d.ImageDeployment), OneOf(d.Auth, "entra", "key"), Text(d.TenantId), DateTimeOffset.Now)));
         api.MapPut("/settings/drafts/copilot", (Runtime rt, CopilotDraft d) =>

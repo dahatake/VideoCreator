@@ -72,6 +72,8 @@ try {
     await page.waitForFunction(value => document.documentElement.lang === value && !document.querySelector('#ui-language').disabled, language);
     await page.locator('#settings-btn').click();
     await page.locator('#aiCopilot').evaluate(element => { element.open = true; });
+    assert.deepEqual(await page.locator('#aiFlash ~ details.setgroup > summary h3').allInnerTexts(),
+      ['Microsoft Foundry', 'Azure Speech', 'GitHub Copilot'], `${language}: AI connection order`);
     await page.locator('#cEffort fluent-radio').last().waitFor();
     await page.addScriptTag({ content: axe.source });
     const audit = async () => {
