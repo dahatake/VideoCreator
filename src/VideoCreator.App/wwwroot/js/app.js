@@ -433,12 +433,6 @@ function aiConnectionsSection(s, flash, dr = {}) {
       <div class="stack setgroup-body">
         <p class="caption">${esc(aiSource(f))}</p>${blocked}
         <div id="fDraft" aria-live="polite">${dr.foundry ? draftNote('foundry', dr.foundry.updated_at) : ''}</div>
-        ${azPicker('f', s.local_only)}
-        ${aiInput('fEndpoint', trUi('ai.f.endpoint'), fv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
-        <div id="fDeploymentManual" class="stack">${aiInput('fDeployment', trUi('ai.f.deployment'), fv.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}</div>
-        <div id="fEmbeddingManual" class="stack">${aiInput('fEmbedding', trUi('ai.f.embedding'), fv.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}</div>
-        <div id="fImageManual" class="stack">${aiInput('fImage', trUi('engageImage.deployment'), fv.image_deployment, 'autocomplete="off" spellcheck="false" placeholder="FLUX-1.1-pro"', trUi('engageImage.help'))}</div>
-        <p class="caption">${trUi('ai.f.sharedSpeechProbe')}</p>
         <p class="caption" id="fAuthLabel">${trUi('ai.f.auth')}</p>
         <fluent-radio-group id="fAuth" orientation="vertical" aria-labelledby="fAuthLabel" value="${fv.auth === 'key' ? 'key' : 'entra'}">
           ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
@@ -447,6 +441,12 @@ function aiConnectionsSection(s, flash, dr = {}) {
         <div id="fEntraBox" class="stack">${aiInput('fTenant', trUi('ai.f.tenant'), fv.tenant_id, 'autocomplete="off" spellcheck="false"', trUi('ai.f.tenantHelp'))}</div>
         <div id="fKeyBox" class="stack">${aiInput('fKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${f.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
           f.api_key_unreadable ? trUi('ai.secretUnreadable') : f.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
+        ${azPicker('f', s.local_only)}
+        ${aiInput('fEndpoint', trUi('ai.f.endpoint'), fv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', trUi('ai.f.endpointHelp'))}
+        <div id="fDeploymentManual" class="stack">${aiInput('fDeployment', trUi('ai.f.deployment'), fv.deployment, 'autocomplete="off" spellcheck="false" placeholder="gpt-4.1"', trUi('ai.f.deploymentHelp'))}</div>
+        <div id="fEmbeddingManual" class="stack">${aiInput('fEmbedding', trUi('ai.f.embedding'), fv.embedding_deployment, 'autocomplete="off" spellcheck="false" placeholder="text-embedding-3-large"', trUi('ai.f.embeddingHelp'))}</div>
+        <div id="fImageManual" class="stack">${aiInput('fImage', trUi('engageImage.deployment'), fv.image_deployment, 'autocomplete="off" spellcheck="false" placeholder="FLUX-1.1-pro"', trUi('engageImage.help'))}</div>
+        <p class="caption">${trUi('ai.f.sharedSpeechProbe')}</p>
         ${buttons('f', f.source === 'app')}
       </div>
     </details>
@@ -472,9 +472,7 @@ function aiConnectionsSection(s, flash, dr = {}) {
           <option value="standard" ${(sv.model ?? speechPref.model) === 'standard' ? 'selected' : ''}>${trUi('ai.s.standardModel')}</option>
         </select></label>
         <p class="caption">${trUi('ai.s.modelHelp', [esc(speechPref.mai_regions.join(', '))])}</p>
-        ${azPicker('s', false)}
-        ${aiInput('sEndpoint', trUi('ai.s.endpoint'), sv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
-        <p class="caption" id="sAuthLabel">${trUi('ai.f.auth')}</p>
+<p class="caption" id="sAuthLabel">${trUi('ai.f.auth')}</p>
         <fluent-radio-group id="sAuth" orientation="vertical" aria-labelledby="sAuthLabel" value="${sv.auth === 'key' ? 'key' : 'entra'}">
           ${field(trUi('ai.f.entra'), '<fluent-radio slot="input" value="entra"></fluent-radio>')}
           ${field(trUi('ai.f.key'), '<fluent-radio slot="input" value="key"></fluent-radio>')}
@@ -485,6 +483,8 @@ function aiConnectionsSection(s, flash, dr = {}) {
         </div>
         <div id="sKeyBox" class="stack">${aiInput('sKey', trUi('ai.f.apiKey'), '', `type="password" autocomplete="new-password" spellcheck="false" ${separate.has_api_key ? `placeholder="${trUi('ai.secretSaved')}"` : ''}`,
           separate.api_key_unreadable ? trUi('ai.secretUnreadable') : separate.has_api_key ? trUi('ai.f.keyKeep') : trUi('ai.f.keyHelp'))}</div>
+                  ${azPicker('s', false)}
+                  ${aiInput('sEndpoint', trUi('ai.s.endpoint'), sv.endpoint, 'type="url" placeholder="https://&lt;resource&gt;.cognitiveservices.azure.com/" autocomplete="off" spellcheck="false"', esc(trUi('ai.s.endpointHelp')))}
         ${buttons('s', separate.source === 'app', false)}
         </div>
       </div>
