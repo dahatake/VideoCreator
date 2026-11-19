@@ -78,6 +78,8 @@ builder.Services.AddSingleton<BrandKitWorker>();
 builder.Services.AddSingleton<IFolderPicker, FolderPicker>();
 builder.Services.AddSingleton<SceneCardService>();
 builder.Services.AddSingleton<ProjectsLocation>();
+builder.Services.AddSingleton<ProjectSnapshots>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ProjectSnapshots>());
 builder.Services.AddSingleton<RemoveFolder>(ProjectDeletion.SendToRecycleBin);
 builder.Services.AddSingleton(sp => new JobQueue(sp.GetRequiredService<Runtime>().Store, () => sp.GetRequiredService<Runtime>().CreateRunner(), sp.GetRequiredService<JobEvents>(), sp.GetRequiredService<ILogger<JobQueue>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueue>());
@@ -129,6 +131,7 @@ _ = app.Services.GetRequiredService<Runtime>();   // fail fast on missing ffmpeg
     var pending = RenderMaintenance.MarkLegacyPreviewChecksPending(rt.Store);
     if (pending > 0) app.Logger.LogInformation("marked final-only checks pending in {Count} legacy preview records", pending);
     app.Services.GetRequiredService<ProjectsLocation>().Recover();
+    app.Services.GetRequiredService<ProjectSnapshots>().Restore();
 }
 app.Lifetime.ApplicationStarted.Register(() =>
 {

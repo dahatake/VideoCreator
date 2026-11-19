@@ -208,6 +208,9 @@ public static class Api
             }
         }).WithSummary("Change the projects folder; move=true carries every item of the current folder over and re-roots the stored paths");
 
+        api.MapPost("/projects/restore", (ProjectSnapshots snapshots) => Results.Json(snapshots.Restore(), Json.Options))
+            .WithSummary("Bring back the projects saved in the projects folder (their .videocreator snapshots) that this device does not know yet; known projects are left as they are");
+
         api.MapGet("/presets", (Runtime rt) => Results.Json(rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..])), Json.Options));
 
         // ---- projects ----

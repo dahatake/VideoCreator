@@ -54,6 +54,7 @@ public static class ProjectDeletion
         }
 
         var n = store.Delete(docs);
+        if (folder == "kept") ProjectSnapshot.Remove(p.Directory);
 
         // derived data outside the project folder (best effort: the DB is already consistent)
         foreach (var r in renderIds) TryDeleteInside(Path.Combine(dataDir, "qa"), r);

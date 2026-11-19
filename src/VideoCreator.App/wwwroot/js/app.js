@@ -265,6 +265,9 @@ function projectsDirSection(pd, draft) {
   return `<h3 id="pdirLabel" style="margin:0 0 4px">${trUi('m083')}</h3>
     <p class="caption">${trUi('m084')} <b id="pdirNow">${esc(pd.path)}</b>${trUi('m085', [esc(source), pd.projects])}<br>${trUi('m086')}</p>
     <div id="pdirDraft" aria-live="polite">${draft ? draftNote('projects_dir', draft.updated_at) : ''}</div>
+    <p class="caption">${trUi('pdir.carryHelp')}</p>
+    <div><fluent-button id="pdirRestore" type="button">${trUi('pdir.restoreBtn')}</fluent-button></div>
+    <div id="pdirRestoreMsg" aria-live="polite"></div>
     <div class="row" style="align-items:center"><fluent-text-input id="pdirPath" style="flex:1" placeholder="D:\\Videos\\VideoCreator" aria-label="${trUi('m087')}" value="${esc(draft?.path ?? '')}"></fluent-text-input><fluent-button id="pdirBrowse" type="button">${trUi('m088')}</fluent-button></div>
     <p class="caption" id="pdirMoveLabel">${trUi('m089')}</p>
     <fluent-radio-group id="pdirMove" orientation="vertical" aria-labelledby="pdirMoveLabel" ${draft?.move ? `value="${esc(draft.move)}"` : ''}>
@@ -282,6 +285,20 @@ function wireProjectsDir(pd) {
   const reset = () => { $('#pdirPlan').innerHTML = ''; draft(); };
   $('#pdirPath').addEventListener('input', reset);
   $('#pdirMove').addEventListener('change', reset);
+  const restore = async (quietWhenNone) => {
+    const out = $('#pdirRestoreMsg'), btn = $('#pdirRestore');
+    btn.disabled = true; out.innerHTML = info(trUi('pdir.restoring'));
+    try {
+      const r = await api('/api/projects/restore', { method: 'POST' });
+      const failed = r.failed.length ? `<fluent-message-bar intent="warning" layout="multiline"><b>${trUi('pdir.restoreFailed')}</b><ul class="notes">${r.failed.map(f => `<li>${esc(f.folder)}: ${esc(serverText(f.reason))}</li>`).join('')}</ul></fluent-message-bar>` : '';
+      const missing = r.missing_sources.length ? `<fluent-message-bar intent="warning" layout="multiline"><b>${trUi('pdir.missingSources')}</b><ul class="notes">${r.missing_sources.slice(0, 8).map(m => `<li>${esc(m.project)}: ${esc(m.path)}</li>`).join('')}${r.missing_sources.length > 8 ? `<li>${trUi('m097', [r.missing_sources.length - 8])}</li>` : ''}</ul></fluent-message-bar>` : '';
+      out.innerHTML = (r.restored.length ? info(trUi('pdir.restored', [r.restored.length, r.restored.map(p => esc(p.name)).join('、')]), 'success') : quietWhenNone && !failed ? '' : info(trUi('pdir.restoreNone', [r.already_present])))
+        + failed + missing;
+      if (r.restored.length) router();
+    } catch (e) { out.innerHTML = errorBar(e); }
+    finally { btn.disabled = false; }
+  };
+  $('#pdirRestore').addEventListener('click', () => restore(false));
   $('#pdirBrowse').addEventListener('click', async () => {
     const b = $('#pdirBrowse'); b.disabled = true;
     $('#pdirMsg').innerHTML = info(trUi('m092'));
@@ -340,6 +357,7 @@ function wireProjectsDir(pd) {
         + (r.failed.length ? `<fluent-message-bar intent="warning" layout="multiline"><b>${trUi('m115')}</b><ul class="notes">${r.failed.map(f => `<li>${esc(f.name)}: ${esc(serverText(f.reason))}</li>`).join('')}</ul>${trUi('m116')}</fluent-message-bar>` : '')
         + (r.left_behind.length ? `<fluent-message-bar intent="warning" layout="multiline">${trUi('m117', [r.left_behind.map(esc).join('、')])}</fluent-message-bar>` : '');
       if (location.hash.startsWith('#/p/') || location.hash === '' || location.hash === '#/') router();
+      await restore(true);
     } catch (e) { $('#pdirMsg').innerHTML = errorBar(e); }
     finally { clearInterval(tick); row.hidden = true; controls.forEach(c => { c.disabled = false; }); }
   };

@@ -24,6 +24,10 @@ public sealed class Store : IDisposable
     SqliteConnection Open() { var c = new SqliteConnection(_cs); c.Open(); return c; }
     static void Exec(SqliteConnection c, string sql) { using var cmd = c.CreateCommand(); cmd.CommandText = sql; cmd.ExecuteNonQuery(); }
 
+    /// <summary>Raised after any document was written or removed (on the writer's thread, outside the lock); used to keep project snapshots current.</summary>
+    public event Action? Changed;
+    void RaiseChanged() { try { Changed?.Invoke(); } catch (Exception) { /* a listener must never fail a write */ } }
+
     public void Put<T>(string kind, string id, string? parent, T doc)
     {
         lock (_gate)
@@ -35,6 +39,36 @@ public sealed class Store : IDisposable
             cmd.Parameters.AddWithValue("$j", Json.Serialize(doc)); cmd.Parameters.AddWithValue("$u", DateTimeOffset.UtcNow.ToString("O"));
             cmd.ExecuteNonQuery();
         }
+        RaiseChanged();
+    }
+
+    /// <summary>Every document with its parent and update time (the whole store; snapshots filter it per project).</summary>
+    public List<DocRow> Rows()
+    {
+        using var c = Open(); using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT kind,id,parent,json,updated FROM docs";
+        using var r = cmd.ExecuteReader(); var list = new List<DocRow>();
+        while (r.Read()) list.Add(new(r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3), r.GetString(4)));
+        return list;
+    }
+
+    /// <summary>Adds documents that do not exist yet, keeping their update times, in one transaction. Existing documents are never overwritten. Returns the number added.</summary>
+    public int Import(IEnumerable<DocRow> docs)
+    {
+        int n;
+        lock (_gate)
+        {
+            using var c = Open(); using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand(); cmd.Transaction = tx;
+            cmd.CommandText = "INSERT OR IGNORE INTO docs(kind,id,parent,json,updated) VALUES($k,$i,$p,$j,$u)";
+            var k = cmd.Parameters.Add("$k", SqliteType.Text); var i = cmd.Parameters.Add("$i", SqliteType.Text); var p = cmd.Parameters.Add("$p", SqliteType.Text);
+            var j = cmd.Parameters.Add("$j", SqliteType.Text); var u = cmd.Parameters.Add("$u", SqliteType.Text);
+            n = 0;
+            foreach (var d in docs) { k.Value = d.Kind; i.Value = d.Id; p.Value = (object?)d.Parent ?? DBNull.Value; j.Value = d.Json; u.Value = d.Updated; n += cmd.ExecuteNonQuery(); }
+            tx.Commit();
+        }
+        if (n > 0) RaiseChanged();
+        return n;
     }
 
     public T? Get<T>(string kind, string id) where T : class
@@ -82,37 +116,43 @@ public sealed class Store : IDisposable
     /// </summary>
     public int ReplaceJson(IEnumerable<(string Kind, string Id, string Json)> docs)
     {
+        int n;
         lock (_gate)
         {
             using var c = Open(); using var tx = c.BeginTransaction();
             using var cmd = c.CreateCommand(); cmd.Transaction = tx;
             cmd.CommandText = "UPDATE docs SET json=$j WHERE kind=$k AND id=$i";
             var k = cmd.Parameters.Add("$k", SqliteType.Text); var i = cmd.Parameters.Add("$i", SqliteType.Text); var j = cmd.Parameters.Add("$j", SqliteType.Text);
-            var n = 0;
+            n = 0;
             foreach (var (kind, id, json) in docs) { k.Value = kind; i.Value = id; j.Value = json; n += cmd.ExecuteNonQuery(); }
             tx.Commit();
-            return n;
         }
+        if (n > 0) RaiseChanged();
+        return n;
     }
 
     /// <summary>Deletes all the given documents in one transaction (all or nothing). Returns the number of rows removed.</summary>
     public int Delete(IEnumerable<(string Kind, string Id)> docs)
     {
+        int n;
         lock (_gate)
         {
             using var c = Open(); using var tx = c.BeginTransaction();
             using var cmd = c.CreateCommand(); cmd.Transaction = tx;
             cmd.CommandText = "DELETE FROM docs WHERE kind=$k AND id=$i";
             var k = cmd.Parameters.Add("$k", SqliteType.Text); var i = cmd.Parameters.Add("$i", SqliteType.Text);
-            var n = 0;
+            n = 0;
             foreach (var (kind, id) in docs) { k.Value = kind; i.Value = id; n += cmd.ExecuteNonQuery(); }
             tx.Commit();
-            return n;
         }
+        if (n > 0) RaiseChanged();
+        return n;
     }
 
     public void Dispose() => SqliteConnection.ClearAllPools();
 }
+
+public sealed record DocRow(string Kind, string Id, string? Parent, string Json, string Updated);
 
 public static class Kinds
 {

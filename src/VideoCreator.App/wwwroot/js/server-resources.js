@@ -120,6 +120,13 @@ export const qaRecommendations = {
 };
 
 export const serverMessages = [
+  ['このアプリより新しい形式のため読み込めません', 'Saved in a newer format than this app understands', '格式比此应用更新，无法读取', '이 앱보다 새로운 형식이라 읽을 수 없습니다'],
+  ['プロジェクト ID が正しくありません', 'The project ID is not valid', '项目 ID 无效', '프로젝트 ID가 올바르지 않습니다'],
+  ['プロジェクトの情報が見つかりません', 'The project information is missing', '找不到项目信息', '프로젝트 정보를 찾을 수 없습니다'],
+  ['読み込めない種類のデータが含まれています', 'It contains data that cannot be loaded', '包含无法读取的数据类型', '읽을 수 없는 종류의 데이터가 들어 있습니다'],
+  ['別のプロジェクトのデータと ID が重複しています', 'Its IDs clash with another project’s data', 'ID 与其他项目的数据重复', '다른 프로젝트의 데이터와 ID가 겹칩니다'],
+  ['読み込めませんでした', 'Could not be read', '无法读取', '읽을 수 없습니다'],
+  ['フォルダーを読めません', 'The folder cannot be read', '无法读取该文件夹', '폴더를 읽을 수 없습니다'],
   ['ショート動画のパターンは1つだけ選んでください', 'Choose only one short-video pattern', '只能选择一个短视频模板', '쇼츠 영상 패턴은 하나만 선택하세요'],
   ['ショート動画は off / with / only のどれかを指定してください', 'Short video must be off, with or only', '短视频请指定 off / with / only 之一', '쇼츠 영상은 off / with / only 중 하나로 지정하세요'],
   ['0 ungrounded claims', '0 ungrounded claims', '0 个无依据的断言', '근거 없는 주장 0개'],
