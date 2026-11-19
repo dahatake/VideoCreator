@@ -17,9 +17,9 @@ export const presetDisplays = {
     ko: ['한 방 루프', '엔터테인먼트', '질문·불가능한 순간으로 시작', '15~25초에 한 가지 집중', '최소 자막·강조', '원음 중심, 여운 없이 처음으로'],
   },
   P3: {
-    en: ['Variety-show captions', 'Entertainment (Japan)', 'Start with laughter or a reaction', '1–2.5 s cuts with reaction pauses', 'Reactions, onomatopoeia and emphasis', 'Frequent sound effects', 'Tokai On Air: Kyoto trip with instant returns'],
-    'zh-CN': ['综艺字幕', '娱乐（日本）', '从笑声或反应瞬间开始', '1～2.5 秒，用吐槽制造停顿', '充分使用吐槽、拟声词和强调', '较多音效', '东海 On Air：即刻回家的京都之旅'],
-    ko: ['예능 자막', '엔터테인먼트(일본)', '웃음·리액션부터 시작', '1~2.5초, 반응으로 간격 조절', '반응·의성어·강조 활용', '효과음 많이', '도카이 온에어: 즉시 귀가하는 교토 여행'],
+    en: ['Variety-show captions', 'Entertainment (Japan)', 'Start with laughter or a reaction', '1–2.5 s cuts with reaction pauses', 'Reactions, onomatopoeia, emphasis and counters', 'Frequent sound effects', 'Tokai On Air: Kyoto trip with instant returns'],
+    'zh-CN': ['综艺字幕', '娱乐（日本）', '从笑声或反应瞬间开始', '1～2.5 秒，用吐槽制造停顿', '充分使用吐槽、拟声词、强调和计数器', '较多音效', '东海 On Air：即刻回家的京都之旅'],
+    ko: ['예능 자막', '엔터테인먼트(일본)', '웃음·리액션부터 시작', '1~2.5초, 반응으로 간격 조절', '반응·의성어·강조·카운터 활용', '효과음 많이', '도카이 온에어: 즉시 귀가하는 교토 여행'],
   },
   P4: {
     en: ['Highlight clip (long → 30 s)', 'All genres', 'Strongest line or payoff in the first 2 s', 'Silence-trimmed jump cuts and punch-ins', 'Full captions, emphasis and headlines', 'Normalize original audio to −14 LUFS', 'HikakinClipTV: Hikakin lets you win rock-paper-scissors'],

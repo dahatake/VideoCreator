@@ -1,6 +1,6 @@
 {
   "id": "P3",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "name": "バラエティ・テロップ",
   "genre": "エンタメ（日本）",
   "available": true,
@@ -38,7 +38,8 @@
       "emphasis",
       "tsukkomi",
       "headline",
-      "sfx"
+      "sfx",
+      "counter"
     ],
     "look": "variety",
     "caption": {
@@ -70,7 +71,7 @@
   "card": {
     "opening": "笑い・リアクションの瞬間から",
     "tempo": "1〜2.5秒、ツッコミで間を作る",
-    "telop": "ツッコミ・擬音・強調をフル活用",
+    "telop": "ツッコミ・擬音・強調・カウンターをフル活用",
     "sound": "効果音多め"
   },
   "examples": [

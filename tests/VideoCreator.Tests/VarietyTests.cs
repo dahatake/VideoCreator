@@ -45,6 +45,15 @@ public class VarietyTests : IAsyncLifetime
         Assert.Throws<PresetValidationException>(() => PresetStore.Validate(P3 with { Telop = P3.Telop with { Look = "loud" } }));
     }
 
+    [Fact] // P3 has everything P1 has (counters included) plus the tsukkomi
+    public void P3_telops_are_P1_telops_plus_tsukkomi()
+    {
+        var p1 = Fixtures.Presets["P1"].Telop;
+        Assert.Equal(p1.Types.Append("tsukkomi").Order(), P3.Telop.Types.Order());
+        Assert.Equal((p1.Look, p1.Caption), (P3.Telop.Look, P3.Telop.Caption));
+        Assert.Equal(Fixtures.Presets["P1"].Audio.Sfx, P3.Audio.Sfx);
+    }
+
     [Fact] // geometry: every band inside the safe zone; the bands of telops that can be on screen together never overlap
     public void Variety_bands_fit_the_safe_zone_and_do_not_collide()
     {

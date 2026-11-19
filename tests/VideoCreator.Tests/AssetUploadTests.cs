@@ -33,6 +33,7 @@ public sealed class AssetUploadTests : IAsyncLifetime
         });
         _app.UseKestrel();
         _http = _app.CreateClient();
+        _http.Timeout = TimeSpan.FromMinutes(10);   // a 128 MiB upload is slow while the rest of the suite is hammering the disk and the thread pool
         _http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
         using var response = await _http.PostAsJsonAsync("/api/projects", new { name = "upload" }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

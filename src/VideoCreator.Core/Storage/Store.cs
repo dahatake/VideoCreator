@@ -149,7 +149,12 @@ public sealed class Store : IDisposable
         return n;
     }
 
-    public void Dispose() => SqliteConnection.ClearAllPools();
+    /// <summary>Releases this database's pooled connections only; ClearAllPools would close the connections of every other store in the process.</summary>
+    public void Dispose()
+    {
+        using var c = new SqliteConnection(_cs);
+        SqliteConnection.ClearPool(c);
+    }
 }
 
 public sealed record DocRow(string Kind, string Id, string? Parent, string Json, string Updated);
