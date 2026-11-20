@@ -189,7 +189,7 @@ macOS 版仅有临时签名，未经公证。浏览器下载被阻止时，验�
 
 ### 维护者：构建、验证与发布
 
-[发布工作流](../../.github/workflows/release.yml)仅手动运行（`workflow_dispatch`）。各系统构建后只将可执行文件复制到隔离临时文件夹，在最小 PATH、无云调用条件下验证启动、界面资源、FFmpeg/libass 字幕、ffprobe/SQLite 素材注册、相邻配置和项目删除。Windows x64 还运行全部测试。仅 `publish=true` 会创建 `v<version>` Release，上传程序、配置与 `SHA256SUMS.txt` 并记录 attestation。标签已存在则失败，请先提高 `VersionPrefix`。
+[发布工作流](../../.github/workflows/release.yml)仅手动运行（`workflow_dispatch`）。各系统构建后只将可执行文件复制到隔离临时文件夹，在最小 PATH、无云调用条件下验证启动、界面资源、FFmpeg/libass 字幕、ffprobe/SQLite 素材注册、相邻配置和项目删除。Windows x64 还串行运行全部测试，将测试主机关闭与 SQLite 清理同其他测试隔离。仅 `publish=true` 会创建 `v<version>` Release，上传程序、配置与 `SHA256SUMS.txt` 并记录 attestation。标签已存在则失败，请先提高 `VersionPrefix`。
 
 ```powershell
 gh workflow run release.yml

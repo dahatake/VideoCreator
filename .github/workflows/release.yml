@@ -89,7 +89,8 @@ jobs:
         run: ./scripts/get-tools.ps1
       - name: Test
         if: matrix.test
-        run: dotnet test --project tests/VideoCreator.Tests -c Release
+        # Isolate test-host shutdown and SQLite cleanup from other test collections.
+        run: dotnet test --project tests/VideoCreator.Tests -c Release --parallel none
       - name: Publish single file
         run: ./scripts/publish-single-file.ps1 -RuntimeIdentifier $env:RID -NeutralSettings -VersionSuffix "$env:SUFFIX"
       - name: Verify on this runner (isolated folder, minimal PATH, no cloud)

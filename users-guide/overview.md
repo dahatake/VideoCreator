@@ -211,7 +211,7 @@ DB・キャッシュは `%LOCALAPPDATA%\VideoCreator`（macOS: `~/Library/Applic
 [.github/workflows/release.yml](../.github/workflows/release.yml) は手動実行（`workflow_dispatch`）だけで動きます。
 各 OS のランナーでビルドし、**その実行ファイルだけを一時フォルダーへコピーして**、最小の PATH・クラウド呼び出しなしで
 起動・画面資材・字幕描画（FFmpeg/libass）・動画登録（ffprobe/SQLite）・実行ファイル横の設定・プロジェクト削除を検証します。
-x64 Windows では全テストも実行します。`publish` を付けた場合だけ、`v<version>` タグの GitHub Release を作り、
+x64 Windows では全テストも直列実行し、テストホストの終了とSQLiteの後片付けを他のテストから分離します。`publish` を付けた場合だけ、`v<version>` タグの GitHub Release を作り、
 各ファイル・`appsettings.json`・`SHA256SUMS.txt` を添付し、ビルド来歴（attestation）を記録します。
 
 ```powershell

@@ -185,7 +185,7 @@ One executable does not mean no disk writes. .NET extracts dependencies to `%TEM
 
 ### Maintainers: build, verify and publish
 
-The [release workflow](../../.github/workflows/release.yml) is manual (`workflow_dispatch`). Each OS builds and copies only its executable to an isolated temporary folder to test startup, UI assets, FFmpeg/libass subtitles, ffprobe/SQLite ingest, adjacent settings and project deletion with a minimal PATH and no cloud calls. Windows x64 also runs all tests. Only `publish=true` creates a `v<version>` release, uploads binaries, settings and `SHA256SUMS.txt`, and records attestations. Existing tags fail publication; increase `VersionPrefix` first.
+The [release workflow](../../.github/workflows/release.yml) is manual (`workflow_dispatch`). Each OS builds and copies only its executable to an isolated temporary folder to test startup, UI assets, FFmpeg/libass subtitles, ffprobe/SQLite ingest, adjacent settings and project deletion with a minimal PATH and no cloud calls. Windows x64 also runs all tests sequentially to isolate test-host shutdown and SQLite cleanup from other tests. Only `publish=true` creates a `v<version>` release, uploads binaries, settings and `SHA256SUMS.txt`, and records attestations. Existing tags fail publication; increase `VersionPrefix` first.
 
 ```powershell
 gh workflow run release.yml

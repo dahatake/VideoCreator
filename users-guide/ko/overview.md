@@ -187,7 +187,7 @@ macOS 버전은 임시 서명만 있으며 공증되지 않았습니다. 브라�
 
 ### 유지 관리자: 빌드·검증·공개
 
-[릴리스 워크플로](../../.github/workflows/release.yml)는 수동(`workflow_dispatch`)으로만 실행됩니다. 각 OS에서 빌드 후 실행 파일 하나만 격리된 임시 폴더에 복사하여 최소 PATH·클라우드 호출 없이 시작·UI·FFmpeg/libass 자막·ffprobe/SQLite 등록·인접 설정·프로젝트 삭제를 검사합니다. Windows x64는 전체 테스트도 실행합니다. `publish=true`일 때만 `v<version>` 릴리스를 만들고 바이너리·설정·`SHA256SUMS.txt`와 attestation을 게시합니다. 기존 태그가 있으면 실패하므로 먼저 `VersionPrefix`를 올리세요.
+[릴리스 워크플로](../../.github/workflows/release.yml)는 수동(`workflow_dispatch`)으로만 실행됩니다. 각 OS에서 빌드 후 실행 파일 하나만 격리된 임시 폴더에 복사하여 최소 PATH·클라우드 호출 없이 시작·UI·FFmpeg/libass 자막·ffprobe/SQLite 등록·인접 설정·프로젝트 삭제를 검사합니다. Windows x64는 테스트 호스트 종료와 SQLite 정리를 다른 테스트와 분리하도록 전체 테스트를 순차 실행합니다. `publish=true`일 때만 `v<version>` 릴리스를 만들고 바이너리·설정·`SHA256SUMS.txt`와 attestation을 게시합니다. 기존 태그가 있으면 실패하므로 먼저 `VersionPrefix`를 올리세요.
 
 ```powershell
 gh workflow run release.yml
