@@ -159,7 +159,7 @@ The packaged edition runs without an installer or a separate .NET SDK, FFmpeg or
 
 | File | Platform |
 |---|---|
-| `VideoCreator-<version>-win-x64.exe` | Windows 10/11 x64 |
+| `VideoCreator.exe` | Windows 10/11 x64 |
 | `VideoCreator-<version>-win-arm64.exe` | Windows 11 ARM64 |
 | `VideoCreator-<version>-osx-arm64.tar.gz` | Apple Silicon macOS; Intel Mac is unsupported because ONNX Runtime has no Intel macOS package |
 
@@ -168,7 +168,7 @@ The packaged edition runs without an installer or a separate .NET SDK, FFmpeg or
 1. Download your platform's file and `appsettings.json` from [Releases](https://github.com/dahatake/VideoCreator/releases) into the same folder.
 2. With IT approval, install Azure CLI (`winget install Microsoft.AzureCLI` on Windows, `brew install azure-cli` on macOS), then use `az login`. Your Speech account still needs the permissions in the [quickstart](quickstart.md). Copilot selection additionally needs a signed-in Copilot CLI.
 3. Have your administrator set `VideoCreator:Llm:Endpoint` / `Llm:Deployment`, or set `Llm:Provider` to `copilot` / `none`. Captions use Speech on the same resource. Distribution settings intentionally contain no endpoints.
-4. Launch the executable; the default browser opens `http://127.0.0.1:8765/`. Close the console or press Ctrl+C to stop.
+4. On Windows x64, double-click `VideoCreator.exe`; the default browser opens `http://127.0.0.1:8765/`. To stop, press Ctrl+C in the console and wait for shutdown. Closing only the browser does not stop the app.
 
 On macOS, launch from Terminal so `az` is found on PATH:
 
@@ -194,7 +194,7 @@ gh workflow run release.yml -f publish=true -f version_suffix=rc.1 -f prerelease
 gh run watch
 ```
 
-Verify a download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`) and `gh attestation verify VideoCreator-<version>-win-x64.exe --repo dahatake/VideoCreator`.
+Verify a download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`) and `gh attestation verify VideoCreator.exe --repo dahatake/VideoCreator`.
 
 Build locally with SDK 10 on the **same OS/CPU as the target** because FFmpeg is architecture-specific. On macOS install PowerShell 7 (`brew install powershell`). Run from the repository root:
 
@@ -202,10 +202,10 @@ Build locally with SDK 10 on the **same OS/CPU as the target** because FFmpeg is
 pwsh scripts\get-tools.ps1
 pwsh scripts\publish-single-file.ps1
 pwsh scripts\publish-single-file.ps1 -NeutralSettings
-pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.App.exe -RequireNeutralSettings
+pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.exe -RequireNeutralSettings
 ```
 
-On Windows, `powershell -ExecutionPolicy Bypass -File` can replace `pwsh`. Default RIDs are `win-x64`, `win-arm64`, `osx-arm64`; artifacts are under `artifacts/single-file/<RID>/VideoCreator.App(.exe)`. Before distribution review [third-party notices](../../THIRD-PARTY-NOTICES.txt), especially GPL FFmpeg corresponding-source obligations. Publishing alone does not satisfy every legal distribution requirement.
+On Windows, `powershell -ExecutionPolicy Bypass -File` can replace `pwsh`. Default RIDs are `win-x64`, `win-arm64`, `osx-arm64`; artifacts are `artifacts/single-file/<RID>/VideoCreator.exe` on Windows and `artifacts/single-file/osx-arm64/VideoCreator.App` on macOS. Before distribution review [third-party notices](../../THIRD-PARTY-NOTICES.txt), especially GPL FFmpeg corresponding-source obligations. Publishing alone does not satisfy every legal distribution requirement.
 
 ## Versioning
 

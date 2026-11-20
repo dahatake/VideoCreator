@@ -74,9 +74,14 @@ if ($NeutralSettings) {
 & dotnet publish @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)." }
 $app = Join-Path $output "VideoCreator.App$exe"
+if ($windows) {
+    $renamed = Join-Path $output 'VideoCreator.exe'
+    Move-Item -LiteralPath $app -Destination $renamed
+    $app = $renamed
+}
 $files = @(Get-ChildItem -LiteralPath $output -Force)
 if ($files.Count -ne 1 -or -not (Test-Path -LiteralPath $app -PathType Leaf)) {
-    throw "Expected only VideoCreator.App$exe in $output, found: $($files.Name -join ', ')"
+    throw "Expected only $(Split-Path $app -Leaf) in $output, found: $($files.Name -join ', ')"
 }
 if (-not $windows) {
     # The SDK signs the macOS bundle ad hoc; Apple Silicon refuses to run unsigned code.

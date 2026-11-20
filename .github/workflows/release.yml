@@ -94,14 +94,15 @@ jobs:
         run: ./scripts/publish-single-file.ps1 -RuntimeIdentifier $env:RID -NeutralSettings -VersionSuffix "$env:SUFFIX"
       - name: Verify on this runner (isolated folder, minimal PATH, no cloud)
         run: |
-          $exe = if ($env:RID.StartsWith('win-')) { 'VideoCreator.App.exe' } else { 'VideoCreator.App' }
+          $exe = if ($env:RID.StartsWith('win-')) { 'VideoCreator.exe' } else { 'VideoCreator.App' }
           ./scripts/verify-single-file.ps1 -ExePath "artifacts/single-file/$env:RID/$exe" -RequireNeutralSettings
       - name: Package
         run: |
           New-Item -ItemType Directory dist, meta | Out-Null
           $stem = "VideoCreator-$env:VERSION-$env:RID"
           if ($env:RID.StartsWith('win-')) {
-            Copy-Item "artifacts/single-file/$env:RID/VideoCreator.App.exe" "dist/$stem.exe"
+            $asset = if ($env:RID -eq 'win-x64') { 'VideoCreator.exe' } else { "$stem.exe" }
+            Copy-Item "artifacts/single-file/$env:RID/VideoCreator.exe" "dist/$asset"
             $ffmpeg = 'tools/ffmpeg/bin/ffmpeg.exe'
           } else {
             # tar keeps the executable bit and avoids the quarantine flag a browser adds to loose files.
@@ -167,7 +168,7 @@ jobs:
             echo
             echo "| File | For |"
             echo "|---|---|"
-            echo "| \`VideoCreator-$VERSION-win-x64.exe\` | Windows 10/11 x64 |"
+            echo "| \`VideoCreator.exe\` | Windows 10/11 x64 |"
             echo "| \`VideoCreator-$VERSION-win-arm64.exe\` | Windows 11 ARM64 |"
             echo "| \`VideoCreator-$VERSION-osx-arm64.tar.gz\` | macOS on Apple Silicon (M1 or later). Intel Macs are not supported |"
             echo "| \`appsettings.json\` | Settings template: put it next to the executable and fill in your endpoints |"
@@ -211,4 +212,4 @@ jobs:
           } > notes.md
           flags=()
           if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
-          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "VideoCreator $VERSION" --notes-file notes.md "${flags[@]}"
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "VideoCreator $VERSION" --notes-file notes.md --generate-notes "${flags[@]}"

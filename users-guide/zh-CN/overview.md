@@ -163,7 +163,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | 文件 | 平台 |
 |---|---|
-| `VideoCreator-<version>-win-x64.exe` | Windows 10/11 x64 |
+| `VideoCreator.exe` | Windows 10/11 x64 |
 | `VideoCreator-<version>-win-arm64.exe` | Windows 11 ARM64 |
 | `VideoCreator-<version>-osx-arm64.tar.gz` | Apple Silicon macOS；因 ONNX Runtime 没有 Intel macOS 包，不支持 Intel Mac |
 
@@ -172,7 +172,7 @@ dotnet run --project src/VideoCreator.App -c Release
 1. 从 [Releases](https://github.com/dahatake/VideoCreator/releases) 下载适用文件和 `appsettings.json`，放在同一文件夹。
 2. 经 IT 批准安装 Azure CLI（Windows：`winget install Microsoft.AzureCLI`，macOS：`brew install azure-cli`），然后 `az login`。Speech 仍需要[快速入门](quickstart.md)中的权限。使用 Copilot 筛选还需要已登录的 Copilot CLI。
 3. 请管理员设置 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`，或将 `Llm:Provider` 设为 `copilot` / `none`。字幕 Speech 使用同一资源。分发用配置不包含终结点。
-4. 启动可执行文件，默认浏览器打开 `http://127.0.0.1:8765/`。关闭控制台或按 Ctrl+C 退出。
+4. 在 Windows x64 上双击 `VideoCreator.exe`，默认浏览器打开 `http://127.0.0.1:8765/`。退出时在控制台按 Ctrl+C 并等待应用停止。仅关闭浏览器不会退出应用。
 
 macOS 请从 Terminal 启动，确保能在 PATH 中找到 `az`：
 
@@ -198,7 +198,7 @@ gh workflow run release.yml -f publish=true -f version_suffix=rc.1 -f prerelease
 gh run watch
 ```
 
-下载验证命令：`sha256sum -c SHA256SUMS.txt --ignore-missing`（macOS：`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`），以及 `gh attestation verify VideoCreator-<version>-win-x64.exe --repo dahatake/VideoCreator`。
+下载验证命令：`sha256sum -c SHA256SUMS.txt --ignore-missing`（macOS：`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`），以及 `gh attestation verify VideoCreator.exe --repo dahatake/VideoCreator`。
 
 由于 FFmpeg 与架构相关，本地打包须在装有 SDK 10、且与**目标系统／CPU 相同**的机器上执行。macOS 需 PowerShell 7（`brew install powershell`）。从仓库根目录运行：
 
@@ -206,10 +206,10 @@ gh run watch
 pwsh scripts\get-tools.ps1
 pwsh scripts\publish-single-file.ps1
 pwsh scripts\publish-single-file.ps1 -NeutralSettings
-pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.App.exe -RequireNeutralSettings
+pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.exe -RequireNeutralSettings
 ```
 
-Windows 可用 `powershell -ExecutionPolicy Bypass -File` 替代 `pwsh`。默认 RID 为 `win-x64` / `win-arm64` / `osx-arm64`，产物位于 `artifacts/single-file/<RID>/VideoCreator.App(.exe)`。分发前请阅读[第三方声明](../../THIRD-PARTY-NOTICES.txt)，尤其是 GPL FFmpeg 的对应源代码提供义务。仅执行发布并不意味着满足所有法律要求。
+Windows 可用 `powershell -ExecutionPolicy Bypass -File` 替代 `pwsh`。默认 RID 为 `win-x64` / `win-arm64` / `osx-arm64`，Windows 产物位于 `artifacts/single-file/<RID>/VideoCreator.exe`，macOS 产物位于 `artifacts/single-file/osx-arm64/VideoCreator.App`。分发前请阅读[第三方声明](../../THIRD-PARTY-NOTICES.txt)，尤其是 GPL FFmpeg 的对应源代码提供义务。仅执行发布并不意味着满足所有法律要求。
 
 ## 版本管理
 

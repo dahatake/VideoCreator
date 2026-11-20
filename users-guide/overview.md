@@ -171,7 +171,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | ファイル | 対象 |
 |---|---|
-| `VideoCreator-<version>-win-x64.exe` | Windows 10/11（x64） |
+| `VideoCreator.exe` | Windows 10/11（x64） |
 | `VideoCreator-<version>-win-arm64.exe` | Windows 11（ARM64） |
 | `VideoCreator-<version>-osx-arm64.tar.gz` | macOS（Apple Silicon）。**Intel Mac は非対応**（ONNX Runtime に Intel macOS 版がないため） |
 
@@ -181,7 +181,7 @@ dotnet run --project src/VideoCreator.App -c Release
 2. Azure CLI を入れて `az login`（Windows: `winget install Microsoft.AzureCLI`、macOS: `brew install azure-cli`）。
    必要なロールは[必要なもの](#必要なもの)と同じです。Copilot を使う場合はサインイン済みの Copilot CLI
 3. `appsettings.json` の `VideoCreator:Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を自分の値にします。字幕の Speech も同じリソースを使います
-4. 実行ファイルを起動します。既定ブラウザーで <http://127.0.0.1:8765/> が開き、コンソールを閉じるか Ctrl+C で終了します
+4. Windows x64 は `VideoCreator.exe` をダブルクリックします。既定ブラウザーで <http://127.0.0.1:8765/> が開きます。終了はコンソールで Ctrl+C を押し、処理の終了を待ちます。ブラウザーを閉じるだけではアプリは終了しません
 
 macOS では Terminal から起動します（`az` を PATH から見つけるため）。
 
@@ -226,7 +226,7 @@ gh run watch                                                  # 進行状況
 
 ```sh
 sha256sum -c SHA256SUMS.txt --ignore-missing   # macOS: shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-gh attestation verify VideoCreator-<version>-win-x64.exe --repo dahatake/VideoCreator
+gh attestation verify VideoCreator.exe --repo dahatake/VideoCreator
 ```
 
 ### 手元で作成する
@@ -238,11 +238,11 @@ macOS では PowerShell 7（`brew install powershell`）を使います。
 pwsh scripts/get-tools.ps1
 pwsh scripts/publish-single-file.ps1                       # 既定はこのマシンの OS / CPU（win-x64 / win-arm64 / osx-arm64）
 pwsh scripts/publish-single-file.ps1 -NeutralSettings      # 配布用: 同梱設定からエンドポイントを除く
-pwsh scripts/verify-single-file.ps1 -ExePath artifacts/single-file/win-arm64/VideoCreator.App.exe -RequireNeutralSettings
+pwsh scripts/verify-single-file.ps1 -ExePath artifacts/single-file/win-arm64/VideoCreator.exe -RequireNeutralSettings
 ```
 
 Windows では `pwsh` の代わりに `powershell -ExecutionPolicy Bypass -File` でも実行できます。
-成果物は `artifacts/single-file/<RID>/VideoCreator.App(.exe)` です。
+成果物は Windows では `artifacts/single-file/<RID>/VideoCreator.exe`、macOS では `artifacts/single-file/osx-arm64/VideoCreator.App` です。
 配布前には [第三者ライセンスの注意事項](../THIRD-PARTY-NOTICES.txt)、特に同梱 GPL 版 FFmpeg の
 対応ソース提供義務を確認してください。この発行処理だけで公開配布の法的要件が満たされるわけではありません。
 

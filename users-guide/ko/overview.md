@@ -161,7 +161,7 @@ dotnet run --project src/VideoCreator.App -c Release
 
 | 파일 | 대상 |
 |---|---|
-| `VideoCreator-<version>-win-x64.exe` | Windows 10/11 x64 |
+| `VideoCreator.exe` | Windows 10/11 x64 |
 | `VideoCreator-<version>-win-arm64.exe` | Windows 11 ARM64 |
 | `VideoCreator-<version>-osx-arm64.tar.gz` | Apple Silicon macOS. ONNX Runtime의 Intel macOS 패키지가 없어 Intel Mac은 미지원 |
 
@@ -170,7 +170,7 @@ dotnet run --project src/VideoCreator.App -c Release
 1. [Releases](https://github.com/dahatake/VideoCreator/releases)에서 플랫폼에 맞는 파일과 `appsettings.json`을 같은 폴더에 받습니다.
 2. IT 승인 아래 Azure CLI를 설치하고(Windows: `winget install Microsoft.AzureCLI`, macOS: `brew install azure-cli`) `az login`으로 로그인합니다. Speech 권한은 [빠른 시작](quickstart.md)과 같습니다. Copilot 선정에는 로그인된 Copilot CLI도 필요합니다.
 3. 관리자가 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`를 설정하거나 `Llm:Provider`를 `copilot` / `none`으로 지정합니다. 자막 Speech도 같은 리소스를 사용합니다. 배포용 설정에는 엔드포인트가 없습니다.
-4. 실행 파일을 열면 기본 브라우저에 `http://127.0.0.1:8765/`가 열립니다. 콘솔을 닫거나 Ctrl+C로 종료합니다.
+4. Windows x64에서는 `VideoCreator.exe`를 더블 클릭하면 기본 브라우저에 `http://127.0.0.1:8765/`가 열립니다. 종료하려면 콘솔에서 Ctrl+C를 누르고 종료될 때까지 기다립니다. 브라우저만 닫으면 앱은 종료되지 않습니다.
 
 macOS에서는 PATH의 `az`를 찾을 수 있도록 Terminal에서 실행합니다.
 
@@ -196,7 +196,7 @@ gh workflow run release.yml -f publish=true -f version_suffix=rc.1 -f prerelease
 gh run watch
 ```
 
-다운로드 검증: `sha256sum -c SHA256SUMS.txt --ignore-missing`(macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`), `gh attestation verify VideoCreator-<version>-win-x64.exe --repo dahatake/VideoCreator`.
+다운로드 검증: `sha256sum -c SHA256SUMS.txt --ignore-missing`(macOS: `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`), `gh attestation verify VideoCreator.exe --repo dahatake/VideoCreator`.
 
 로컬 빌드는 FFmpeg가 아키텍처별이므로 SDK 10이 있는 **대상과 동일 OS/CPU**에서 수행합니다. macOS에는 PowerShell 7(`brew install powershell`)이 필요합니다. 저장소 루트에서 실행하세요.
 
@@ -204,10 +204,10 @@ gh run watch
 pwsh scripts\get-tools.ps1
 pwsh scripts\publish-single-file.ps1
 pwsh scripts\publish-single-file.ps1 -NeutralSettings
-pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.App.exe -RequireNeutralSettings
+pwsh scripts\verify-single-file.ps1 -ExePath artifacts\single-file\win-arm64\VideoCreator.exe -RequireNeutralSettings
 ```
 
-Windows에서는 `pwsh` 대신 `powershell -ExecutionPolicy Bypass -File`을 쓸 수 있습니다. 기본 RID는 `win-x64` / `win-arm64` / `osx-arm64`, 결과는 `artifacts/single-file/<RID>/VideoCreator.App(.exe)`입니다. 배포 전 [타사 고지](../../THIRD-PARTY-NOTICES.txt), 특히 GPL FFmpeg의 대응 소스 제공 의무를 확인하세요. 게시 작업만으로 모든 법적 배포 요건이 충족되지는 않습니다.
+Windows에서는 `pwsh` 대신 `powershell -ExecutionPolicy Bypass -File`을 쓸 수 있습니다. 기본 RID는 `win-x64` / `win-arm64` / `osx-arm64`, 결과는 Windows의 `artifacts/single-file/<RID>/VideoCreator.exe`, macOS의 `artifacts/single-file/osx-arm64/VideoCreator.App`입니다. 배포 전 [타사 고지](../../THIRD-PARTY-NOTICES.txt), 특히 GPL FFmpeg의 대응 소스 제공 의무를 확인하세요. 게시 작업만으로 모든 법적 배포 요건이 충족되지는 않습니다.
 
 ## 버전 관리
 
