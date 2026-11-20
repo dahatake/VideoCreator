@@ -38,6 +38,14 @@ public class UpscaleTests : IAsyncLifetime
     public void Upscale_is_adopted_only_on_a_measured_improvement(double vmaf, double xpsnr, bool adopt) =>
         Assert.Equal(adopt, BrandKitEnhancer.Adopt(new QualityGain(vmaf, xpsnr, 0)));
 
+    [Fact] // hybrid laptops list the integrated GPU first (DirectML device 0), which measured 9x slower than the discrete one
+    public void Gpu_adapter_choice_prefers_the_discrete_gpu()
+    {
+        var ranked = GpuAdapters.Rank([new GpuAdapter(0, "Intel Iris Xe", 128L << 20), new GpuAdapter(1, "NVIDIA RTX 4060", 8L << 30)]);
+        Assert.Equal([1, 0], ranked.Select(a => a.Index));
+        Assert.Equal([0, 1], GpuAdapters.Rank([new GpuAdapter(0, "a", 1L << 30), new GpuAdapter(1, "b", 1L << 30)]).Select(a => a.Index));
+    }
+
     [Fact]
     public void Planner_uses_the_upscaled_copy_and_qa_reports_it()
     {

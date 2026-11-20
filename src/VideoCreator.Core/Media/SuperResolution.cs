@@ -23,20 +23,25 @@ public sealed class SuperResolution : IDisposable
     readonly InferenceSession _session;
     readonly string _input, _output;
     readonly int _tile;
-    /// <summary>GPU (DirectML) or CPU — DirectML needs a DirectX 12 GPU; measured 0.13 s vs 6.3 s per 720x1280 frame on the dev machine.</summary>
+    /// <summary>GPU (DirectML) or CPU — DirectML needs a DirectX 12 GPU; measured 0.13 s vs 6.3 s per 720x1280 frame on the dev machine.
+    /// The discrete GPU is chosen on hybrid laptops (<see cref="GpuAdapters"/>); the integrated one was 9x slower.</summary>
     public string Device { get; }
 
     public SuperResolution(string modelPath, bool gpu = true)
     {
         if (gpu && OperatingSystem.IsWindows())
         {
-            try
+            foreach (var a in GpuAdapters.Preferred())
             {
-                var g = Options(); g.EnableMemoryPattern = false; g.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL; g.AppendExecutionProvider_DML(0);
-                _session = new InferenceSession(modelPath, g);
-                Device = "GPU (DirectML)"; _tile = 1280;   // whole frames: the GPU is fastest with one stable shape
+                try
+                {
+                    var g = Options(); g.EnableMemoryPattern = false; g.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL; g.AppendExecutionProvider_DML(a.Index);
+                    _session = new InferenceSession(modelPath, g);
+                    Device = $"GPU (DirectML: {a.Name})"; _tile = 1280;   // whole frames: the GPU is fastest with one stable shape
+                    break;
+                }
+                catch (Exception ex) when (ex is OnnxRuntimeException or EntryPointNotFoundException or DllNotFoundException) { _session = null!; }
             }
-            catch (Exception ex) when (ex is OnnxRuntimeException or EntryPointNotFoundException or DllNotFoundException) { _session = null!; }
         }
         if (_session == null) { _session = new InferenceSession(modelPath, Options()); Device = "CPU"; _tile = 256; }
         Device ??= "CPU";
