@@ -25,10 +25,14 @@ public sealed class AzureOpenAIEmbedder : ITextEmbedder
     public AzureOpenAIEmbedder(Uri v1Endpoint, string deployment, TokenCredential credential)
         : this(v1Endpoint, deployment, new BearerTokenPolicy(credential, "https://ai.azure.com/.default")) { }
 
-    public AzureOpenAIEmbedder(Uri v1Endpoint, string deployment, AuthenticationPolicy auth, TimeSpan? timeout = null)
+    public AzureOpenAIEmbedder(Uri v1Endpoint, string deployment, AuthenticationPolicy auth, TimeSpan? timeout = null, HttpClient? http = null)
     {
         Model = deployment;
-        _client = new EmbeddingClient(deployment, auth, new OpenAIClientOptions { Endpoint = v1Endpoint, NetworkTimeout = timeout ?? TimeSpan.FromMinutes(2) });
+        _client = new EmbeddingClient(deployment, auth, new OpenAIClientOptions
+        {
+            Endpoint = v1Endpoint, NetworkTimeout = timeout ?? TimeSpan.FromMinutes(2),
+            Transport = http == null ? null : new HttpClientPipelineTransport(http),
+        });
     }
 
     public async Task<float[][]> EmbedAsync(IReadOnlyList<string> texts, CancellationToken ct)

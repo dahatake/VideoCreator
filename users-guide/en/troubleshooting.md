@@ -30,6 +30,7 @@
 | Receive/copy failure | Check temporary/project free space; consider full-path reference for large sources |
 | `E-ASR-PROVIDER`, 401 | Check own endpoint, Internet, `az login` into resource tenant |
 | Speech/OpenAI 403 | Ask administrator about user roles/network restrictions; management-plane access is not data-processing access |
+| Connection-test details include `SSL connection could not be established` | Update and restart the app. Azure traffic uses TLS 1.2 for environments that drop TLS 1.3 handshakes. If it persists, ask your administrator to check proxies, certificates and firewalls; do not disable certificate validation |
 | Signed into Azure but authentication fails | Set `AZURE_TOKEN_CREDENTIALS=AzureCliCredential` in launch environment if another account takes precedence |
 | 429/transient service errors | Check rate limits/capacity/service status; wait if automatic retries fail |
 | Missing subtitles/transcript | No source audio, disabled/unconfigured ASR? LLM does not replace ASR |

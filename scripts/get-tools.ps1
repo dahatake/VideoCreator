@@ -19,6 +19,13 @@ New-Item -ItemType Directory -Force $tools | Out-Null
 $onMac = (Test-Path variable:IsMacOS) -and $IsMacOS
 $exe = if ($onMac) { '' } else { '.exe' }
 
+function Expand-Zip($zip, $dest) {
+    # Expand-Archive can fail on PS 5.1 with a newer Archive module; use .NET directly.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $dest)
+}
+
 $ffDir = Join-Path $tools 'ffmpeg'
 if ($onMac) {
     if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::Arm64) {
@@ -39,7 +46,7 @@ if ($onMac) {
             $zip = Join-Path $tmp "$name.zip"
             Invoke-WebRequest "$base/$name.zip" -OutFile $zip -UseBasicParsing
             if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $pinned[$name]) { throw "$name.zip hash mismatch" }
-            Expand-Archive $zip -DestinationPath (Join-Path $tmp $name) -Force
+            Expand-Zip $zip (Join-Path $tmp $name)
             $bin = Join-Path $ffDir "bin/$name"
             Move-Item (Get-ChildItem (Join-Path $tmp $name) -Recurse -File -Filter $name | Select-Object -First 1).FullName $bin
             & chmod 755 $bin
@@ -59,7 +66,7 @@ elseif ($Force -or -not (Test-Path (Join-Path $ffDir 'bin/ffmpeg.exe'))) {
     Write-Host "Downloading FFmpeg ($arch)..."
     Invoke-WebRequest $url -OutFile $zip -UseBasicParsing
     $tmp = Join-Path $tools 'ffmpeg-tmp'
-    Expand-Archive $zip -DestinationPath $tmp -Force
+    Expand-Zip $zip $tmp
     Remove-Item $ffDir -Recurse -Force -ErrorAction SilentlyContinue
     Move-Item (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName $ffDir
     Remove-Item $tmp, $zip -Recurse -Force

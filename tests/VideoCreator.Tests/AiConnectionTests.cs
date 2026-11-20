@@ -156,6 +156,73 @@ public sealed class AiConnectionTests : IDisposable
         return http;
     }
 
+    sealed class FoundryHandler : HttpMessageHandler
+    {
+        public readonly List<(string Path, string? Key, string? Authorization, string Body)> Requests = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            Requests.Add((path, request.Headers.TryGetValues("api-key", out var keys) ? keys.Single() : null,
+                request.Headers.Authorization?.ToString(), await request.Content!.ReadAsStringAsync(ct)));
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(path switch
+                {
+                    "/openai/v1/chat/completions" => ChatOk,
+                    "/openai/v1/embeddings" => """{"object":"list","model":"embed","data":[{"object":"embedding","index":0,"embedding":[0.25,0.75]}],"usage":{"prompt_tokens":1,"total_tokens":1}}""",
+                    _ => throw new InvalidOperationException("Unexpected Foundry request: " + path),
+                }, Encoding.UTF8, "application/json"),
+            };
+        }
+    }
+
+    [Theory]
+    [InlineData("key")]
+    [InlineData("entra")]
+    public async Task Chat_and_embeddings_use_the_runtime_transport_before_saving(string auth)
+    {
+        using var handler = new FoundryHandler();
+        await using var app = App(speechHandler: handler, asrProvider: "none");
+        using var http = Client(app);
+        var ct = TestContext.Current.CancellationToken;
+        var rt = app.Services.GetRequiredService<Runtime>();
+        rt.CredentialFactory = _ => new SpeechCredential();
+
+        using var response = await http.PutAsJsonAsync("/api/settings/ai/foundry", new
+        {
+            endpoint = "https://127.0.0.1:1/",
+            deployment = "chat",
+            embedding_deployment = "embed",
+            auth,
+            api_key = auth == "key" ? "shared-key" : null,
+        }, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        Assert.True(response.IsSuccessStatusCode, body);
+        using var result = JsonDocument.Parse(body);
+        Assert.True(result.RootElement.GetProperty("test").GetProperty("ok").GetBoolean());
+        Assert.Equal(2, result.RootElement.GetProperty("test").GetProperty("steps").GetArrayLength());
+        Assert.Equal("embed", rt.AiSettings.Load().Foundry!.EmbeddingDeployment);
+        Assert.Collection(handler.Requests,
+            chat =>
+            {
+                Assert.Equal("/openai/v1/chat/completions", chat.Path);
+                using var request = JsonDocument.Parse(chat.Body);
+                Assert.Equal("chat", request.RootElement.GetProperty("model").GetString());
+                Assert.Equal("json_schema", request.RootElement.GetProperty("response_format").GetProperty("type").GetString());
+            },
+            embedding =>
+            {
+                Assert.Equal("/openai/v1/embeddings", embedding.Path);
+                using var request = JsonDocument.Parse(embedding.Body);
+                Assert.Equal("embed", request.RootElement.GetProperty("model").GetString());
+            });
+        Assert.All(handler.Requests, request =>
+        {
+            Assert.Equal(auth == "key" ? "shared-key" : null, request.Key);
+            Assert.Equal(auth == "entra" ? "Bearer speech-test-token" : null, request.Authorization);
+        });
+    }
+
     [Fact]
     public async Task Settings_never_return_a_saved_secret_and_a_saved_key_is_not_sent_to_another_host()
     {

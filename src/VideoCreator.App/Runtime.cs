@@ -60,7 +60,12 @@ public sealed class Runtime
     public Runtime(AppOptions o, ILogger<Runtime> log, HttpClient? speechHttp = null)
     {
         _o = o; _log = log;
-        _http = speechHttp ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(30) };
+        // Some Azure gateways close TLS 1.3 handshakes instead of negotiating TLS 1.2. Keep certificate validation enabled.
+        _http = speechHttp ?? new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            SslProtocols = System.Security.Authentication.SslProtocols.Tls12,
+        }) { Timeout = TimeSpan.FromMinutes(30) };
         // AzureCliCredential inherits this process setting; token acquisition must not emit CLI telemetry.
         Environment.SetEnvironmentVariable("AZURE_CORE_COLLECT_TELEMETRY", "false", EnvironmentVariableTarget.Process);
         Directory.CreateDirectory(o.ResolvedDataDir);
@@ -110,10 +115,10 @@ public sealed class Runtime
     }
 
     public IHighlightSelector FoundrySelector(FoundryConnection c, TimeSpan? timeout = null) =>
-        new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout);
+        new AzureOpenAISelector(FoundryEndpoint.Normalize(c.Endpoint), c.Deployment.Trim(), FoundryAuth.Policy(c, Credential), timeout, _http);
 
     public ITextEmbedder FoundryEmbedder(FoundryConnection c, TimeSpan? timeout = null) =>
-        new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout);
+        new AzureOpenAIEmbedder(FoundryEndpoint.Normalize(c.Endpoint), c.EmbeddingDeployment!.Trim(), FoundryAuth.Policy(c, Credential), timeout, _http);
 
     public string SpeechModel()
     {

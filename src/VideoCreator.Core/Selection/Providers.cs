@@ -20,10 +20,14 @@ public sealed class AzureOpenAISelector : IHighlightSelector
         : this(v1Endpoint, deployment, new BearerTokenPolicy(credential, FoundryAuth.Scope)) { }
 
     /// <summary>Entra ID (<see cref="BearerTokenPolicy"/>) or API key (<see cref="FoundryAuth.Policy"/>).</summary>
-    public AzureOpenAISelector(Uri v1Endpoint, string deployment, AuthenticationPolicy auth, TimeSpan? timeout = null)
+    public AzureOpenAISelector(Uri v1Endpoint, string deployment, AuthenticationPolicy auth, TimeSpan? timeout = null, HttpClient? http = null)
     {
         Model = deployment;
-        _client = new ChatClient(deployment, auth, new OpenAIClientOptions { Endpoint = v1Endpoint, NetworkTimeout = timeout ?? TimeSpan.FromMinutes(3) });
+        _client = new ChatClient(deployment, auth, new OpenAIClientOptions
+        {
+            Endpoint = v1Endpoint, NetworkTimeout = timeout ?? TimeSpan.FromMinutes(3),
+            Transport = http == null ? null : new HttpClientPipelineTransport(http),
+        });
     }
 
     public async Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct)
