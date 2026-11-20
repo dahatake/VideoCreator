@@ -16,10 +16,9 @@
 
 ```powershell
 node scripts\verify-localized-docs.mjs
-node users-guide\tools\validate.mjs
 ```
 
-현재 대상은 **원문14개×4언어＝Markdown56개, SVG35개**입니다. 미추적 새 파일 목록, 번역 구조·요구 ID, 로컬 링크·앵커, 같은 문서의 4언어 전환, SVG XML·내장 PNG·글자 영역·Edge 렌더링을 확인합니다. 아래 9문서·211링크·20그림은 이전 구조의 과거 결과이며 현재 건수가 아닙니다.
+2026-11-17 검증 기록의 대상은 **원문14개×4언어＝Markdown56개, SVG35개**입니다. 현재 포함된 [verify-localized-docs.mjs](../../scripts/verify-localized-docs.mjs)는 미추적 새 파일 목록, 번역 구조·요구 ID, 로컬 링크·앵커, 같은 문서의 4언어 전환을 검사하고 실제 건수를 출력합니다. SVG XML·내장 PNG·글자 영역·Edge 렌더링에 사용한 `validate.mjs`는 포함되어 있지 않으며 이 명령은 해당 항목을 검사하지 않습니다. 아래 9문서·211링크·20그림도 이전 구조의 과거 결과이며 현재 건수가 아닙니다.
 
 별도 UI 검증은 리소스835개×4언어, LocalizationTests29개, 4언어 브라우저 작업(P1~P11 전체, P11 장면, 공통 BGM, 파일 선택·키보드 조작)에 합격했습니다. 앱 언어와 OS·브라우저 기본 대화상자 언어는 다릅니다. 새 클라우드 요청은 하지 않았으며 문서 검증이 Speech 정확도·최종 영상 품질 재측정을 뜻하지는 않습니다.
 
@@ -46,7 +45,7 @@ node users-guide\tools\validate.mjs
 - `mp4` / `srt` / `ass` / `editplan` / `metadata` / `thumb1` / `thumb2` / `thumb3` 8개 키와 대응 API에서 비어 있지 않은 파일을 얻을 수 있음 확인.
 - 실제 파일을 ffprobe로 확인: H.264, 1080×1920, AAC, 48kHz, 2ch. P4 출력은 27.20초, QA 측정값은 −14.0 LUFS, −12.5 dBTP(정현파 fixture 결과이며 실제 발화의 음질 평가는 아님).
 - 같은 원본으로 시리즈 후보 2편을 생성하고 시리즈 구조·화면 확인.
-- 가이드 전체 SVG와 로컬 링크를 [검증 스크립트](../tools/validate.mjs)로 확인.
+- 가이드 전체 SVG와 로컬 링크를 당시의 `validate.mjs`(현재 미포함)로 확인.
 
 최종 검증 결과: **Markdown 9개(루트 README와 [제작 방침](documentation-brief.md) 포함), 로컬 링크·앵커 211개, SVG 20개(개념도 5개·실제 화면 15개)**. XML, 삽입 PNG, 그림 문자 영역, Edge 렌더링, 보조 스크립트 문법, 차이의 공백 검사 모두 성공했습니다. 최종 캡처에서는 SRT 시간 형식, ASS Events, 편집 계획 Canvas/Timeline, 썸네일 PNG 형식, MP4 코덱·해상도·음성 형식·P4 길이도 검증했습니다.
 
@@ -70,6 +69,8 @@ node ui\verify-multi-export.mjs http://127.0.0.1:18788
 
 ## 스크린샷 재생성
 
+당시 사용한 `seed.cs`와 `capture.mjs`는 현재 저장소에 포함되어 있지 않으므로 아래는 구성 참고 기록입니다. 이 절차만으로 화면을 자동 재생성할 수 없습니다. fixture를 별도로 준비한 경우에만 전용 환경을 시작하고 수동으로 캡처하세요. 실행 가능한 UI 회귀 검사는 앞 절을 참조하세요.
+
 ### 1. 전제
 
 .NET SDK 10, FFmpeg·글꼴·모델, Node.js, OS에 설치된 Microsoft Edge를 사용합니다. 앱 사용자는 Node.js가 필요 없지만 **화면을 다시 만드는 개발자에게는 필요**합니다. Playwright는 [ui/package.json](../../ui/package.json)의 기존 의존성을 사용합니다. 의존성이 없다면 `ui`에서 `npm ci`를 실행하세요. 브라우저 추가 다운로드는 필요 없습니다.
@@ -78,15 +79,11 @@ node ui\verify-multi-export.mjs http://127.0.0.1:18788
 
 ### 2. 격리 fixture 준비
 
-[seed.cs](../tools/seed.cs)는 기존 데이터가 있는 폴더를 거부합니다. 새 빈 디렉터리를 지정하세요.
+당시 `seed.cs`는 기존 데이터가 있는 폴더를 거부했습니다. fixture를 별도로 준비할 때도 새 빈 디렉터리를 사용하세요.
 
-```powershell
-dotnet run --file users-guide\tools\seed.cs -- C:\Temp\VideoCreatorGuideCapture
-```
+당시 생성한 내용은 260초 테스트 패턴 영상과 정현파, 프로젝트/원본 DB 기록, [talk_transcript.json](../../tests/VideoCreator.Tests/Fixtures/talk_transcript.json)을 130초 이동해 두 번 나열한 전사 캐시입니다. 자막은 **이 정현파를 인식한 결과가 아닙니다**. 처음의 130초 fixture는 무음 컷 후 2편 최소 길이를 충족하지 못해 연장했습니다.
 
-생성 내용은 260초 테스트 패턴 영상과 정현파, 프로젝트/원본 DB 기록, [talk_transcript.json](../../tests/VideoCreator.Tests/Fixtures/talk_transcript.json)을 130초 이동해 두 번 나열한 전사 캐시입니다. 자막은 **이 정현파를 인식한 결과가 아닙니다**. 처음의 130초 fixture는 무음 컷 후 2편 최소 길이를 충족하지 못해 연장했습니다.
-
-이 fixture 키는 현재 ASR 캐시 방식과 빈 사전에 대응합니다. 캐시 구현·사전·ASR Name을 바꿨다면 seed도 갱신하세요. 검증 엔드포인트를 실제 사용에 전용하지 마세요.
+fixture를 다시 만들 때는 현재 ASR 캐시 구현·사전·ASR Name과 일치하는지 확인하세요. 검증 엔드포인트를 실제 사용에 전용하지 마세요.
 
 ### 3. 전용 포트 실행
 
@@ -118,16 +115,15 @@ dotnet C:\Temp\VideoCreatorGuideBuild\bin\VideoCreator.App\release\VideoCreator.
 
 ### 4. 캡처·검증
 
-시작 응답을 확인한 후 다른 터미널에서 실행합니다.
+fixture를 준비한 전용 환경의 시작 응답을 확인하고 브라우저에서 필요한 화면을 수동으로 캡처합니다. 문서 링크·번역 구조와 공백은 다른 터미널에서 검사할 수 있습니다.
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18765/api/health
-node users-guide\tools\capture.mjs http://127.0.0.1:18765
-node users-guide\tools\validate.mjs
+node scripts\verify-localized-docs.mjs
 git diff --check -- README.md users-guide
 ```
 
-[capture.mjs](../tools/capture.mjs)는 `guide-demo`만 있는 전용 환경, LLM 미사용, ASR loopback endpoint임을 검사한 뒤 조작합니다. 실제 앱에 새 생성·내보내기를 남기고 [images](../images)의 화면 SVG를 갱신합니다. 개인 이름이 포함될 수 있는 CLI 경로는 화면에서 가립니다. 이미지 획득 후 시작 터미널에서 Ctrl+C를 누르고 불필요해진 전용 작업 디렉터리만 정리하세요.
+당시 `capture.mjs`는 `guide-demo`만 있는 전용 환경, LLM 미사용, ASR loopback endpoint임을 검사한 뒤 조작했습니다. 현재는 이 조건을 수동 확인하고 개인 이름이 포함될 수 있는 CLI 경로를 가린 뒤 [images](../images)의 화면 SVG를 갱신하세요. SVG 문법·내장 PNG·글자 영역·Edge 렌더링은 별도 확인이 필요합니다. 이미지 획득 후 시작 터미널에서 Ctrl+C를 누르고 불필요해진 전용 작업 디렉터리만 정리하세요.
 
 ## 갱신 체크리스트
 

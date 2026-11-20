@@ -47,15 +47,17 @@
 
 ## (3) 具体的な手法とツール
 
+以下の `seed.cs`・`capture.mjs`・`validate.mjs` は当時の作業用ヘルパーで、現在のリポジトリには同梱されていません。過去の実行記録であり、現在実行できる文書検証と画面再取得の制約は[検証と保守](verification.md)を参照してください。
+
 | 手法 | ツール | 本ガイドでの使い方 |
 |---|---|---|
 | タスク分析・最短経路設計 | ソース読解、実画面操作 | [クイックスタート](quickstart.md)を「用意→起動確認→素材→生成→確認→書き出し」の6段に構成 |
 | 実装からのUI仕様抽出 | grep/ソース読解 | [画面説明](screens.md)の各欄に、意味・初期値・使う場面を記載 |
-| 隔離環境での実行 | `VideoCreator__DataDir`・`__ProjectsDir`・`__Port` 等の環境変数、合成テスト素材 [seed.cs](tools/seed.cs) | 利用者のデータやクラウドに触れずに画面と出力を再現 |
-| 自動スクリーンショット | Playwright＋Microsoft Edge [capture.mjs](tools/capture.mjs) | 実画面PNGをSVGに埋め込み、パスをマスク |
+| 隔離環境での実行 | `VideoCreator__DataDir`・`__ProjectsDir`・`__Port` 等の環境変数、合成テスト素材 `seed.cs` | 利用者のデータやクラウドに触れずに画面と出力を再現 |
+| 自動スクリーンショット | Playwright＋Microsoft Edge `capture.mjs` | 実画面PNGをSVGに埋め込み、パスをマスク |
 | 図の作成 | 手書きSVG（title/desc付き） | 全体像・構成図・処理の流れ・時間軸・QAの5点 |
 | 出力の確認 | ffprobe、API取得 | コーデック、解像度、音声形式、尺、出力キーを確認 |
-| 文書の機械検証 | [validate.mjs](tools/validate.mjs)、`git diff --check` | リンク・見出しアンカー・SVGのXML・埋め込みPNG・文字のはみ出し・描画 |
+| 文書の機械検証 | `validate.mjs`、`git diff --check` | リンク・見出しアンカー・SVGのXML・埋め込みPNG・文字のはみ出し・描画 |
 
 ## (4) あなたや私以外に、正しさを示してくれるもの
 
@@ -89,10 +91,10 @@
 |---|---|---|
 | 1. README：準備→操作→成果物 | [README](../README.md#最初の1本)、[詳細概要](overview.md)、[全体像の図](images/overview.svg) | 成果物の8キーを実際に書き出し、ffprobeで形式を確認（[検証記録](verification.md#今回の実行確認)） |
 | 2. クイックスタート | [quickstart.md](quickstart.md) | 合成素材で同じ手順（権利確認→P4生成→確認→書き出し）を実UIで実行 |
-| 3. 画面説明＋スクリーンショット | [screens.md](screens.md)、実画面SVG 15点（[images](images)） | [capture.mjs](tools/capture.mjs)で実アプリから自動取得。検証スクリプトで埋め込みPNGと描画を確認 |
+| 3. 画面説明＋スクリーンショット | [screens.md](screens.md)、実画面SVG 15点（[images](images)） | `capture.mjs`で実アプリから自動取得。検証スクリプトで埋め込みPNGと描画を確認 |
 | 4. 困ったとき | [troubleshooting.md](troubleshooting.md)、[QA図](images/qa-gates.svg) | QA条件は[QaEngine.cs](../src/VideoCreator.Core/Qa/QaEngine.cs)と照合。実行したQAはすべてpass |
 | 5. テクニカルリファレンス | [technical-reference.md](technical-reference.md#1-コンポーネント構成)、[コンポーネント図](images/components.svg)、[処理の流れ](images/pipeline.svg)、[時間軸](images/timelines.svg)、[設定・API](configuration-api.md) | ビルド成功（警告0・エラー0）。ルートと設定はソースと照合 |
-| 6. 図はすべてSVG | 模式図5点＋実画面15点＝20点 | [validate.mjs](tools/validate.mjs)：SVG以外のファイルがないこと、XML、title/desc、外部参照、文字のはみ出し、描画 |
+| 6. 図はすべてSVG | 模式図5点＋実画面15点＝20点 | `validate.mjs`：SVG以外のファイルがないこと、XML、title/desc、外部参照、文字のはみ出し、描画 |
 | 7. 検証と記録 | [verification.md](verification.md) | 検証スクリプトPASS。未検証項目を明記 |
 | 8. 既存変更の保持 | — | アプリのソース変更は取り消していない |
 

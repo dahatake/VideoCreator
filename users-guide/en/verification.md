@@ -16,10 +16,9 @@ The employee entry is simplified; the [detailed overview](overview.md) preserves
 
 ```powershell
 node scripts\verify-localized-docs.mjs
-node users-guide\tools\validate.mjs
 ```
 
-Current scope: **14 sources × 4 languages = 56 Markdown files, 35 SVG figures**. Checks include new/untracked inventory, translation structure/requirement IDs, local links/anchors, same-document four-language switching, SVG XML/embedded PNGs/text bounds and Edge rendering. The 9-document/211-link/20-figure results below are historical, not current counts.
+The 2026-11-17 verification record covered **14 sources × 4 languages = 56 Markdown files, 35 SVG figures**. The currently included [verify-localized-docs.mjs](../../scripts/verify-localized-docs.mjs) checks new/untracked inventory, translation structure/requirement IDs, local links/anchors, and same-document four-language switching, reporting actual counts. The former `validate.mjs` helper is not included; this command does not check SVG XML/embedded PNGs/text bounds or Edge rendering. The 9-document/211-link/20-figure results below are also historical, not current counts.
 
 Separate UI checks in this change passed 835 resources × four languages, 29 LocalizationTests, and four-language browser workflows (all P1–P11, P11 scenes, shared BGM, file selection and keyboard use). App language is distinct from native OS/browser dialog language. No new cloud requests were made. Documentation checks do not remeasure Speech accuracy or final-video quality.
 
@@ -46,7 +45,7 @@ This guide investigated the working tree on 2026-11-08, preserving application c
 - Eight output keys `mp4` / `srt` / `ass` / `editplan` / `metadata` / `thumb1` / `thumb2` / `thumb3`; nonempty files retrievable through APIs.
 - ffprobe: H.264, 1080×1920, AAC, 48 kHz, stereo. P4 27.20 seconds, −14.0 LUFS, −12.5 dBTP (sine-wave fixture, not speech-quality evaluation).
 - Generated two series candidates from the same source; checked series structure/screens.
-- All guide SVGs/local links checked with [validator](../tools/validate.mjs).
+- All guide SVGs/local links checked with the original `validate.mjs` helper (not currently included).
 
 Final original-guide verification: **9 Markdown files (including root README and [brief](documentation-brief.md)), 211 local links/anchors, 20 SVGs (5 schematics, 15 actual screens)**. XML, embedded PNGs, diagram text bounds, Edge rendering, helper syntax, and whitespace checks all passed. Final capture also checked SRT time syntax, ASS Events, plan Canvas/Timeline, PNG thumbnails, MP4 codec/resolution/audio/P4 duration.
 
@@ -70,6 +69,8 @@ node ui\verify-multi-export.mjs http://127.0.0.1:18788
 
 ## Recreating screenshots
 
+The original `seed.cs` and `capture.mjs` helpers are not included in the current repository, so the following is a reference record of the setup. These steps alone cannot recreate screenshots automatically. Start a dedicated environment only after separately preparing fixtures, then capture manually. See the preceding section for runnable UI regression checks.
+
 ### 1. Prerequisites
 
 .NET SDK 10, FFmpeg/fonts/models, Node.js, installed OS Microsoft Edge. End users need no Node.js; **developers recreating screens do**. Use existing Playwright dependency in [ui/package.json](../../ui/package.json); run `npm ci` in `ui` if absent. No extra browser download.
@@ -78,15 +79,11 @@ Run PowerShell from repository root; replace example paths with your workspace p
 
 ### 2. Prepare isolated fixtures
 
-[seed.cs](../tools/seed.cs) rejects folders with existing data. Specify a new empty directory.
+The original `seed.cs` rejected folders with existing data. Use a new empty directory when separately preparing fixtures too.
 
-```powershell
-dotnet run --file users-guide\tools\seed.cs -- C:\Temp\VideoCreatorGuideCapture
-```
+The original helper created a 260-second test-pattern/sine-wave video, project/asset DB records, and [talk_transcript.json](../../tests/VideoCreator.Tests/Fixtures/talk_transcript.json) repeated twice with 130-second offset. Subtitles are **not recognition of the sine wave**. The first 130-second fixture could not satisfy two minimum-length parts after silence removal, so it was extended.
 
-Creates a 260-second test-pattern/sine-wave video, project/asset DB records, and [talk_transcript.json](../../tests/VideoCreator.Tests/Fixtures/talk_transcript.json) repeated twice with 130-second offset. Subtitles are **not recognition of the sine wave**. The first 130-second fixture could not satisfy two minimum-length parts after silence removal, so it was extended.
-
-Fixture keys match the current ASR cache and empty dictionary. Update seed when cache implementation/dictionary/ASR Name changes. Do not reuse verification endpoints in production.
+When rebuilding fixtures, check compatibility with the current ASR cache implementation, dictionary, and ASR Name. Do not reuse verification endpoints in production.
 
 ### 3. Start on a dedicated port
 
@@ -118,16 +115,15 @@ Use the same PowerShell with the above environment variables.
 
 ### 4. Capture and validate
 
-After confirming readiness, in another terminal:
+After confirming readiness of the dedicated environment with separately prepared fixtures, capture the required screens manually in the browser. Check documentation links, translation structure, and whitespace in another terminal:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18765/api/health
-node users-guide\tools\capture.mjs http://127.0.0.1:18765
-node users-guide\tools\validate.mjs
+node scripts\verify-localized-docs.mjs
 git diff --check -- README.md users-guide
 ```
 
-[capture.mjs](../tools/capture.mjs) checks dedicated `guide-demo`-only environment, no LLM, loopback ASR before operating. It leaves generated/exported data and updates screen SVGs in original [images](../images). Masks CLI paths potentially containing personal names. After capture, Ctrl+C in launch terminal; clean only the dedicated working directory when no longer needed.
+The original `capture.mjs` checked a dedicated `guide-demo`-only environment, no LLM, and loopback ASR before operating. Now verify those conditions manually and mask CLI paths potentially containing personal names before updating screen SVGs in original [images](../images). SVG syntax, embedded PNGs, text bounds, and Edge rendering require separate checks. After capture, Ctrl+C in launch terminal; clean only the dedicated working directory when no longer needed.
 
 ## Update checklist
 

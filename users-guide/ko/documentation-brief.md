@@ -49,15 +49,17 @@
 
 ## (3) 구체적인 방법과 도구
 
+아래 `seed.cs`·`capture.mjs`·`validate.mjs`는 당시 작업용 도우미이며 현재 저장소에 포함되어 있지 않습니다. 과거 실행 기록이므로 현재 실행 가능한 문서 검사와 화면 재생성의 제약은 [검증과 유지 관리](verification.md)를 참조하세요.
+
 | 방법 | 도구 | 이 가이드의 사용법 |
 |---|---|---|
 | 작업 분석·최단 경로 설계 | 소스 해독, 실제 화면 조작 | [빠른 시작](quickstart.md)을 「준비→실행 확인→원본→생성→확인→내보내기」 6단계로 구성 |
 | 구현에서 UI 사양 추출 | grep/소스 해독 | [화면 설명](screens.md)의 각 입력란에 의미·초기값·사용 상황 기록 |
-| 격리 환경 실행 | `VideoCreator__DataDir`·`__ProjectsDir`·`__Port` 등 환경 변수, 합성 원본 [seed.cs](../tools/seed.cs) | 사용자 데이터·클라우드에 접근하지 않고 화면·출력 재현 |
-| 자동 스크린샷 | Playwright+Microsoft Edge [capture.mjs](../tools/capture.mjs) | 실제 화면 PNG를 SVG에 삽입하고 경로 가림 |
+| 격리 환경 실행 | `VideoCreator__DataDir`·`__ProjectsDir`·`__Port` 등 환경 변수, 합성 원본 `seed.cs` | 사용자 데이터·클라우드에 접근하지 않고 화면·출력 재현 |
+| 자동 스크린샷 | Playwright+Microsoft Edge `capture.mjs` | 실제 화면 PNG를 SVG에 삽입하고 경로 가림 |
 | 그림 작성 | 수작업 SVG(title/desc 포함) | 전체 모습·구성도·처리 흐름·시간축·QA 5개 |
 | 출력 확인 | ffprobe, API 획득 | 코덱, 해상도, 음성 형식, 길이, 출력 키 확인 |
-| 문서 기계 검증 | [validate.mjs](../tools/validate.mjs), `git diff --check` | 링크·제목 앵커·SVG XML·삽입 PNG·글자 넘침·렌더링 |
+| 문서 기계 검증 | `validate.mjs`, `git diff --check` | 링크·제목 앵커·SVG XML·삽입 PNG·글자 넘침·렌더링 |
 
 ## (4) 여러분이나 저 이외에 정확성을 보여 주는 것
 
@@ -91,10 +93,10 @@
 |---|---|---|
 | 1. README: 준비→조작→결과물 | [README](overview.md#처음-사용하는-분께-준비--조작--결과물), [전체 모습](images/overview.svg) | 8키 결과물을 실제 내보내고 ffprobe 형식 확인([검증 기록](verification.md#이번-실행-확인)) |
 | 2. 빠른 시작 | [quickstart.md](quickstart.md) | 합성 원본으로 같은 절차(권리 확인→P4 생성→확인→내보내기)를 실제 UI 실행 |
-| 3. 화면 설명+스크린샷 | [screens.md](screens.md), 실제 화면 SVG 15개([images](../images)) | [capture.mjs](../tools/capture.mjs)로 실제 앱 자동 획득. 스크립트로 삽입 PNG·렌더링 확인 |
+| 3. 화면 설명+스크린샷 | [screens.md](screens.md), 실제 화면 SVG 15개([images](../images)) | `capture.mjs`로 실제 앱 자동 획득. 스크립트로 삽입 PNG·렌더링 확인 |
 | 4. 문제 해결 | [troubleshooting.md](troubleshooting.md), [QA 그림](images/qa-gates.svg) | [QaEngine.cs](../../src/VideoCreator.Core/Qa/QaEngine.cs)와 조건 대조. 실행 QA 전부 pass |
 | 5. 기술 참조 | [technical-reference.md](technical-reference.md#1-구성-요소), [구성 요소도](images/components.svg), [처리 흐름](images/pipeline.svg), [시간축](images/timelines.svg), [설정·API](configuration-api.md) | 빌드 성공(경고 0·오류 0). 경로·설정 소스 대조 |
-| 6. 그림 전부 SVG | 개념도 5+실제 화면 15=20개 | [validate.mjs](../tools/validate.mjs): SVG 외 파일 없음, XML, title/desc, 외부 참조, 글자 넘침, 렌더링 |
+| 6. 그림 전부 SVG | 개념도 5+실제 화면 15=20개 | `validate.mjs`: SVG 외 파일 없음, XML, title/desc, 외부 참조, 글자 넘침, 렌더링 |
 | 7. 검증·기록 | [verification.md](verification.md) | 검증 스크립트 PASS. 미검증 항목 명시 |
 | 8. 기존 변경 유지 | — | 앱 소스 변경을 되돌리지 않음 |
 

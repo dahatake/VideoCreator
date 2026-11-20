@@ -49,15 +49,17 @@ Not summarized READMEs/historical prose:
 
 ## (3) Methods and tools
 
+The `seed.cs`, `capture.mjs`, and `validate.mjs` helpers below were used during the original work and are not included in the current repository. These are historical execution records; see [verification and maintenance](verification.md) for available documentation checks and screenshot-recreation limitations.
+
 | Method | Tools | Application |
 |---|---|---|
 | Task analysis/shortest path | Source reading/real UI | [Quickstart](quickstart.md): prepare → readiness → assets → generate → review → export |
 | Extract UI contract | grep/source reading | [Screens](screens.md): meaning/default/use cases |
-| Isolated execution | `VideoCreator__DataDir`, `__ProjectsDir`, `__Port`, synthetic [seed.cs](../tools/seed.cs) | Reproduce screens/outputs without user data/cloud |
-| Automatic screenshots | Playwright + Edge [capture.mjs](../tools/capture.mjs) | Embed real PNGs in SVG, mask paths |
+| Isolated execution | `VideoCreator__DataDir`, `__ProjectsDir`, `__Port`, synthetic `seed.cs` | Reproduce screens/outputs without user data/cloud |
+| Automatic screenshots | Playwright + Edge `capture.mjs` | Embed real PNGs in SVG, mask paths |
 | Diagram production | Handwritten SVG with title/desc | Five: overview/components/pipeline/timelines/QA |
 | Output inspection | ffprobe/API retrieval | Codec/resolution/audio/duration/output keys |
-| Mechanical documentation checks | [validate.mjs](../tools/validate.mjs), `git diff --check` | Links/anchors/XML/embedded PNG/text bounds/rendering |
+| Mechanical documentation checks | `validate.mjs`, `git diff --check` | Links/anchors/XML/embedded PNG/text bounds/rendering |
 
 ## (4) What beyond you or me demonstrates correctness?
 
@@ -91,10 +93,10 @@ Not summarized READMEs/historical prose:
 |---|---|---|
 | 1. README preparation/actions/outputs | [README](overview.md#first-time-users-preparation--operation--deliverables), [overview](images/overview.svg) | Eight actual keys, ffprobe formats ([record](verification.md#execution-checks-performed)) |
 | 2. Quickstart | [quickstart.md](quickstart.md) | Actual synthetic rights → P4 → review → export UI |
-| 3. Screens/captures | [screens.md](screens.md), 15 screen SVGs ([original images](../images)) | [capture.mjs](../tools/capture.mjs); embedded-PNG/render validation |
+| 3. Screens/captures | [screens.md](screens.md), 15 screen SVGs ([original images](../images)) | `capture.mjs`; embedded-PNG/render validation |
 | 4. Troubleshooting | [troubleshooting.md](troubleshooting.md), [QA](images/qa-gates.svg) | Conditions checked against [QaEngine.cs](../../src/VideoCreator.Core/Qa/QaEngine.cs); executed QA passed |
 | 5. Technical reference | [reference](technical-reference.md#1-components), [components](images/components.svg), [pipeline](images/pipeline.svg), [timelines](images/timelines.svg), [configuration/API](configuration-api.md) | Zero-warning/error build; routes/settings source-checked |
-| 6. SVG | Five schematics + fifteen screens = twenty | [validate.mjs](../tools/validate.mjs): SVG-only, XML/title/desc/external refs/overflow/rendering |
+| 6. SVG | Five schematics + fifteen screens = twenty | `validate.mjs`: SVG-only, XML/title/desc/external refs/overflow/rendering |
 | 7. Verification records | [verification.md](verification.md) | Validator PASS; unverified scope stated |
 | 8. Existing changes preserved | — | Application changes not reverted |
 

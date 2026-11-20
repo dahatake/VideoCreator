@@ -14,10 +14,9 @@
 
 ```powershell
 node scripts\verify-localized-docs.mjs
-node users-guide\tools\validate.mjs
 ```
 
-今回の文書検証は **14原文×4言語＝56 Markdown、35 SVG** が対象です。未追跡の新規文書も含むファイル一覧、翻訳の構造・要件ID、ローカルリンク・アンカー、同一文書への4言語切り替え、SVGのXML・PNG・文字領域・Edge描画を検証します。後述の9文書・211リンク・20図は旧構成での過去の結果であり、現在の検証件数ではありません。
+2026-11-17の検証記録は **14原文×4言語＝56 Markdown、35 SVG** が対象です。現在同梱の[verify-localized-docs.mjs](../scripts/verify-localized-docs.mjs)は、未追跡の新規文書も含むファイル一覧、翻訳の構造・要件ID、ローカルリンク・アンカー、同一文書への4言語切り替えを検証し、実際の件数を出力します。SVGのXML・PNG・文字領域・Edge描画に使った `validate.mjs` は同梱されておらず、このコマンドでは検証しません。後述の9文書・211リンク・20図も旧構成での過去の結果であり、現在の検証件数ではありません。
 
 同時に行ったUI側の別検証では、835翻訳資源×4言語、LocalizationTests 29件、4言語の実ブラウザー操作（P1〜P11、P11シーン、共有BGM、ファイル選択とキーボード操作）が合格しました。アプリ内表示とOS・ブラウザー標準の選択画面の言語は別です。新しいクラウド要求は行っていません。文書検証だけでSpeech認識精度や最終動画品質を再実測したという意味ではありません。
 
@@ -44,7 +43,7 @@ node users-guide\tools\validate.mjs
 - `mp4` / `srt` / `ass` / `editplan` / `metadata` / `thumb1` / `thumb2` / `thumb3` の8キーがあり、対応APIで空でないファイルを取得できることを確認。
 - 実際のファイルをffprobeで確認：H.264、1080×1920、AAC、48kHz、2ch。P4の出力は27.20秒、QA測定値は−14.0 LUFS、−12.5 dBTP（正弦波fixtureの結果であり実発話の音質評価ではない）。
 - 同じ素材から2本のシリーズ候補を生成して、シリーズの構造と画面を確認。
-- ガイドの全SVGとローカルリンクを[検証スクリプト](tools/validate.mjs)で確認。
+- ガイドの全SVGとローカルリンクを当時の `validate.mjs`（現在は未同梱）で確認。
 
 最終検証結果：**Markdown 9ファイル（ルートREADMEと[制作方針](documentation-brief.md)を含む）、ローカルリンク・アンカー211件、SVG 20点（模式図5点・実画面15点）**。XML、埋め込みPNG、図の文字領域、Edgeでの描画、ヘルパースクリプトの構文、差分の空白チェックがすべて成功しました。最終キャプチャではSRTの時刻書式、ASSのEvents、編集計画のCanvas/Timeline、サムネイルのPNG形式、MP4のコーデック・解像度・音声形式・P4尺も検証しています。
 
@@ -68,6 +67,8 @@ node ui\verify-multi-export.mjs http://127.0.0.1:18788
 
 ## スクリーンショットの再作成
 
+当時使用した `seed.cs` と `capture.mjs` は現在のリポジトリには同梱されていないため、以下は構成の参考記録です。画面の自動再作成はこの手順だけでは実行できません。fixtureを別途用意できた場合のみ専用環境で起動し、手動で取得してください。実行可能なUI回帰確認は前節を参照してください。
+
 ### 1. 前提
 
 .NET SDK 10、FFmpeg・フォント・モデル、Node.js、OSにインストールされたMicrosoft Edgeを使います。アプリ利用者はNode.js不要ですが、**画面を再作成する開発者には必要**です。Playwrightは[ui/package.json](../ui/package.json)の既存依存を利用します。依存がない場合は `ui` で `npm ci` を実行します。ブラウザーの追加ダウンロードは不要です。
@@ -76,15 +77,11 @@ node ui\verify-multi-export.mjs http://127.0.0.1:18788
 
 ### 2. 隔離fixtureを準備
 
-[seed.cs](tools/seed.cs)は既存データのあるフォルダーを拒否します。新しい空のディレクトリを指定します。
+当時の `seed.cs` は既存データのあるフォルダーを拒否する仕様でした。fixtureを別途用意する場合も、新しい空のディレクトリを使います。
 
-```powershell
-dotnet run --file users-guide\tools\seed.cs -- C:\Temp\VideoCreatorGuideCapture
-```
+当時生成したのは260秒のテストパターン動画と正弦波、プロジェクト／素材のDB記録、[talk_transcript.json](../tests/VideoCreator.Tests/Fixtures/talk_transcript.json)を130秒ずらして2回並べた書き起こしキャッシュです。字幕は**この正弦波を認識した結果ではありません**。初回の130秒fixtureは無音カット後に2本分の最小尺を満たさなかったため、延長しました。
 
-生成するのは260秒のテストパターン動画と正弦波、プロジェクト／素材のDB記録、[talk_transcript.json](../tests/VideoCreator.Tests/Fixtures/talk_transcript.json)を130秒ずらして2回並べた書き起こしキャッシュです。字幕は**この正弦波を認識した結果ではありません**。初回の130秒fixtureは無音カット後に2本分の最小尺を満たさなかったため、延長しました。
-
-このfixtureキーは現在のASRキャッシュ方式と空辞書に対応します。キャッシュ実装・辞書・ASR Nameを変更した場合はseedも更新してください。検証用エンドポイントを実利用に転用しないでください。
+fixtureを作り直す場合は現在のASRキャッシュ方式・辞書・ASR Nameとの一致を確認してください。検証用エンドポイントを実利用に転用しないでください。
 
 ### 3. 専用ポートで起動
 
@@ -116,16 +113,15 @@ dotnet C:\Temp\VideoCreatorGuideBuild\bin\VideoCreator.App\release\VideoCreator.
 
 ### 4. 取得して検証
 
-起動の応答を確認してから、もう1つのターミナルで実行します。
+fixtureを用意した専用環境の起動応答を確認し、ブラウザーで必要な画面を手動取得します。文書のリンク・翻訳構造と差分は、もう1つのターミナルで検証できます。
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:18765/api/health
-node users-guide\tools\capture.mjs http://127.0.0.1:18765
-node users-guide\tools\validate.mjs
+node scripts\verify-localized-docs.mjs
 git diff --check -- README.md users-guide
 ```
 
-[capture.mjs](tools/capture.mjs)は `guide-demo` だけの専用環境、LLM不使用、ASR loopback endpointであることをチェックしてから操作します。実アプリに新しい生成・書き出しを残し、[images](images)内の画面SVGを更新します。個人名を含み得るCLIパスは画面上でマスクします。画像取得後、起動用ターミナルでCtrl+Cを押し、不要になった専用作業ディレクトリだけを整理してください。
+当時の `capture.mjs` は `guide-demo` だけの専用環境、LLM不使用、ASR loopback endpointであることをチェックしてから操作していました。現在はこれらを手動確認し、個人名を含み得るCLIパスをマスクしたうえで、[images](images)内の画面SVGを更新します。SVGの構文・埋め込みPNG・文字領域・Edge描画は別途確認が必要です。画像取得後、起動用ターミナルでCtrl+Cを押し、不要になった専用作業ディレクトリだけを整理してください。
 
 ## 更新時のチェックリスト
 

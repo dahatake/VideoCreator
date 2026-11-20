@@ -49,15 +49,17 @@
 
 ## (3) 具体方法与工具
 
+下文的 `seed.cs`、`capture.mjs` 和 `validate.mjs` 是当时使用的工作辅助脚本，当前仓库未附带。这些是历史执行记录；当前可运行的文档检查与截图重建限制请参阅[验证与维护](verification.md)。
+
 | 方法 | 工具 | 本指南用法 |
 |---|---|---|
 | 任务分析与最短路径设计 | 阅读源码、操作真实界面 | [快速入门](quickstart.md)分为“准备→启动确认→素材→生成→检查→导出”六阶段 |
 | 从实现提取 UI 规格 | grep／源码阅读 | [界面说明](screens.md)各栏记录含义、默认值、使用场景 |
-| 隔离环境执行 | `VideoCreator__DataDir`、`__ProjectsDir`、`__Port` 等环境变量，合成测试素材 [seed.cs](../tools/seed.cs) | 不接触用户数据或云服务，重现界面与输出 |
-| 自动截图 | Playwright＋Microsoft Edge [capture.mjs](../tools/capture.mjs) | 真实界面 PNG 嵌入 SVG，遮盖路径 |
+| 隔离环境执行 | `VideoCreator__DataDir`、`__ProjectsDir`、`__Port` 等环境变量，合成测试素材 `seed.cs` | 不接触用户数据或云服务，重现界面与输出 |
+| 自动截图 | Playwright＋Microsoft Edge `capture.mjs` | 真实界面 PNG 嵌入 SVG，遮盖路径 |
 | 制图 | 手写 SVG（带 title/desc） | 全貌、架构、处理流程、时间轴、QA 五张图 |
 | 输出确认 | ffprobe、API 获取 | 检查编解码器、分辨率、音频格式、时长、输出键 |
-| 文档机械验证 | [validate.mjs](../tools/validate.mjs)、`git diff --check` | 链接、标题锚点、SVG XML、嵌入 PNG、文字溢出、渲染 |
+| 文档机械验证 | `validate.mjs`、`git diff --check` | 链接、标题锚点、SVG XML、嵌入 PNG、文字溢出、渲染 |
 
 ## (4) 除你我之外，什么能证明正确性
 
@@ -91,10 +93,10 @@
 |---|---|---|
 | 1. README：准备→操作→产物 | [README](overview.md#首次使用准备--操作--产物)、[全貌图](images/overview.svg) | 实际导出八个产物键，用 ffprobe 检查格式（[验证记录](verification.md#本次执行确认)） |
 | 2. 快速入门 | [quickstart.md](quickstart.md) | 合成素材在真实 UI 执行相同步骤（权利确认→P4 生成→检查→导出） |
-| 3. 界面说明与截图 | [screens.md](screens.md)、15 张真实界面 SVG（[原始 images](../images)） | [capture.mjs](../tools/capture.mjs) 从真实应用自动获取，验证脚本检查嵌入 PNG 与渲染 |
+| 3. 界面说明与截图 | [screens.md](screens.md)、15 张真实界面 SVG（[原始 images](../images)） | `capture.mjs` 从真实应用自动获取，验证脚本检查嵌入 PNG 与渲染 |
 | 4. 遇到问题 | [troubleshooting.md](troubleshooting.md)、[QA 图](images/qa-gates.svg) | QA 条件对照 [QaEngine.cs](../../src/VideoCreator.Core/Qa/QaEngine.cs)，实际执行 QA 全部 pass |
 | 5. 技术参考 | [technical-reference.md](technical-reference.md#1-组件架构)、[组件图](images/components.svg)、[处理流程](images/pipeline.svg)、[时间轴](images/timelines.svg)、[配置与 API](configuration-api.md) | 构建成功（0 警告、0 错误），路由与配置对照源码 |
-| 6. 全部图为 SVG | 5 张示意图＋15 张实际界面＝20 张 | [validate.mjs](../tools/validate.mjs)：检查没有 SVG 以外文件、XML、title/desc、外部引用、文字溢出、渲染 |
+| 6. 全部图为 SVG | 5 张示意图＋15 张实际界面＝20 张 | `validate.mjs`：检查没有 SVG 以外文件、XML、title/desc、外部引用、文字溢出、渲染 |
 | 7. 验证与记录 | [verification.md](verification.md) | 验证脚本 PASS，明确未验证项 |
 | 8. 保留现有更改 | — | 未撤销应用源码更改 |
 
