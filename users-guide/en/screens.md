@@ -213,12 +213,12 @@ Workflow Review/edit links first unreviewed; Export links export list.
 | Duration/main/total/cut/caption counts | Plan data; total includes enabled inserts |
 | Captions/transitions | One final-time-ordered table for text/opening/transition/reaction cards/closing. Top switches bulk-enable captions/emphasis/headings/onomatopoeia/reactions/opening/transition cards/closing; reactions include overlays and cards |
 | Opening/card rows | Position/duration/text/enabled. Card text ≤20 chars. Freeze full-screen: similar-aspect images fill; others fit over blurred copy |
-| Approve all reactions/cards | Personally read AI text. Human-rewritten card text recorded as human |
+| Approve all reactions/cards | Bulk approval is at the top left of the captions and transitions panel; each row's approval and visibility controls are in the leftmost column. Read AI text yourself. Manually rewritten card text is recorded as human-authored |
 | Cuts (video/speed) | Source/duration/speed/face tracking/screen zoom/inset; not general timeline editing |
 | BGM/SFX | Audio/BGM chooses none/per-scene/whole track, speech-to-BGM difference 10–30 LU (10 LU approximate intelligibility floor), nonspeech BGM. Per scene: times, energy/measurements, track (auto/none possible), −12–+6 dB, rationale. Band shows track flow/ducking (height = reduction); blue playback line. Update preview measures actual speech difference (S-15). P5 track locked to beat cuts; volume editable |
 | Correct transcript | Words within used range; times unchanged, captions regenerated; manual caption edits may be overwritten |
 | Start/end one sentence earlier/later | Short boundaries; source/duration limits may prevent |
-| Automatic checks | Immediate plan QA, not final loudness/resolution |
+| Automatic checks | Left of the captions and transitions panel, or above it on narrower screens. Immediate plan QA, not final loudness/resolution |
 | Approve/revoke check review | Save/revoke review record/time |
 | Bulk check approval | All performed/unapproved, including pass; excludes not-run |
 | Approve/export (1080×1920) | Single video; approve current then export |

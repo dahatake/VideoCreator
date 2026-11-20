@@ -85,10 +85,14 @@ body.fit .cols-steps { flex: 1 0 260px; min-height: 0; align-items: stretch; }
 body.fit .step-col { display: flex; flex-direction: column; min-height: 0; }
 body.fit .col-body { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--s8)); padding: var(--s4) var(--s8); }
 @media (max-width: 900px) { .cols-2, .cols-review { grid-template-columns: 1fr; } }
-/* review: preview/settings | telops | 自動チェック (sticky, own scroll) */
-.cols-review.with-qa { grid-template-columns: 300px minmax(0, 1fr) 360px; }
+/* review: preview/settings | 自動チェック (sticky, own scroll) | telops */
+.cols-review.with-qa { grid-template-columns: 300px 360px minmax(0, 1fr); }
 .cols-review.with-qa > .qa-panel { position: sticky; top: var(--s16); max-height: calc(100vh - 2 * var(--s16)); overflow: auto; }
-@media (max-width: 1240px) { .cols-review.with-qa { grid-template-columns: 300px minmax(0, 1fr); } .cols-review.with-qa > .qa-panel { grid-column: 1 / -1; position: static; max-height: none; } }
+@media (max-width: 1240px) {
+  .cols-review.with-qa { grid-template-columns: 300px minmax(0, 1fr); }
+  .cols-review.with-qa > .qa-panel { position: static; }
+  .cols-review.with-qa > .telop-panel { grid-column: 1 / -1; }
+}
 @media (max-width: 900px) { .cols-review.with-qa { grid-template-columns: minmax(0, 1fr); } }
 .row { display: flex; gap: var(--s8); align-items: center; flex-wrap: wrap; }
 .row[hidden] { display: none; }
@@ -190,6 +194,18 @@ table.list input.telop:focus, table.list input.card-text:focus { outline: 2px so
 table.list .insert-notes { margin: 2px 0 0; }
 table.list tr.off td { opacity: .45; }
 .scroll { max-height: 62vh; overflow: auto; }
+.telop-panel { overflow-wrap: anywhere; min-width: 0; }
+.telop-bulk:not(:empty) { margin-bottom: var(--s8); }
+.telop-panel table.list { table-layout: fixed; }
+.telop-panel .list :is(th, td) { padding-inline: var(--s4); }
+.telop-action-col { width: min(28%, 120px); }
+.telop-type-col { width: min(16%, 92px); }
+.telop-time-col { width: min(18%, 104px); }
+.telop-stat-col { width: min(9%, 52px); }
+.telop-panel .evidence-select { display: block; width: 100%; }
+.telop-panel .list :is(.tag, .timestamp-seek) { white-space: normal; }
+.telop-actions { gap: var(--s4); }
+.telop-actions fluent-button { min-width: 0; max-width: 100%; white-space: normal; }
 .tag { display: inline-block; padding: 0 var(--s8); border-radius: 999px; font-size: 11px; line-height: 18px; font-weight: 600; white-space: nowrap; }
 .tag.caption { background: #f0f0f0; color: #424242; }
 .tag.emphasis { background: #fff4ce; color: #835b00; }

@@ -2219,12 +2219,13 @@ async function review(epId) {
     const notes = i.kind === 'card'
       ? [isTsukkomiCard(i) ? trUi('m515') : '', i.path ? trUi('m516', [file]) : '', trUi('m517', [Number(i.duration).toFixed(1)]), i.text_source === 'ai' ? trUi('m518') : ''].filter(Boolean)
       : [file, trUi('m519', [Number(i.duration).toFixed(1)])];
-    return `<tr class="insert ${i.enabled ? '' : 'off'}" data-insert="${esc(i.id)}"><td><span class="tag ${esc(groupOf(i))}">${esc(name)}</span></td>
+    return `<tr class="insert ${i.enabled ? '' : 'off'}" data-insert="${esc(i.id)}">
+      <td><div class="row telop-actions">${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">${trUi('m524')}</fluent-button>`}<fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${trUi('m525', [esc(name), esc(i.id)])}"></fluent-switch></div></td>
+      <td><span class="tag ${esc(groupOf(i))}">${esc(name)}</span></td>
       <td>${i.enabled ? `<button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${trUi('m520', [start.toFixed(1), end.toFixed(1), esc(name)])}">${start.toFixed(1)}–${end.toFixed(1)}</button>` : `<span class="caption">${trUi('m521')}</span>`}</td>
       <td>${i.kind === 'card' ? `<input class="card-text" data-id="${esc(i.id)}" value="${esc(i.text)}" maxlength="20" aria-label="${trUi('m523', [esc(name), esc(i.id)])}" placeholder="${i.path ? trUi('m522') : ''}">` : ''}
         <p class="caption insert-notes">${esc(notes.join(' · '))}</p></td>
-      <td>${i.kind === 'card' ? [...(i.text ?? '')].length : ''}</td><td></td>
-      <td><fluent-switch class="ins-en" data-id="${esc(i.id)}" ${i.enabled ? 'checked' : ''} aria-label="${trUi('m525', [esc(name), esc(i.id)])}"></fluent-switch>${i.approved || !i.text ? '' : `<fluent-button size="small" data-approve-card="${esc(i.id)}">${trUi('m524')}</fluent-button>`}</td></tr>`;
+      <td>${i.kind === 'card' ? [...(i.text ?? '')].length : ''}</td><td></td></tr>`;
   };
 
   // ---- BGM: scene-by-scene music and the level automation (Planning.BgmPlanner) ----
@@ -2489,18 +2490,20 @@ async function review(epId) {
           ${hardFail ? `<span class="caption fail">${trUi('m634')}</span>` : ''}
           <div id="msg"></div>
         </section>
-        <section class="card">
-          <div class="row" style="justify-content:space-between"><h2>${trUi('m653')}</h2>
-            <div class="row">${filterTypes.filter(t => itemsOf(t).length || ['caption', 'emphasis', 'headline'].includes(t)).map(t => field(typeLabel[t], `<fluent-switch slot="input" data-type="${t}" ${itemsOf(t).some(x => x.enabled) || !itemsOf(t).length ? 'checked' : ''}></fluent-switch>`)).join('')}
-              ${plan.telops.some(t => t.type === 'tsukkomi' && !t.approved) || (plan.inserts ?? []).some(i => isTsukkomiCard(i) && i.text && !i.approved) ? `<fluent-button size="small" id="approveAll">${trUi('m635')}</fluent-button>` : ''}
-              ${(plan.inserts ?? []).some(i => i.kind === 'card' && !isTsukkomiCard(i) && i.text && !i.approved) ? `<fluent-button size="small" id="approveCards">${trUi('m636')}</fluent-button>` : ''}</div></div>
+        ${qaPanel()}
+        <section class="card telop-panel" aria-labelledby="telop-title">
+          <h2 id="telop-title">${trUi('m653')}</h2>
+          <div class="row telop-bulk">${plan.telops.some(t => t.type === 'tsukkomi' && !t.approved) || (plan.inserts ?? []).some(i => isTsukkomiCard(i) && i.text && !i.approved) ? `<fluent-button size="small" id="approveAll">${trUi('m635')}</fluent-button>` : ''}${(plan.inserts ?? []).some(i => i.kind === 'card' && !isTsukkomiCard(i) && i.text && !i.approved) ? `<fluent-button size="small" id="approveCards">${trUi('m636')}</fluent-button>` : ''}</div>
+          <div class="row">${filterTypes.filter(t => itemsOf(t).length || ['caption', 'emphasis', 'headline'].includes(t)).map(t => field(typeLabel[t], `<fluent-switch slot="input" data-type="${t}" ${itemsOf(t).some(x => x.enabled) || !itemsOf(t).length ? 'checked' : ''}></fluent-switch>`)).join('')}</div>
           <p class="caption">${trUi('m654', [maxW, maxLines > 1 ? trUi('m637', [maxLines]) : '', maxCps])}</p>
-          <div class="scroll"><table class="list"><thead><tr><th>${trUi('m304')}</th><th>${trUi('m655')}</th><th style="width:55%">${trUi('m656')}</th><th>${trUi('m657')}</th><th>${trUi('m658')}</th><th>${trUi('m646')}</th></tr></thead><tbody>
+          <div class="scroll"><table class="list"><thead><tr><th class="telop-action-col">${trUi('m524')} / ${trUi('m646')}</th><th class="telop-type-col">${trUi('m304')}</th><th class="telop-time-col">${trUi('m655')}</th><th>${trUi('m656')}</th><th class="telop-stat-col">${trUi('m657')}</th><th class="telop-stat-col">${trUi('m658')}</th></tr></thead><tbody>
             ${[...plan.telops.map(t => ({ at: finalT(t.start), t })), ...(plan.inserts ?? []).map(i => ({ at: i.enabled && i.duration > 0 ? insertStart(i) : finalT(i.at), i }))]
               .sort((a, b) => a.at - b.at || (a.i ? 0 : 1) - (b.i ? 0 : 1)).map(({ t, i }) => i ? insertRow(i) : (() => {
               const w = width(t.text), cps = w / Math.max(0.05, t.end - t.start);
               const start = finalT(t.start), end = finalT(t.end, true);
-              return `<tr class="${t.enabled ? '' : 'off'}" data-telop="${esc(t.id)}"><td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
+              return `<tr class="${t.enabled ? '' : 'off'}" data-telop="${esc(t.id)}">
+                <td><div class="row telop-actions">${t.approved ? '' : `<fluent-button size="small" data-approve="${esc(t.id)}">${trUi('m524')}</fluent-button>`}<fluent-switch data-id="${esc(t.id)}" class="en" ${t.enabled ? 'checked' : ''} aria-label="${trUi('m646')}"></fluent-switch></div></td>
+                <td><span class="tag ${esc(t.type)}">${esc(typeLabel[t.type] ?? t.type)}</span></td>
                 <td><button class="timestamp-seek" type="button" data-time="${start.toFixed(3)}" aria-label="${trUi('m644', [start.toFixed(1), end.toFixed(1)])}">${start.toFixed(1)}–${end.toFixed(1)}</button></td>
                 <td><input class="telop" data-id="${esc(t.id)}" value="${esc(t.text)}" maxlength="40" aria-label="${trUi('m645', [esc(t.id)])}">
                   ${['emphasis', 'headline', 'hook', 'counter'].includes(t.type) ? (() => {
@@ -2514,12 +2517,10 @@ async function review(epId) {
                       }).join('')}</select></label>`;
                   })() : ''}</td>
                 <td class="${w > maxW * (t.type === 'caption' ? maxLines : 1) && t.type !== 'headline' ? 'warn' : ''}">${w}</td>
-                <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td>
-                <td><fluent-switch data-id="${esc(t.id)}" class="en" ${t.enabled ? 'checked' : ''} aria-label="${trUi('m646')}"></fluent-switch>${t.approved ? '' : `<fluent-button size="small" data-approve="${esc(t.id)}">${trUi('m524')}</fluent-button>`}</td></tr>`;
+                <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td></tr>`;
             })()).join('')}
           </tbody></table></div>
         </section>
-        ${qaPanel()}
       </div>`;
     wireSafeToggle();
     wireQaPanel();
