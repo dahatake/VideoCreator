@@ -892,7 +892,7 @@ async function project(id, showSettings = false) {
   // the Shorts template (preset.short) is not one of the patterns: it is made instead of, or together with, the chosen one
   const mainPresets = presets.filter(p => !p.short), shortPreset = presets.find(p => p.short && p.available);
   let selected = mainPresets.some(p => p.id === saved.preset_id) ? saved.preset_id : 'P4';
-  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', short: ['off', 'with', 'only'].includes(saved.short) ? saved.short : 'off', series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
+  const opts = { scope: saved.scope ?? 'balanced', bgm: saved.bgm ?? 'auto', use_shared_bgm: saved.use_shared_bgm ?? true, sfx: saved.sfx ?? true, tsukkomi: saved.tsukkomi ?? false, tsukkomi_style: ['auto', 'telop', 'card'].includes(saved.tsukkomi_style) ? saved.tsukkomi_style : 'auto', orientation: ['auto', 'portrait', 'landscape'].includes(saved.orientation) ? saved.orientation : 'auto', short: ['off', 'with', 'only'].includes(saved.short) ? saved.short : 'off', short_count: Number.isInteger(saved.short_count) && saved.short_count >= 1 && saved.short_count <= 30 ? saved.short_count : 3, series: saved.series ?? false, series_by: saved.series_by ?? 'parts', parts: saved.parts ?? 2, part_minutes: saved.part_minutes ?? 15,
     opening: (saved.opening ?? true) && !!kitView.opening, closing: (saved.closing ?? true) && !!kitView.closing, scene_cards: saved.scene_cards ?? false, mask_words: Array.isArray(saved.mask_words) ? saved.mask_words : [],
     make_engage_image: saved.make_engage_image ?? false, engage_image_deployment: saved.engage_image_deployment ?? '' };
   setSteps(assets.length && allRights ? 1 : 0);
@@ -1034,6 +1034,7 @@ async function project(id, showSettings = false) {
             ${field(trUi('short.with'), '<fluent-radio slot="input" value="with"></fluent-radio>')}
             ${field(trUi('short.only'), '<fluent-radio slot="input" value="only"></fluent-radio>')}
           </fluent-radio-group>
+          <label class="caption" id="shortCountRow" ${opts.short === 'off' ? 'hidden' : ''}>${trUi('short.count')} <input class="native" type="number" id="shortCount" min="1" max="30" step="1" value="${esc(opts.short_count)}" style="width:72px" aria-label="${trUi('short.count')}"> ${trUi('short.countUnit')}</label>
           <p class="caption" id="short-help">${trUi('short.help', [shortPreset.target.duration_sec[0], shortPreset.target.duration_sec[1]])}</p>
         </section>` : ''}
         </div>
@@ -1433,7 +1434,8 @@ async function project(id, showSettings = false) {
     grid.classList.toggle('muted-box', only); grid.inert = only; $('#shortOnlyNote').hidden = !only;
   };
   showShort();
-  $('#shortMode')?.addEventListener('change', () => { const v = $$('#shortMode fluent-radio').find(r => r.checked)?.value; if (v && v !== opts.short) { opts.short = v; saveOpts(); showShort(); } });
+  $('#shortMode')?.addEventListener('change', () => { const v = $$('#shortMode fluent-radio').find(r => r.checked)?.value; if (v && v !== opts.short) { opts.short = v; $('#shortCountRow').hidden = v === 'off'; saveOpts(); showShort(); } });
+  $('#shortCount')?.addEventListener('input', () => { const n = Number($('#shortCount').value); if (Number.isInteger(n) && n >= 1 && n <= 30) { opts.short_count = n; saveOpts(); } });
   $('#maskWords').addEventListener('input', () => {
     opts.mask_words = $('#maskWords').value.split(/[,、，\n]/).map(s => s.trim()).filter(Boolean);
     clearTimeout(maskSaveTimer); maskSaveTimer = setTimeout(saveOpts, 250);
@@ -1771,7 +1773,7 @@ async function loadPatterns(projectId, presets) {
       const kept = base ? null : (await api(`/api/projects/${projectId}`)).project.generation_settings ?? {};
       const o = base ? base.options ?? {} : { ...kept, ...(x.job.options ?? {}), orientation: kept.orientation, opening: kept.opening, closing: kept.closing, scene_cards: kept.scene_cards, tsukkomi_style: kept.tsukkomi_style, parts: kept.series && kept.series_by === 'parts' ? kept.parts : null, part_minutes: kept.series && kept.series_by !== 'parts' ? kept.part_minutes : null };
       await api(`/api/projects/${projectId}/generation-settings`, { method: 'PUT', body: {
-        preset_id: base ? base.preset_ids[0] : kept.preset_id ?? 'P4', short, scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
+        preset_id: base ? base.preset_ids[0] : kept.preset_id ?? 'P4', short, short_count: o.short_count ?? kept.short_count ?? 3, scope: o.scope ?? 'balanced', bgm: o.bgm ?? 'auto', sfx: o.sfx ?? true, tsukkomi: !!o.tsukkomi, tsukkomi_style: o.tsukkomi_style ?? 'auto', orientation: o.orientation ?? 'auto',
         series: !!(o.parts || o.part_minutes), series_by: o.parts ? 'parts' : 'minutes', parts: o.parts ?? 2, part_minutes: o.part_minutes ?? 15,
         opening: !!o.opening, closing: !!o.closing, scene_cards: !!o.scene_cards, mask_words: o.mask_words ?? [],
         make_engage_image: o.make_engage_image ?? false, engage_image_deployment: o.engage_image_deployment ?? '' } });

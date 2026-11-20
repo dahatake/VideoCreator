@@ -456,7 +456,8 @@ public sealed class PipelineRunner(PipelineServices s)
             if (pipWindows.Count > 0)
                 instruction = (string.IsNullOrWhiteSpace(instruction) ? "" : instruction + "\n")
                     + $"副画面（資料）が映るのは次の時間帯だけです。この時間帯の会話を含む候補にしてください: {string.Join(", ", pipWindows.Select(w => $"{w.T0:F1}-{w.T1:F1}"))}";
-            outcome = await selector.SelectAsync(tr, sig, preset, main.Media.Duration, instruction, exclude, ct, job.Options.Scope);
+            int want = preset.Short ? job.Options.ShortCount : SelectionService.PresentCount;
+            outcome = await selector.SelectAsync(tr, sig, preset, main.Media.Duration, instruction, exclude, ct, job.Options.Scope, want);
             if (preset.Planner == "pip")
             {
                 var (pref, built) = PipPlanner.PreferScenes(outcome.Candidates, pipWindows, tr, sig, preset, main.Media.Duration);
@@ -508,8 +509,9 @@ public sealed class PipelineRunner(PipelineServices s)
             throw new PipelineException("E-PIP-SCENES", "選択シーンと会話が重なる候補を作成できませんでした: " + string.Join(" / ", warnings.TakeLast(3)));
         if (candidates.Count == 0) throw new PipelineException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした。別のパターンを試してください。");
         if (seriesParts.Count > 0 && candidates.Count != seriesParts.Count) throw new PipelineException("E-SOL-INFEASIBLE", "一部のパートの編集計画を作れませんでした: " + string.Join(" / ", warnings.TakeLast(seriesParts.Count - candidates.Count)));
-        if (!job.Options.IsSeries && candidates.Count < SelectionService.PresentCount)
-            warnings.Add($"条件を満たす重複しない区間が{candidates.Count}件だけのため、候補は{candidates.Count}本です（最大{SelectionService.PresentCount}本）。重複する区間や条件外の区間は追加しません");
+        int presented = preset.Short ? job.Options.ShortCount : SelectionService.PresentCount;
+        if (!job.Options.IsSeries && candidates.Count < presented)
+            warnings.Add($"条件を満たす重複しない区間が{candidates.Count}件だけのため、候補は{candidates.Count}本です（希望{presented}本）。重複する区間や条件外の区間は追加しません");
         Mark("plan");
 
         for (int i = 0; i < candidates.Count; i++)

@@ -10,7 +10,7 @@ public sealed record SelectionOutcome(List<Candidate> Candidates, string Model, 
 /// <summary>Orchestrates FR-SEL-01..09: chunked map-reduce, retries, fallback, validation, scoring, dedup.</summary>
 public sealed class SelectionService(IHighlightSelector? llm, Action<string>? log = null, int singleCallCharBudget = SelectionService.DefaultCharBudget)
 {
-    public const int ChunkSeconds = 600, PresentCount = 3, MaxCandidates = 5;
+    public const int ChunkSeconds = 600, PresentCount = 3, MaxCandidates = 5, MaxShortCount = 30;
     /// <summary>Above this many transcript characters (≈ 30 min of Japanese speech) the chunked map-reduce + energy pre-filter is used (FR-SEL-03, NFR-COST-03).</summary>
     public const int DefaultCharBudget = 12_000;
     /// <summary>"full" still sends everything in one call up to this size; beyond it every chunk is sent (nothing is dropped).</summary>
@@ -36,8 +36,10 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
         return ((int)(full * (double)kept / count), (double)kept / count);
     }
 
-    public async Task<SelectionOutcome> SelectAsync(Transcript tr, SignalSet sig, Preset p, double duration, string? instruction, IReadOnlyList<Interval> exclude, CancellationToken ct, string scope = "balanced")
+    public async Task<SelectionOutcome> SelectAsync(Transcript tr, SignalSet sig, Preset p, double duration, string? instruction, IReadOnlyList<Interval> exclude,     CancellationToken ct, string scope = "balanced", int count = PresentCount)
     {
+            count = Math.Clamp(count, 1, MaxShortCount);
+            int ask = Math.Max(MaxCandidates, count + 2);
         var warnings = new List<string>();
         int inTok = 0, outTok = 0; int fullChars = tr.Sentences.Sum(s => s.Text.Length), sentChars = 0;
         var normalized = new List<Candidate>();
@@ -60,7 +62,7 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             else if (fullChars <= budget) chunks = [(new Interval(0, duration), tr.Sentences.ToList())];
 
             // A source whose whole talk fits the target is "pick the best part", not "find a hit": an empty answer is not useful there.
-            var system = SelectionPrompt.System(p, chunks.Count == 1 ? MaxCandidates : 3, mustReturn: chunks.Count == 1 && FitsTarget(tr, p)) + VideoLanguages.Prompt(tr.Language);
+            var system = SelectionPrompt.System(p, chunks.Count == 1 ? ask : Math.Max(3, count), mustReturn: chunks.Count == 1 && FitsTarget(tr, p)) + VideoLanguages.Prompt(tr.Language);
             var tasks = chunks.Select(async c =>
             {
                 var user = SelectionPrompt.User(p, duration, c.sents, SelectionPrompt.SignalSummary(sig, c.window), instruction, exclude);
@@ -75,7 +77,7 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
                 inTok += r.Usage.InputTokens; outTok += r.Usage.OutputTokens; model = r.Model;
                 foreach (var rc in r.Candidates) normalized.Add(CandidateValidator.Normalize(rc, tr, sig, duration, $"cand_{++seq:D2}"));
             }
-            if (chunks.Count > 1 && normalized.Count > PresentCount) normalized = await RerankAsync(normalized, tr, p, ct, (i, o) => { inTok += i; outTok += o; });
+            if (chunks.Count > 1 && normalized.Count > count) normalized = await RerankAsync(normalized, tr, p, ct, (i, o) => { inTok += i; outTok += o; });
         }
         // exclude previously shown candidates (FR-SEL-09)
         normalized = normalized.Where(c => exclude.Count == 0 || c.Segments.All(s => exclude.All(e => Math.Min(s.T1, e.T1) - Math.Max(s.T0, e.T0) < 0.5 * s.Length))).ToList();
@@ -85,10 +87,10 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             var whole = FitsTarget(tr, p) ? WholeTalk(tr, sig, duration, exclude) : null;
             warnings.Add(whole != null ? (llm == null ? "AI が設定されていないため、短い素材の発話全体を候補にしました" : "AI が候補を返さなかったため、短い素材の発話全体を候補にしました")
                 : llm == null ? "AI が設定されていないため、音声の盛り上がりから選びました" : "AI選定に失敗したため音声の盛り上がりから選びました");
-            normalized = Fallback(tr, sig, p, duration, exclude);
+            normalized = Fallback(tr, sig, p, duration, exclude, count);
             if (whole != null) normalized.Insert(0, whole);
         }
-        return new SelectionOutcome(CandidateValidator.Dedup(normalized, PresentCount), model, inTok, outTok, fallback, warnings, fullChars, sentChars);
+        return new SelectionOutcome(CandidateValidator.Dedup(normalized, count), model, inTok, outTok, fallback, warnings, fullChars, sentChars);
     }
 
     async Task<LlmResult?> CallWithRetryAsync(string system, string user, CancellationToken ct)
@@ -163,11 +165,11 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
     }
 
     /// <summary>FR-SEL-02 fallback: windows around the strongest loudness peaks (or the most voiced windows).</summary>
-    public static List<Candidate> Fallback(Transcript tr, SignalSet sig, Preset p, double duration, IReadOnlyList<Interval> exclude)
+    public static List<Candidate> Fallback(Transcript tr, SignalSet sig, Preset p, double duration,     IReadOnlyList<Interval> exclude, int count = PresentCount)
     {
         double half = (p.Target.Min + p.Target.Max) / 4;
         var anchors = sig.Events.OrderByDescending(e => e.Strength).Select(e => e.T).ToList();
-        if (anchors.Count < PresentCount)
+            if (anchors.Count < count)
             for (double t = half; t < duration - half; t += half) anchors.Add(t);   // evenly spaced as last resort
         if (anchors.Count == 0 && duration >= p.Target.Min) anchors.Add(duration / 2 + 2);
         var list = new List<Candidate>(); int n = 0;
@@ -177,7 +179,7 @@ public sealed class SelectionService(IHighlightSelector? llm, Action<string>? lo
             if (exclude.Any(e => Math.Min(iv.T1, e.T1) - Math.Max(iv.T0, e.T0) > 0.5 * iv.Length)) continue;
             var raw = new RawCandidate([iv], "", "", [], "AI選定に失敗したため音声の盛り上がりから選びました", 5, 5, 5, 5);
             list.Add(CandidateValidator.Normalize(raw, tr, sig, duration, $"fb_{++n:D2}", "fallback"));
-            if (list.Count >= MaxCandidates * 2) break;
+            if (list.Count >= Math.Max(MaxCandidates, count) * 2) break;
         }
         return list;
     }

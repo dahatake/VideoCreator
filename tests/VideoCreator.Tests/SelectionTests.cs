@@ -111,6 +111,17 @@ public class SelectionTests
         public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct) => Task.FromResult("{}");
     }
 
+    [Fact] // the number of shorts is arbitrary: the AI is asked for more and the fallback / dedup keep that many
+    public async Task Selection_presents_the_requested_number_of_candidates()
+    {
+        string? system = null;
+        await new SelectionService(new CapturingSelector(s => system = s)).SelectAsync(Tr, Fixtures.Signals(Tr), Fixtures.Presets["P11"], 125, null, [], TestContext.Current.CancellationToken, "balanced", 8);
+        Assert.Contains("最大10件", system);
+        var sig = Fixtures.Signals(Tr) with { Events = Enumerable.Range(1, 12).Select(i => new SignalEvent(i * 100, "loudness_peak", 9 - i / 4.0)).ToList() };
+        var fb = SelectionService.Fallback(Tr, sig, Fixtures.Presets["P11"], 1300, [], 8);
+        Assert.True(CandidateValidator.Dedup(fb, 8).Count >= 8);
+    }
+
     [Fact]
     public async Task Selection_uses_llm_candidates_and_excludes_previous_ones()
     {

@@ -283,6 +283,8 @@ export const additional = {
   'kit.landscape': ['横長用', 'Landscape', '横屏用', '가로용'],
   'short.title': ['ショート動画（縦 9:16）', 'Short video (portrait 9:16)', '短视频（竖屏 9:16）', '쇼츠 영상(세로 9:16)'],
   'short.off': ['作らない', 'Don’t make one', '不制作', '만들지 않음'],
+  'short.count': ['作る本数（最大）', 'Number of shorts (up to)', '制作数量（最多）', '만들 영상 수(최대)'],
+  'short.countUnit': ['本（1〜30）', '(1–30)', '条（1～30）', '개(1~30)'],
   'short.with': ['選んだパターンと一緒に作る', 'Make one as well as the chosen pattern', '与所选模板一起制作', '선택한 패턴과 함께 만들기'],
   'short.only': ['ショート動画だけを作る', 'Make only the short video', '只制作短视频', '쇼츠 영상만 만들기'],
   'short.help': ['スマホの縦画面（1080×1920）で {0}〜{1} 秒。横長の動画は人物を追って縦に切り出します。出力の向き・シリーズ・オープニング／クロージング・場面カードの設定は使わず、冒頭2秒に見どころを置きます。一緒に作るときは2つ目の生成として続けて実行し、1つ目の文字起こし・分析を使い回します。', 'Phone portrait (1080×1920), {0}–{1} s. Landscape video is cropped to portrait, following the person. The output orientation, series, opening/closing and scene card settings are not used, and the highlight comes in the first 2 s. When made together, it runs as a second generation right after the first and reuses its transcript and analysis.', '手机竖屏（1080×1920），{0}～{1} 秒。横屏视频会跟随人物裁切为竖屏。不使用输出方向、系列、片头／片尾和场景卡设置，并在前 2 秒放置精彩内容。一起制作时，会作为第二个生成紧接着运行，并复用第一个生成的转写和分析结果。', '휴대폰 세로 화면(1080×1920), {0}~{1}초. 가로 영상은 인물을 따라 세로로 잘라냅니다. 출력 방향·시리즈·오프닝/클로징·장면 카드 설정은 쓰지 않고, 첫 2초에 하이라이트를 둡니다. 함께 만들 때는 두 번째 생성으로 이어서 실행하며 첫 번째의 자막 변환·분석을 재사용합니다.'],

@@ -328,6 +328,8 @@ public static class Api
                     return Error(422, "E-VALIDATION", "利用できるパターンを選んでください");
                 if (settings.Short is not ("off" or "with" or "only"))
                     return Error(422, "E-VALIDATION", "ショート動画は off / with / only のどれかを指定してください");
+                if (settings.ShortCount is < 1 or > Selection.SelectionService.MaxShortCount)
+                    return Error(422, "E-VALIDATION", $"ショート動画の本数は 1〜{Selection.SelectionService.MaxShortCount} 本で指定してください");
                 if (settings.Scope is not ("full" or "balanced" or "economy"))
                     return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
                 if (settings.SeriesBy is not ("parts" or "minutes"))
@@ -1271,6 +1273,7 @@ public static class Api
             return Error(422, "E-VALIDATION", "画像デプロイ名は200文字以内で入力してください");
         if (rt.ImageConfigurationError(options.MakeEngageImage, options.EngageImageDeployment) is { } imageError)
             return Error(422, "E-IMAGE-CONFIG", imageError);
+        if (options.ShortCount is < 1 or > Selection.SelectionService.MaxShortCount) return Error(422, "E-VALIDATION", $"ショート動画の本数は 1〜{Selection.SelectionService.MaxShortCount} 本で指定してください");
         if (options.Scope is not ("full" or "balanced" or "economy")) return Error(422, "E-VALIDATION", "絞り込みは full / balanced / economy のどれかを指定してください");
         if (!Planning.TsukkomiPlacement.Styles.Contains(options.TsukkomiStyle)) return Error(422, "E-VALIDATION", "ツッコミの見せ方は auto / telop / card のどれかを指定してください");
         if (!Canvas.Orientations.Contains(options.Orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");

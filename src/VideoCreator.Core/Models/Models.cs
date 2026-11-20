@@ -50,6 +50,8 @@ public sealed record ProjectGenerationSettings
     public string Orientation { get; init; } = "auto";
     /// <summary>The Shorts template (Preset.Short): off | with (also made, next to <see cref="PresetId"/>) | only (instead of it).</summary>
     public string Short { get; init; } = "off";
+    /// <summary>How many short videos to propose (1..<see cref="VideoCreator.Selection.SelectionService.MaxShortCount"/>).</summary>
+    public int ShortCount { get; init; } = 3;
     public List<string> MaskWords { get; init; } = [];
 }
 
@@ -681,6 +683,8 @@ public sealed record JobOptions
     public double? PartMinutes { get; init; }
     /// <summary>Series mode by count: exactly this many parts of balanced length. Mutually exclusive with <see cref="PartMinutes"/>.</summary>
     public int? Parts { get; init; }
+    /// <summary>How many candidates a Shorts template (Preset.Short) proposes, at most (1..<see cref="VideoCreator.Selection.SelectionService.MaxShortCount"/>). Other templates always present 3.</summary>
+    public int ShortCount { get; init; } = 3;
     public bool IsSeries => PartMinutes != null || Parts != null;
     /// <summary>Play the registered opening video (after the cold open when there is one).</summary>
     public bool Opening { get; init; }
