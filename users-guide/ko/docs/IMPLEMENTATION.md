@@ -47,8 +47,8 @@ PRD의 각 기능을 본체에 통합하기 전에 **작은 검증 프로그램(
 | ID | 결과 | 증거 |
 |---|---|---|
 | AT-01 | ✅(※1) | 64분 일본어 2화자 영상으로 P4 후보 3개를 **193초**에 생성(목표 25분 이내). 모두 하드 QA 통과, 4축 점수·이유 포함 |
-| AT-02 | ✅ | E2E 출력: ffprobe **1080×1920·30.90초**, loudnorm **−14.0 LUFS / −1.5 dBTP**. 통합 테스트 `Final_render_meets_platform_spec_and_passes_hard_qa` |
-| AT-03 | ✅ | 같은 계획을 두 번 렌더링해 영상 스트림 SHA-256 일치(`Rendering_is_deterministic`, spike 03) |
+| AT-02 | ✅ | E2E 출력: ffprobe **1080×1920·30.90초**, loudnorm **−14.0 LUFS / −1.5 dBTP**. 통합 테스트 `Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic` |
+| AT-03 | ✅ | 같은 계획을 두 번 렌더링해 영상 스트림 SHA-256 일치(`Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic`, spike 03) |
 | AT-04 | ✅ | 문장 중간 구간이 문장 경계로 이동하여 H-06 통과(`Solver_snaps_mid_sentence_edges_and_never_cuts_words`) |
 | AT-05 | ✅ | 전사에 없는 「500万円」을 H-07에서 거부(`UngroundedClaims_flags_invented_numbers`, `Qa_fails_ungrounded_and_unapproved_telops`) |
 | AT-06 | ✅ | 자막 14자 이내·조사로 시작하지 않음·고립 행 없음(`Captions_respect_width…`, `Caption_lines_are_balanced_without_orphans`) |

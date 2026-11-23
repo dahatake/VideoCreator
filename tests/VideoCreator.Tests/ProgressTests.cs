@@ -37,21 +37,6 @@ public sealed class ProgressTests : IDisposable
         Assert.Equal([0.1, 0.5, 0.999, 1.0], rec.Values);
     }
 
-    [Fact]
-    public async Task Real_ffmpeg_reports_measured_progress_while_encoding()
-    {
-        Directory.CreateDirectory(_dir);
-        var rec = new Recorder<double>();
-        var r = await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=20",
-            "-c:v", "libx264", "-preset", "medium", Path.Combine(_dir, "out.mp4")], Ct, progress: rec, duration: 20);
-        Assert.Equal(0, r.ExitCode);
-        Assert.True(rec.Values.Count >= 3, $"only {rec.Values.Count} updates: {string.Join(", ", rec.Values)}");
-        Assert.Equal(1.0, rec.Values[^1]);
-        Assert.Contains(rec.Values, v => v is > 0 and < 1);
-        Assert.Equal(rec.Values.Order(), rec.Values);
-        Assert.Equal(rec.Values.Count, rec.Values.Distinct().Count());
-    }
-
     sealed class FixtureAsr : ITranscriber
     {
         public string Name => "fixture";

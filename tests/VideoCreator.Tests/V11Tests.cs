@@ -101,7 +101,6 @@ public class V11Tests : IAsyncLifetime
         var ducked = await RenderAudioOnlyAsync(DialoguePlan("a1", 10, new AudioSpec { Master = "a1", Bgm = "upbeat", BgmGainDb = -12, Duck = true, SfxEnabled = false }, p), assets, lib, "duck");
         var plain = await RenderAudioOnlyAsync(DialoguePlan("a1", 10, new AudioSpec { Master = "a1", Bgm = "upbeat", BgmGainDb = -12, Duck = false, SfxEnabled = false }, p), assets, lib, "noduck");
         // remove the 1 kHz dialogue tone so only the music bed is compared (window 1.5–4.5 s, after the 350 ms release has settled in the silent half)
-        string Notch(string wav) => wav;
         double Bed(short[] pcm, double a, double b) => RmsDb(pcm, a, b);
         var dlgOnly = await RenderAudioOnlyAsync(DialoguePlan("a1", 10, new AudioSpec { Master = "a1", Bgm = null, SfxEnabled = false }, p), assets, lib, "dlg");
         // music-in-dialogue ≈ mixture power minus dialogue power (power subtraction)

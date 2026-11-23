@@ -47,8 +47,8 @@ These sources are synthetic FFmpeg patterns + Azure TTS to avoid rights problems
 | ID | Result | Evidence |
 |---|---|---|
 | AT-01 | ✅*1 | Three P4 candidates from a 64-minute Japanese two-speaker video in **193 seconds**, target ≤25 minutes. All pass hard QA, with four score axes and reasons. |
-| AT-02 | ✅ | E2E export: ffprobe **1080×1920, 30.90 seconds**, loudnorm **−14.0 LUFS/−1.5 dBTP**. Integration test `Final_render_meets_platform_spec_and_passes_hard_qa`. |
-| AT-03 | ✅ | Render the same plan twice; video-stream SHA-256 matches (`Rendering_is_deterministic`, spike 03). |
+| AT-02 | ✅ | E2E export: ffprobe **1080×1920, 30.90 seconds**, loudnorm **−14.0 LUFS/−1.5 dBTP**. Integration test `Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic`. |
+| AT-03 | ✅ | Render the same plan twice; video-stream SHA-256 matches (`Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic`, spike 03). |
 | AT-04 | ✅ | Move mid-sentence intervals to sentence boundaries and pass H-06 (`Solver_snaps_mid_sentence_edges_and_never_cuts_words`). |
 | AT-05 | ✅ | H-07 rejects “5 million yen,” absent from transcript (`UngroundedClaims_flags_invented_numbers`, `Qa_fails_ungrounded_and_unapproved_telops`). |
 | AT-06 | ✅ | Captions ≤14 characters, no initial particles or orphan lines (`Captions_respect_width…`, `Caption_lines_are_balanced_without_orphans`). |

@@ -45,8 +45,8 @@ PRD の各機能について、本体に組み込む前に **小さな検証プ�
 | ID | 結果 | 証拠 |
 |---|---|---|
 | AT-01 | ✅（※1） | 64分の日本語2話者動画で P4 の候補3本を **193秒**（目標 25分以内）。3本ともハード QA 合格、スコア4軸と理由つき |
-| AT-02 | ✅ | E2E の書き出し: ffprobe **1080×1920・30.90秒**、loudnorm **−14.0 LUFS / −1.5 dBTP**。結合テスト `Final_render_meets_platform_spec_and_passes_hard_qa` |
-| AT-03 | ✅ | 同じ編集計画を2回レンダリングし映像ストリームの SHA-256 が一致（`Rendering_is_deterministic`、spike 03） |
+| AT-02 | ✅ | E2E の書き出し: ffprobe **1080×1920・30.90秒**、loudnorm **−14.0 LUFS / −1.5 dBTP**。結合テスト `Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic` |
+| AT-03 | ✅ | 同じ編集計画を2回レンダリングし映像ストリームの SHA-256 が一致（`Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic`、spike 03） |
 | AT-04 | ✅ | 文の途中を指す区間が文境界に移動し H-06 合格（`Solver_snaps_mid_sentence_edges_and_never_cuts_words`） |
 | AT-05 | ✅ | 書き起こしにない「500万円」を H-07 で不合格（`UngroundedClaims_flags_invented_numbers`、`Qa_fails_ungrounded_and_unapproved_telops`） |
 | AT-06 | ✅ | 字幕が14字以内・助詞で始まらない・孤立行なし（`Captions_respect_width…`、`Caption_lines_are_balanced_without_orphans`） |

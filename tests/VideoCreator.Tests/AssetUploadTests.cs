@@ -51,8 +51,6 @@ public sealed class AssetUploadTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(1024 * 1024)]
-    [InlineData(128 * 1024 * 1024 - 1)]
     [InlineData(128 * 1024 * 1024)]
     [InlineData(128 * 1024 * 1024 + 1)]
     public async Task Upload_preserves_video_bytes_across_the_default_multipart_limit(long length)

@@ -47,8 +47,8 @@
 | ID | 结果 | 证据 |
 |---|---|---|
 | AT-01 | ✅※1 | 64 分钟日语双人视频生成三个 P4 候选，耗时 **193 秒**，目标为 25 分钟内。三条全部通过硬性 QA，均带四轴分数与理由。 |
-| AT-02 | ✅ | E2E 导出经 ffprobe 测得 **1080×1920、30.90 秒**，loudnorm 测得 **−14.0 LUFS／−1.5 dBTP**。集成测试为 `Final_render_meets_platform_spec_and_passes_hard_qa`。 |
-| AT-03 | ✅ | 同一编辑计划渲染两次，视频流 SHA-256 相同，见 `Rendering_is_deterministic` 和 spike 03。 |
+| AT-02 | ✅ | E2E 导出经 ffprobe 测得 **1080×1920、30.90 秒**，loudnorm 测得 **−14.0 LUFS／−1.5 dBTP**。集成测试为 `Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic`。 |
+| AT-03 | ✅ | 同一编辑计划渲染两次，视频流 SHA-256 相同，见 `Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic` 和 spike 03。 |
 | AT-04 | ✅ | 原先指向句中位置的区间会移到句子边界，并通过 H-06。验证为 `Solver_snaps_mid_sentence_edges_and_never_cuts_words`。 |
 | AT-05 | ✅ | 转写中不存在的“500万日元”被 H-07 判为不合格。验证为 `UngroundedClaims_flags_invented_numbers` 和 `Qa_fails_ungrounded_and_unapproved_telops`。 |
 | AT-06 | ✅ | 字幕十四字以内，不以助词开头，没有孤立行。见 `Captions_respect_width…`、`Caption_lines_are_balanced_without_orphans`。 |

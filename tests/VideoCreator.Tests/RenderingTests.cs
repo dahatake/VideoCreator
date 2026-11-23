@@ -43,21 +43,6 @@ public class RenderingTests : IAsyncLifetime
         return (plan, assets, new QaContext(plan, p, Tr, ["a1"], []));
     }
 
-    [Fact] // AT-02 + AT-12 + all hard QA on a real final render
-    public async Task Final_render_meets_platform_spec_and_passes_hard_qa()
-    {
-        var (plan, assets, ctx) = Build(_landscape, 1280, 720);
-        var r = new Renderer(Ff);
-        var outp = await r.RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "final.mp4"), preview: false, TestContext.Current.CancellationToken);
-        var qa = await new QaEngine(Ff).RunAsync(ctx, outp.Path, preview: false, Path.Combine(_dir, "qa"), TestContext.Current.CancellationToken);
-        Assert.All(qa.Where(q => q.Hard), q => Assert.True(q.Status == QaStatus.Pass, $"{q.CheckId} {q.Measured} vs {q.Threshold}"));
-        Assert.InRange(outp.LoudnessI, -15, -13);
-        Assert.True(outp.TruePeak <= -1.0);
-        var probe = await Ff.RunProbeAsync(["-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels", "-of", "csv=p=0", outp.Path], TestContext.Current.CancellationToken);
-        Assert.Contains("h264", probe.StdOut);
-        Assert.Contains("aac,48000,2", probe.StdOut);
-    }
-
     [Fact] // landscape in → 1920×1080 out with the 16:9 opening: hard QA (H-02 size, H-05 title-safe) passes and the frame edge shows the picture, not a blurred band
     public async Task Landscape_source_renders_landscape_with_the_landscape_opening()
     {
@@ -89,12 +74,20 @@ public class RenderingTests : IAsyncLifetime
         Assert.True(sharp > 0.5 && sharp > 3 * blurred, $"left edge looks blurred: {sharp:F2} vs {blurred:F2}");
     }
 
-    [Fact] // AT-03: compare decoded frames, not encoded packets
-    public async Task Rendering_is_deterministic()
+    [Fact] // AT-02 + AT-03 + AT-12: platform spec and all hard QA on a real final render, and a second render of the same plan decodes to identical frames
+    public async Task Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic()
     {
         var (plan, assets, ctx) = Build(_landscape, 1280, 720);
         var r = new Renderer(Ff);
         var a = await r.RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "det_a.mp4"), false, TestContext.Current.CancellationToken);
+        var qa = await new QaEngine(Ff).RunAsync(ctx, a.Path, preview: false, Path.Combine(_dir, "qa"), TestContext.Current.CancellationToken);
+        Assert.All(qa.Where(q => q.Hard), q => Assert.True(q.Status == QaStatus.Pass, $"{q.CheckId} {q.Measured} vs {q.Threshold}"));
+        Assert.InRange(a.LoudnessI, -15, -13);
+        Assert.True(a.TruePeak <= -1.0);
+        var probe = await Ff.RunProbeAsync(["-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels", "-of", "csv=p=0", a.Path], TestContext.Current.CancellationToken);
+        Assert.Contains("h264", probe.StdOut);
+        Assert.Contains("aac,48000,2", probe.StdOut);
+
         var b = await r.RenderAsync(plan, ctx.Preset, assets, Path.Combine(_dir, "det_b.mp4"), false, TestContext.Current.CancellationToken);
         async Task<string> Hash(string f) => (await Ff.RunFfmpegCheckedAsync(["-v", "error", "-i", f, "-map", "0:v", "-f", "framemd5", "-"], TestContext.Current.CancellationToken)).StdOut.Trim();
         var ha = await Hash(a.Path);
