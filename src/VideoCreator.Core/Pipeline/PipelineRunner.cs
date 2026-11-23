@@ -661,12 +661,7 @@ public sealed class PipelineRunner(PipelineServices s)
     {
         var cams = used.Where(a => a.Role != AssetRole.Wide && a.Media.AudioChannels > 0).ToList();
         if (cams.Count < 2 || cams.Any(a => a.Speaker != null)) return;
-        var audios = new List<float[]>();
-        foreach (var a in cams)
-        {
-            double off = a.CameraTime(0, main.Id);
-            audios.Add(await AudioSync.LoadAsync(s.Ff, a.Path, 8000, 600, ct, Math.Max(0, off), 0));
-        }
+        var audios = (await Task.WhenAll(cams.Select(a => AudioSync.LoadAsync(s.Ff, a.Path, 8000, 600, ct, Math.Max(0, a.CameraTime(0, main.Id)), 0)))).ToList();
         var res = SpeakerAssign.Assign(audios, 8000, tr);
         if (res == null) { warnings.Add("カメラと話者を自動では判定できませんでした（マイクが共通の可能性）。素材の「話者」欄で指定できます。いまは基準=話者1、カメラB=話者2として扱います"); return; }
         for (int i = 0; i < cams.Count; i++)
