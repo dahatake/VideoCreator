@@ -29,8 +29,8 @@ public static class LayoutPreview
     {
         var c = canvas ?? new Canvas();
         var issues = new List<string>();
-        var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault() ?? Placeholder("main", Camera);
-        if (assets.Count > 1 && assets.All(a => a.Role != AssetRole.Main)) issues.Add("implicit_main");
+        var main = AssetRoles.Master(assets) ?? Placeholder("main", Camera);
+        if (assets.Count > 1 && p.Planner != "pip" && assets.All(a => a.Role != AssetRole.Main && !a.AudioRef)) issues.Add("implicit_main");
         Box? captions = p.HasTelop("caption") && AssWriter.Band(TelopType.Caption, p, c) is { } band
             ? new Box("captions", null, "rect", 0, (int)band.Top, c.Width, (int)Math.Ceiling(band.Bottom - band.Top)) : null;
         var beats = new List<Beat>(); string basis = "";
@@ -47,17 +47,18 @@ public static class LayoutPreview
         return new Result(p.Id, p.Planner, c.Width, c.Height, captions, beats, issues, basis);
     }
 
-    static string Pip(Preset p, IReadOnlyList<SourceAsset> assets, SourceAsset main, IReadOnlyList<FaceSample>? faces, Canvas c, List<Beat> beats, List<string> issues)
+    static string Pip(Preset p, IReadOnlyList<SourceAsset> assets, SourceAsset master, IReadOnlyList<FaceSample>? faces, Canvas c, List<Beat> beats, List<string> issues)
     {
         var cfg = p.Screen ?? new PresetScreen();
-        // the pipeline's rule: exactly one asset other than the main one, with the role "screen"
-        var screens = assets.Where(a => a.Id != main.Id && a.Role == AssetRole.Screen).ToList();
+        // the pipeline's rule: a speaker camera (Main / camera A) and at least one asset with the role "screen"; the audio source is chosen separately
+        var screens = AssetRoles.Screens(assets);
+        var presenter = AssetRoles.Presenter(assets);
         if (assets.Count > 1 && screens.Count == 0) issues.Add("need_screen");
-        if (screens.Count > 1) issues.Add("many_screens");
-        if (screens.Count == 1 && screens[0].PipScenes.Count == 0) issues.Add("no_scenes");
+        else if (assets.Count > 1 && presenter == null) issues.Add("need_presenter");
+        var main = presenter ?? Placeholder("main", Camera);
         var screen = screens.FirstOrDefault() ?? Placeholder("screen", Desktop);
         var slide = screen.Deck?.Slides.FirstOrDefault();
-        var windows = screens.Count == 1 && screen.PipScenes.Count > 0 ? PipPlanner.SceneWindows(main, screen) : [];
+        var windows = screens.Count > 0 && screens.Any(s => s.EffectiveScenes.Count > 0) ? PipPlanner.SceneWindows(master, screens) : [];
         var face = RepresentativeFace(faces, windows);
         string basis = face != null ? "measured" : "typical";
         face ??= TypicalFace;

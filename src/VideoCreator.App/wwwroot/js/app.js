@@ -905,7 +905,7 @@ async function project(id, showSettings = false) {
   layouts = await fetchLayouts();
   if (gone()) return;
   // same rule as Canvas.For: the main video (role main, else the first) decides 'auto'
-  const mainAsset = assets.find(a => a.role === 'main') ?? assets[0];
+  const mainAsset = assets.find(a => a.audio_ref && a.media.audio_channels > 0) ?? assets.find(a => a.role === 'main') ?? assets[0];
   const mainLandscape = !!mainAsset && mainAsset.media.width > mainAsset.media.height * 1.05;
   const orientationLabel = (o) => ({ portrait: trUi('out.portrait'), landscape: trUi('out.landscape') }[o] ?? trUi('out.auto', [mainLandscape ? trUi('out.shapeLandscape') : trUi('out.shapePortrait')]));
   const multiPlanner = (p) => ['switch', 'screen', 'pip'].includes(p.planner);
@@ -916,7 +916,7 @@ async function project(id, showSettings = false) {
   const lastJob = d.jobs[0];
   const roleLabel = { main: trUi('m143'), cam_a: trUi('m144'), cam_b: trUi('m145'), wide: trUi('m146'), audio_master: trUi('m147'), screen: trUi('m148') };
   const syncText = (a) => {
-    if (a.role === 'main') return trUi('m149');
+    if (a.id === mainAsset?.id) return trUi('m149');
     if (a.sync_method === 'manual' || (a.sync_method == null && a.sync_confidence === 9999)) return trUi('m150', [(a.sync_offset * 1000).toFixed(0)]);
     if (a.sync_method === 'audio') return trUi('m151', [a.sync_offset >= 0 ? '+' : '', (a.sync_offset * 1000).toFixed(1)]) +
       (a.sync_drift_ppm ? trUi('m152', [a.sync_drift_ppm > 0 ? '+' : '', a.sync_drift_ppm.toFixed(1), (Math.abs(a.sync_drift_ppm) * 3.6).toFixed(0)]) : '') +
@@ -973,7 +973,7 @@ async function project(id, showSettings = false) {
           <form id="byPath" class="row" style="margin-top:8px"><fluent-text-input id="path" placeholder="C:\\Videos\\stream.mp4" style="flex:1" aria-label="${trUi('m286')}"></fluent-text-input><fluent-button type="submit">${trUi('m287')}</fluent-button></form>
         </details>
         <div id="assetMsg"></div>
-        ${assets.length > 1 ? `<p class="caption">${trUi('pip.help')}</p>` : ''}
+        ${assets.length > 1 ? `<p class="caption">${trUi('pip.help')}</p><p class="caption">${trUi('audioref.help')}</p>` : ''}
         ${assets.map((a, ai) => `
           <div class="asset">
             <div>
@@ -985,11 +985,12 @@ async function project(id, showSettings = false) {
                   const since = a.role === k && rolePicked?.asset === a.id && rolePicked.role === k ? performance.now() - rolePicked.t : Infinity;
                   return `<div class="role-opt${since < 2400 ? ' picked' : ''}" role="radio" aria-checked="${a.role === k}" tabindex="-1" data-role="${k}"${since < 2400 ? ` style="--since:${since.toFixed(0)}ms"` : ''}>${roleIcon(k)}<span>${v}</span></div>`;
                 }).join('')}</div></div>
+                <label class="caption audio-ref"><input type="checkbox" class="aref" data-asset="${esc(a.id)}" ${a.id === mainAsset?.id ? 'checked' : ''}${a.media.audio_channels ? '' : ' disabled'}> ${trUi('audioref.label')}</label>
                 <div class="row" style="margin:8px 0">
                 <label class="caption">${trUi('m168')} <input class="native spk" type="number" min="1" max="8" style="width:64px" data-asset="${esc(a.id)}" value="${a.speaker ?? ''}" placeholder="${trUi('m169')}"></label>
                 <label class="caption">${trUi('m170')} <input class="native off" type="number" step="0.001" style="width:96px" data-asset="${esc(a.id)}" value="${a.sync_offset ?? 0}"></label>
                 <span class="caption">${esc(syncText(a))}</span></div>` : ''}
-              ${a.role === 'screen' ? `<div class="stack"><span class="caption">${trUi('pip.count', [a.pip_scenes?.length ?? 0])}</span>
+              ${a.role === 'screen' ? `<div class="stack"><span class="caption">${a.pip_scenes?.length ? trUi('pip.count', [a.pip_scenes.length]) : trUi('pip.auto')}</span>
                 <div class="stack deck-box" data-asset="${esc(a.id)}">
                   ${a.deck ? `<span class="caption">${trUi('deck.status', [new Set(a.deck.slides.map(s => s.number)).size, a.slide_spans?.length ?? 0])}${a.deck.slides.some(s => s.step > 0) ? ` · ${trUi('deck.steps', [a.deck.slides.filter(s => s.step > 0).length])}` : ''}${a.deck.source === 'libreoffice' ? ` · ${trUi('deck.libreoffice')}` : ''}</span>
                     <fluent-button class="deck-del" data-asset="${esc(a.id)}">${trUi('deck.remove')}</fluent-button>`
@@ -1590,6 +1591,7 @@ async function project(id, showSettings = false) {
     // router() focuses main once this route returns, so give focus back to the role buttons after that
     if (roleFocus === aid) { roleFocus = null; setTimeout(() => { if (!gone()) group.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true }); }); }
   });
+  $$('input.aref').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { audio_ref: i.checked })));
   $$('input.spk').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, i.value ? { speaker: Number(i.value) } : { clear_speaker: true })));
   $$('input.off').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { sync_offset: Number(i.value) })));
   $$('.pip-scenes').forEach(button => button.addEventListener('click', async () => {

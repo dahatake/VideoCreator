@@ -774,6 +774,47 @@ public class MultiSourceTests : IAsyncLifetime
         Assert.Equal(12, result.Sum(c => c.Length), 6);
     }
 
+    [Fact] // the picture roles and the audio source are separate: a screen recording with the clearest sound can be the time spine while camera A is the speaker
+    public void Pip_with_a_screen_and_camera_a_only_uses_the_chosen_audio_source_as_the_time_spine()
+    {
+        var screen = Asset("s", "s.mp4", 40, 1920, 1080, AssetRole.Screen) with { AudioRef = true };
+        var cam = Asset("a", "a.mov", 40, 1080, 1920, AssetRole.CamA, offset: 2);
+        var assets = new[] { cam, screen };
+        Assert.Equal("s", AssetRoles.Master(assets)!.Id);
+        Assert.Equal("a", AssetRoles.Presenter(assets)!.Id);
+        Assert.Equal("a", AssetRoles.Master([cam, screen with { AudioRef = false }])!.Id);   // no mark: the first one, as before
+        var auto = ScreenScenes.Auto(new ScreenAnalysis(
+            [.. Enumerable.Range(0, 60).Where(i => i is >= 10 and < 14 or >= 50 and < 52).Select(i => new ActivitySample(i / 2.0, 0.01, 0, 0, 0.2, 0.2))], []), 40);
+        Assert.Equal([new Interval(4.5, 12.5), new Interval(24.5, 31.5)], auto);   // bursts of change, each held 6 s after its last change
+        screen = screen with { AutoPipScenes = auto };
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "s", SrcIn = 0, SrcOut = 36 } };
+        var tr = new Transcript { Provider = "test", Sentences = [new(0, 0, 36, "説明", 1, 0, 0)] };
+        var faces = Enumerable.Range(0, 80).Select(i => new FaceSample(i * 0.5, [LayoutPreview.TypicalFace])).ToList();
+        var result = PipPlanner.Plan(clips, tr, screen, cam, [screen], Fixtures.Presets["P11"], new Canvas(), [], faces);
+        Assert.Equal(36, result.Sum(c => c.Length), 6);
+        Assert.All(result.Where(c => c.AssetId == "a"), c => Assert.Equal(c.AudioIn!.Value + 2, c.SrcIn, 6));   // the camera is read at master time + its offset
+        Assert.Contains(result, c => c.Pip is { AssetId: "s" });
+        Assert.Equal("a", result[0].AssetId);   // the speaker opens the video
+        Assert.All(result.Where(c => c.Pip != null), c => Assert.Equal("a", c.AssetId));
+        Assert.DoesNotContain(result, c => c.AssetId == "s" || c.Pip != null && c.MasterIn is > 12.6 and < 23.5);   // between the bursts the speaker is shown alone
+    }
+
+    [Fact] // any number of screens: each shows in its own scenes, and where they overlap the one already showing keeps the frame
+    public void Pip_shows_several_screens_one_at_a_time()
+    {
+        var main = Asset("m", "m.mov", 60, 1080, 1920, AssetRole.Main);
+        var s1 = Asset("s1", "s1.mp4", 60, 1920, 1080, AssetRole.Screen) with { PipScenes = [new(4, 20)] };
+        var s2 = Asset("s2", "s2.mp4", 60, 1920, 1080, AssetRole.Screen) with { PipScenes = [new(14, 40)] };
+        var resolved = PipPlanner.Resolve([(new Interval(4, 20), 0), (new Interval(14, 40), 1)]);
+        Assert.Equal([(new Interval(4, 20), 0), (new Interval(20, 40), 1)], resolved);
+        var clips = new List<Clip> { new() { ClipId = "c", AssetId = "m", SrcIn = 0, SrcOut = 50 } };
+        var tr = new Transcript { Provider = "test", Sentences = [new(0, 0, 50, "説明", 1, 0, 0)] };
+        var result = PipPlanner.Plan(clips, tr, main, main, [s1, s2], Fixtures.Presets["P11"], new Canvas(), []);
+        var shown = result.Select(c => c.Pip?.AssetId ?? (c.AssetId is "s1" or "s2" ? c.AssetId : null)).Where(x => x != null).Distinct().ToList();
+        Assert.Equal(["s1", "s2"], shown);
+    }
+
+
     [Fact] // one small typed character (3×5 px at analysis size) is activity; a blinking caret (toggling back) is not
     public void Screen_activity_sees_typing_but_not_a_blinking_caret()
     {
@@ -895,8 +936,10 @@ public class MultiSourceTests : IAsyncLifetime
 
         // role problems the pipeline would hit
         Assert.Contains("need_screen", LayoutPreview.For(p, [main, screen with { Role = AssetRole.CamB }]).Issues);
-        Assert.Contains("no_scenes", LayoutPreview.For(p, [main, screen with { PipScenes = [] }]).Issues);
-        Assert.Contains("implicit_main", LayoutPreview.For(p, [main with { Role = AssetRole.CamA }, screen]).Issues);
+        Assert.DoesNotContain("no_scenes", LayoutPreview.For(p, [main, screen with { PipScenes = [] }]).Issues);   // scenes are chosen automatically
+        Assert.Empty(LayoutPreview.For(p, [main with { Role = AssetRole.CamA }, screen]).Issues);                  // camera A is a speaker too
+        Assert.Contains("need_presenter", LayoutPreview.For(p, [main with { Role = AssetRole.Wide }, screen]).Issues);
+        Assert.Contains("implicit_main", LayoutPreview.For(Fixtures.Presets["P7"], [main with { Role = AssetRole.CamA }, screen]).Issues);
         Assert.Contains("only_main", LayoutPreview.For(Fixtures.Presets["P1"], [main, screen]).Issues);
 
         // P10: the screen in its band and the presenter as the bottom-left circle

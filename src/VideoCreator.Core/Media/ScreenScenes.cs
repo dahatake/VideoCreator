@@ -16,6 +16,24 @@ public static class ScreenScenes
         return cuts.Zip(cuts.Skip(1), (a, b) => new Interval(a, b)).ToList();
     }
 
+    /// <summary>The screen keeps the frame this long after its last visible change before the picture goes back to the speaker.</summary>
+    public const double AutoHoldSec = 6;
+    /// <summary>Stretches of the recording worth showing: from the first change of a burst of activity to <see cref="AutoHoldSec"/> after the last, bursts closer than that merged. A recording that never changes (a still slide) is one scene.</summary>
+    public static List<Interval> Auto(ScreenAnalysis analysis, double duration)
+    {
+        var active = analysis.Samples.Where(s => s.Active).Select(s => s.T).Order().ToList();
+        if (active.Count == 0) return duration > 0 ? [new Interval(0, duration)] : [];
+        var scenes = new List<Interval>();
+        double start = Math.Max(0, active[0] - 1 / ScreenActivity.Fps), end = active[0] + AutoHoldSec;
+        foreach (var t in active.Skip(1))
+        {
+            if (t <= end) end = t + AutoHoldSec;
+            else { scenes.Add(new Interval(start, Math.Min(duration, end))); start = Math.Max(0, t - 1 / ScreenActivity.Fps); end = t + AutoHoldSec; }
+        }
+        scenes.Add(new Interval(start, Math.Min(duration, end)));
+        return scenes.Where(s => s.T1 - s.T0 >= 1).ToList();
+    }
+
     public static bool Valid(IReadOnlyList<Interval> scenes, double duration) =>
         scenes.Count <= 500 && scenes.All(s => s != null && double.IsFinite(s.T0) && double.IsFinite(s.T1) && s.T0 >= 0 && s.T1 > s.T0 && s.T1 <= duration)
         && scenes.OrderBy(s => s.T0).Zip(scenes.OrderBy(s => s.T0).Skip(1)).All(p => p.First.T1 <= p.Second.T0);
@@ -62,7 +80,7 @@ public static class ScreenScenes
     public static async Task<PixelRect?> ContentAsync(FFmpeg ff, SourceAsset screen, CancellationToken ct)
     {
         double x0 = 1, y0 = 1, x1 = 0, y1 = 0;
-        foreach (var s in screen.PipScenes)
+        foreach (var s in screen.EffectiveScenes)
         {
             using var ms = new MemoryStream();
             var r = await ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-ss", ((s.T0 + s.T1) / 2).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), "-i", screen.Path,

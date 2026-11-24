@@ -134,5 +134,17 @@ public sealed class AssetUploadTests : IAsyncLifetime
         Assert.Null(newMain.SyncConfidence);
         Assert.Equal(0, oldMain.SyncOffset);
         Assert.Single(newMain.PipScenes);
+
+        // the audio source is a separate mark: moving it re-bases the sync but leaves every picture role alone
+        rt.Store.Put(Kinds.Asset, "main", _id, oldMain with { SyncOffset = 5, SyncMethod = "manual", SyncConfidence = 9999 });
+        using var mark = await _http.PatchAsJsonAsync("/api/assets/main", new { audio_ref = true }, ct);
+        Assert.Equal(HttpStatusCode.OK, mark.StatusCode);
+        oldMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!;
+        newMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "screen")!;
+        Assert.True(oldMain.AudioRef);
+        Assert.False(newMain.AudioRef);
+        Assert.Equal((AssetRole.CamB, AssetRole.Main), (oldMain.Role, newMain.Role));
+        Assert.Equal("main", AssetRoles.Master(rt.Store.List<SourceAsset>(Kinds.Asset, _id))!.Id);
+        Assert.Null(oldMain.SyncMethod);
     }
 }

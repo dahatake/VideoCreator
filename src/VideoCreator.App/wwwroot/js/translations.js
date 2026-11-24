@@ -142,7 +142,7 @@ export const translated = `
 140|Deleted “{0}”. {1}|已删除“{0}”。{1}|“{0}”을(를) 삭제했습니다. {1}
 141|Add media first|请先添加素材|미디어를 추가하세요
 142|Confirm media rights|请勾选权利确认|사용 권리를 확인하세요
-143|Reference (audio source)|基准（音频来源）|기준(음성 원본)
+143|Main video (speaker)|主视频（讲话人）|메인 영상(화자)
 144|Camera A|摄像机 A|카메라 A
 145|Camera B|摄像机 B|카메라 B
 146|Wide (overview)|远景（全景）|와이드(전체)

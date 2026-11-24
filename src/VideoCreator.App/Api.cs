@@ -18,7 +18,7 @@ public static class Api
     public sealed record AddAsset(string Path);
     public sealed record ConfirmRights(string AssetId, bool Confirmed);
     public sealed record StartJob(List<string> PresetIds, string? Instruction, JobOptions? Options = null, string? DerivedFromJobId = null);
-    public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker, List<Interval>? PipScenes = null);
+    public sealed record PatchAsset(AssetRole? Role, int? Speaker, double? SyncOffset, bool? ClearSpeaker, List<Interval>? PipScenes = null, bool? AudioRef = null);
     public sealed record Regenerate(string? Instruction, List<string>? ExcludeCandidateIds);
     public sealed record PatchPlan(List<PlanOp> Ops);
     /// <summary>A BGM file that could not be added (the others in the same upload still are).</summary>
@@ -429,7 +429,7 @@ public static class Api
         api.MapGet("/projects/{id}/estimate", (Runtime rt, string id, string? preset) =>
         {
             var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
-            var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
+            var main = AssetRoles.Master(assets);
             if (main == null) return Error(404, "E-NOT-FOUND", "素材がありません");
             var runner = rt.CreateRunner();
             // series preview: the length after jump cuts when the source has been transcribed before (the transcript is cached), else null
@@ -455,10 +455,11 @@ public static class Api
             orientation ??= project.GenerationSettings.Orientation;
             if (!Canvas.Orientations.Contains(orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
             var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
-            var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
-            var faces = main == null ? [] : rt.CreateRunner().CachedFaces(main);
+            var main = AssetRoles.Master(assets);
+            var shape = AssetRoles.Presenter(assets) ?? main;
+            var faces = shape == null ? [] : rt.CreateRunner().CachedFaces(shape);
             var layouts = rt.Presets.Values.OrderBy(p => int.Parse(p.Id[1..]))
-                .Select(p => Planning.LayoutPreview.For(p, assets, faces, main == null ? new Canvas() : Canvas.For(main.Media.Width, main.Media.Height, p.Apply(new JobOptions { Orientation = orientation }).Orientation)))
+                .Select(p => Planning.LayoutPreview.For(p, assets, faces, main == null ? new Canvas() : Canvas.For((p.Planner == "pip" ? shape! : main).Media.Width, (p.Planner == "pip" ? shape! : main).Media.Height, p.Apply(new JobOptions { Orientation = orientation }).Orientation)))
                 .ToList();
             return Results.Json(layouts, Json.Options);
         });
@@ -544,20 +545,20 @@ public static class Api
                 return Error(422, "E-VALIDATION", "シーンの開始・終了は素材内の重ならない区間にしてください");
             var siblings = rt.Store.List<SourceAsset>(Kinds.Asset, a.ProjectId);
             bool newMain = req.Role is AssetRole.Main && a.Role != AssetRole.Main;
-            if (newMain)
+            bool newRef = req.AudioRef == true && !a.AudioRef;
+            // one asset keeps each exclusive mark: the picture role "main" and the audio source
+            var after = siblings.Select(o => o.Id == id ? a with { Role = req.Role ?? a.Role, AudioRef = req.AudioRef ?? a.AudioRef }
+                : o with { Role = newMain && o.Role == AssetRole.Main ? AssetRole.CamB : o.Role, AudioRef = newRef ? false : o.AudioRef }).ToList();
+            if (AssetRoles.Master(siblings)?.Id != AssetRoles.Master(after)?.Id)
             {
                 // Every stored offset is relative to the old master, including manual offsets. Never reuse it against a different master.
-                foreach (var o in siblings.Where(o => o.Id != id))
-                    rt.Store.Put(Kinds.Asset, o.Id, o.ProjectId, o with
-                    {
-                        Role = o.Role == AssetRole.Main ? AssetRole.CamB : o.Role,
-                        SyncOffset = 0, SyncConfidence = null, SyncDriftPpm = 0, SyncMethod = null, SyncResidualMs = null, SyncWindows = null, SyncMap = [],
-                    });
-                a = a with { SyncOffset = 0, SyncConfidence = null, SyncDriftPpm = 0, SyncMethod = null, SyncResidualMs = null, SyncWindows = null, SyncMap = [] };
+                for (int i = 0; i < after.Count; i++)
+                    after[i] = after[i] with { SyncOffset = 0, SyncConfidence = null, SyncDriftPpm = 0, SyncMethod = null, SyncResidualMs = null, SyncWindows = null, SyncMap = [] };
             }
+            foreach (var o in after.Where(o => o.Id != id)) rt.Store.Put(Kinds.Asset, o.Id, o.ProjectId, o);
+            a = after.First(o => o.Id == id);
             var u = a with
             {
-                Role = req.Role ?? a.Role,
                 PipScenes = req.PipScenes?.OrderBy(s => s.T0).ToList() ?? a.PipScenes,
                 PipContent = req.PipScenes != null ? null : a.PipContent,
                 Speaker = req.ClearSpeaker == true ? null : req.Speaker is int sp ? Math.Clamp(sp, 1, 8) : a.Speaker,
@@ -1297,7 +1298,7 @@ public static class Api
         if (assets.Any(a => !rights.Contains(a.Id))) return Error(409, "E-RIGHTS-REQUIRED", "素材の権利確認が完了していません（AT-08）");
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
         var runner = rt.CreateRunner();
-        var mainAsset = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets[0];
+        var mainAsset = AssetRoles.Master(assets)!;
         var jobs = new List<Job>();
         foreach (var ids in groups)
         {
@@ -1361,7 +1362,7 @@ public static class Api
                 Role = prev?.Role ?? (existing.Count == 0 ? AssetRole.Main : AssetRole.CamB),
                 Speaker = prev?.Speaker, SyncOffset = prev?.SyncOffset ?? 0, SyncConfidence = prev?.SyncConfidence,
                 SyncDriftPpm = prev?.SyncDriftPpm ?? 0, SyncMethod = prev?.SyncMethod, SyncResidualMs = prev?.SyncResidualMs, SyncWindows = prev?.SyncWindows, SyncMap = prev?.SyncMap ?? [],
-                PipScenes = prev?.PipScenes ?? [], PipContent = prev?.PipContent,
+                PipScenes = prev?.PipScenes ?? [], PipContent = prev?.PipContent, AudioRef = prev?.AudioRef ?? false, AutoPipScenes = prev?.AutoPipScenes ?? [],
             };
             rt.Store.Put(Kinds.Asset, asset.Id, projectId, asset);
             return Results.Json(asset, Json.Options, statusCode: 201);

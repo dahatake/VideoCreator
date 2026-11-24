@@ -31,7 +31,9 @@ public static class PlanBuilder
         var p = r.Preset; var tr = r.Transcript; var sig = r.Signals; var notes = new List<string>(); var master = r.Master;
         r = r with { Job = r.Job with { Options = p.Apply(r.Job.Options) } };
         var segs = r.OverrideSegments ?? r.Candidate.Segments;
-        var canvas = Canvas.For(master.Media.Width, master.Media.Height, r.Job.Options.Orientation);
+        // the picture-in-picture pattern follows the speaker's recording, which need not be the audio source
+        var shape = p.Planner == "pip" && AssetRoles.Presenter(r.Assets) is { } speaker ? speaker : master;
+        var canvas = Canvas.For(shape.Media.Width, shape.Media.Height, r.Job.Options.Orientation);
         var bursts = r.Bursts ?? [];
         if (p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && r.Part == null && tr.Sentences.Count > 0)
         {
@@ -218,9 +220,10 @@ public static class PlanBuilder
     {
         if (r.Preset.Planner == "pip")
         {
-            var screens = r.Assets.Where(a => a.Id != r.Master.Id && a.Role == AssetRole.Screen).ToList();
-            if (screens.Count != 1) throw new PlanException("E-PIP-ASSETS", "主映像と、役割を「画面」にした副映像を 1 本ずつ指定してください");
-            return PipPlanner.Plan(clips, r.Transcript, r.Master, screens[0], r.Preset, canvas, notes, r.Faces.GetValueOrDefault(r.Master.Id));
+            var screens = AssetRoles.Screens(r.Assets);
+            var presenter = AssetRoles.Presenter(r.Assets);
+            if (screens.Count == 0 || presenter == null) throw new PlanException("E-PIP-ASSETS", "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材を指定してください");
+            return PipPlanner.Plan(clips, r.Transcript, r.Master, presenter, screens, r.Preset, canvas, notes, r.Faces.GetValueOrDefault(presenter.Id));
         }
         if (r.Preset.Planner != "screen") return clips;
         if (r.Screen == null) { notes.Add("画面収録の解析結果がないため、基準映像だけで編集しました"); return clips; }

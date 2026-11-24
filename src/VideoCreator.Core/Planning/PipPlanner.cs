@@ -17,11 +17,14 @@ public static class PipPlanner
         return m;
     }
 
-    /// <summary>The selected screen scenes in master time, clipped to the main recording.</summary>
-    public static List<Interval> SceneWindows(SourceAsset main, SourceAsset screen) =>
-        CandidateValidator.MergeOverlaps(screen.PipScenes
+    /// <summary>The selected scenes of every screen in master time, clipped to the master recording.</summary>
+    public static List<Interval> SceneWindows(SourceAsset main, IEnumerable<SourceAsset> screens) =>
+        CandidateValidator.MergeOverlaps(screens.SelectMany(screen => screen.EffectiveScenes
             .Select(s => new Interval(Math.Max(0, MasterTime(main, screen, Math.Max(0, s.T0))), Math.Min(main.Media.Duration, MasterTime(main, screen, Math.Min(screen.Media.Duration, s.T1)))))
-            .Where(w => w.T1 > w.T0).ToList(), 0);
+            .Where(w => w.T1 > w.T0)).ToList(), 0);
+
+    /// <summary>The selected screen scenes in master time, clipped to the main recording.</summary>
+    public static List<Interval> SceneWindows(SourceAsset main, SourceAsset screen) => SceneWindows(main, [screen]);
 
     /// <summary>
     /// A PiP candidate is only useful where the conversation overlaps a selected scene: rank candidates by that overlap and drop
@@ -47,67 +50,78 @@ public static class PipPlanner
         return ([CandidateValidator.Normalize(raw, tr, sig, duration, "pip_01", "pip") with { Rank = 1 }], true);
     }
     public static List<Clip> Plan(IReadOnlyList<Clip> speech, Transcript tr, SourceAsset main, SourceAsset screen, Preset preset, Canvas canvas, List<string> notes,
+        IReadOnlyList<FaceSample>? faces = null) => Plan(speech, tr, main, main, [screen], preset, canvas, notes, faces);
+
+    /// <summary>
+    /// The master (audio source, time spine) may differ from the recording that shows the speaker (<paramref name="presenter"/>); any number of screens
+    /// may be shown, one at a time. Eligibility of each screen comes from its scenes (selected by the user, else chosen from its activity).
+    /// </summary>
+    public static List<Clip> Plan(IReadOnlyList<Clip> speech, Transcript tr, SourceAsset main, SourceAsset presenter, IReadOnlyList<SourceAsset> screens, Preset preset, Canvas canvas, List<string> notes,
         IReadOnlyList<FaceSample>? faces = null)
     {
-        if (screen.PipScenes.Count == 0)
-            throw new PlanException("E-PIP-SCENES", "副画面の使用シーンを選んでください。PowerPoint 以外の画面は選択しないでください");
+        if (screens.All(s => s.EffectiveScenes.Count == 0))
+            throw new PlanException("E-PIP-SCENES", "副画面の使用シーンがありません。画面の録画に動きがあるか、使うシーンを選んでください");
         if (tr.Sentences.Count == 0)
             throw new PlanException("E-PIP-SPEECH", "会話に合わせた副画面の表示には、発話時刻付きの書き起こしが必要です");
-        double rate = 1 + screen.SyncDriftPpm * 1e-6;
-        if (!double.IsFinite(rate) || rate <= 0) throw new PlanException("E-PIP-SYNC", "副画面の同期情報が不正です");
-        double Master(double t) => MasterTime(main, screen, t);
+        foreach (var screen in screens)
+        {
+            double rate = 1 + screen.SyncDriftPpm * 1e-6;
+            if (!double.IsFinite(rate) || rate <= 0) throw new PlanException("E-PIP-SYNC", "副画面の同期情報が不正です");
+        }
         var cfg = preset.Screen ?? new PresetScreen();
         var result = new List<Clip>();
         InsetLayout? previous = null;
         double outputOffset = 0, slideSeconds = 0, shrunkSeconds = 0;
         foreach (var clip in speech)
         {
-            var windows = new List<Interval>();
-            foreach (var scene in screen.PipScenes)
+            var raw = new List<(Interval W, int S)>();
+            for (int si = 0; si < screens.Count; si++)
+            foreach (var scene in screens[si].EffectiveScenes)
             foreach (var sentence in tr.Sentences)
             {
-                double lo = Math.Max(Math.Max(clip.MasterIn, Master(Math.Max(0, scene.T0))), sentence.T0 - cfg.LeadSec);
-                double hi = Math.Min(Math.Min(clip.MasterOut, Master(Math.Min(screen.Media.Duration, scene.T1))), sentence.T1 + cfg.TailSec);
+                double lo = Math.Max(Math.Max(clip.MasterIn, MasterTime(main, screens[si], Math.Max(0, scene.T0))), sentence.T0 - cfg.LeadSec);
+                double hi = Math.Min(Math.Min(clip.MasterOut, MasterTime(main, screens[si], Math.Min(screens[si].Media.Duration, scene.T1))), sentence.T1 + cfg.TailSec);
                 // Always introduce the speaker before an inset, including when a candidate starts mid-recording.
                 lo = Math.Max(lo, clip.MasterIn + Math.Max(0, cfg.HookPresenterSec - outputOffset) * clip.Speed);
-                if (hi > lo) windows.Add(new(lo, hi));
+                if (hi > lo) raw.Add((new(lo, hi), si));
             }
-            var merged = new List<Interval>();
-            foreach (var w in windows.OrderBy(w => w.T0))
-            {
-                if (merged.Count > 0 && w.T0 <= merged[^1].T1 + 1e-6)
-                    merged[^1] = merged[^1] with { T1 = Math.Max(merged[^1].T1, w.T1) };
-                else merged.Add(w);
-            }
-            merged = merged.Where(w => w.Length / clip.Speed >= cfg.MinHoldSec).ToList();
-            var baseCuts = merged.SelectMany(w => new[] { w.T0, w.T1 }.Concat(screen.SyncJumps(w.T0, w.T1)))
+            var merged = Resolve(raw).Where(w => w.W.Length / clip.Speed >= cfg.MinHoldSec).ToList();
+            var baseCuts = merged.SelectMany(w => new[] { w.W.T0, w.W.T1 }.Concat(screens[w.S].SyncJumps(w.W.T0, w.W.T1)))
+                .Concat(presenter.Id == main.Id ? [] : presenter.SyncJumps(clip.MasterIn, clip.MasterOut))
                 .Append(clip.MasterIn).Append(clip.MasterOut).Distinct().Order().ToList();
             // a slide change inside a shown stretch starts a new piece (unless it would leave a sliver)
             var slideCuts = new List<double>();
-            if (screen.Deck != null)
-                foreach (var t in screen.SlideSpans.SelectMany(s => new[] { s.T0, s.T1 }).Select(Master).Order())
-                    if (merged.Any(w => t > w.T0 && t < w.T1) && baseCuts.Concat(slideCuts).All(c => Math.Abs(c - t) >= 0.5)) slideCuts.Add(t);
+            foreach (var screen in screens.Where(s => s.Deck != null))
+                foreach (var t in screen.SlideSpans.SelectMany(s => new[] { s.T0, s.T1 }).Select(t => MasterTime(main, screen, t)).Order())
+                    if (merged.Any(w => screens[w.S] == screen && t > w.W.T0 && t < w.W.T1) && baseCuts.Concat(slideCuts).All(c => Math.Abs(c - t) >= 0.5)) slideCuts.Add(t);
             var cuts = baseCuts.Concat(slideCuts).Order().ToList();
             for (int i = 0; i + 1 < cuts.Count; i++)
             {
                 double lo = cuts[i], hi = cuts[i + 1];
-                bool show = merged.Any(w => lo >= w.T0 && hi <= w.T1);
+                var owner = merged.Where(w => lo >= w.W.T0 - 1e-9 && hi <= w.W.T1 + 1e-9).Select(w => screens[w.S]).FirstOrDefault();
+                bool show = owner != null;
                 int pieces = show ? Math.Max(1, (int)Math.Ceiling((hi - lo) / clip.Speed / 6)) : 1;
                 for (int k = 0; k < pieces; k++)
                 {
                     double a = lo + (hi - lo) * k / pieces, b = lo + (hi - lo) * (k + 1) / pieces;
+                    // the speaker's recording may not cover this stretch (started late, ended early): the master's own picture stands in
+                    double p0 = presenter.CameraTime(a, main.Id);
+                    bool presenting = p0 >= -0.01 && p0 + (b - a) <= presenter.Media.Duration + 0.01;
+                    var cam = presenting ? presenter : main;
+                    double c0 = cam.CameraTime(a, main.Id);
                     var item = clip with
                     {
-                        ClipId = $"c{result.Count + 1}", AssetId = main.Id, SrcIn = a, SrcOut = b, AudioIn = a,
-                        Reframe = ReframeSpec.Default(main.Media, canvas),
+                        ClipId = $"c{result.Count + 1}", AssetId = cam.Id, SrcIn = c0, SrcOut = c0 + b - a, AudioIn = a,
+                        Reframe = ReframeSpec.Default(cam.Media, canvas),
                         Zoom = 1, TransitionSec = 0, Pip = null,
                     };
                     if (show)
                     {
+                        var screen = owner!;
                         double s0 = screen.CameraTime(a, main.Id);
                         var slide = SlideDecks.At(screen, screen.CameraTime((a + b) / 2, main.Id));
                         if (slide != null) slideSeconds += (b - a) / clip.Speed;
-                        var layout = PlaceInset(item, main, screen, faces, preset, canvas, previous, slide);
+                        var layout = presenting ? PlaceInset(item, presenter, screen, faces, preset, canvas, previous, slide) : null;
                         previous = layout;
                         if (layout != null)
                         {
@@ -121,18 +135,41 @@ public static class PipPlanner
             }
             outputOffset += clip.Length;
         }
+        var screenIds = screens.Select(s => s.Id).ToHashSet();
         double pipSeconds = result.Where(c => c.Pip != null).Sum(c => c.Length);
-        double switchedSeconds = result.Where(c => c.AssetId == screen.Id).Sum(c => c.Length);
+        double switchedSeconds = result.Where(c => c.Pip == null && screenIds.Contains(c.AssetId)).Sum(c => c.Length);
         double seconds = pipSeconds + switchedSeconds;
         if (seconds == 0) throw new PlanException("E-PIP-SCENES", "選んだ副画面シーンと会話の重なる区間がありません。同期と使用区間を確認してください");
         notes.Add($"顔と字幕を避ける位置・サイズで資料 PiP {pipSeconds:F1} 秒。安全な配置がない・顔位置が不明な区間は資料へ全画面切り替え {switchedSeconds:F1} 秒。選択シーンと発話が重なる範囲だけ使用します。意味の対応と文字の読みやすさはプレビューで確認してください");
-        if (screen.Deck != null)
+        if (screens.Any(s => s.Deck != null))
             notes.Add(slideSeconds > 0
                 ? $"資料のうち {slideSeconds:F1} 秒は、録画の代わりに PowerPoint から書き出した高解像度スライドを表示します（録画とスライドの一致を画素比較で確認した区間のみ）"
                 : "登録したスライドと一致する録画区間がないため、資料は録画のまま表示します");
         if (shrunkSeconds > 0)
             notes.Add($"顔が字幕や資料と重ならないよう、資料表示中の {shrunkSeconds:F1} 秒は主映像を {cfg.MainMinScale:P0} まで縮小して上に寄せています。" +
                       "撮影時に顔を画面の上半分に収め、下側に余白を取ると、主映像を縮小せずに大きな資料を重ねられます");
+        return result;
+    }
+
+    /// <summary>
+    /// Windows of every screen as one non-overlapping timeline: a screen already showing keeps the frame while its window lasts; otherwise the earlier
+    /// screen (in the order given) wins. Adjacent windows of the same screen join.
+    /// </summary>
+    public static List<(Interval W, int S)> Resolve(IReadOnlyList<(Interval W, int S)> windows)
+    {
+        var cuts = windows.SelectMany(w => new[] { w.W.T0, w.W.T1 }).Distinct().Order().ToList();
+        var result = new List<(Interval W, int S)>();
+        int current = -1;
+        for (int i = 0; i + 1 < cuts.Count; i++)
+        {
+            double a = cuts[i], b = cuts[i + 1], mid = (a + b) / 2;
+            var covering = windows.Where(w => mid > w.W.T0 && mid < w.W.T1).Select(w => w.S).Distinct().Order().ToList();
+            if (covering.Count == 0) { current = -1; continue; }
+            int s = covering.Contains(current) ? current : covering[0];
+            current = s;
+            if (result.Count > 0 && result[^1].S == s && result[^1].W.T1 >= a - 1e-6) result[^1] = (result[^1].W with { T1 = b }, s);
+            else result.Add((new Interval(a, b), s));
+        }
         return result;
     }
 

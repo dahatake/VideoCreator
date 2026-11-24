@@ -263,7 +263,7 @@ public sealed class PipelineRunner(PipelineServices s)
 
         var project = s.Store.Get<Project>(Kinds.Project, job.ProjectId) ?? throw new PipelineException("E-NOT-FOUND", "プロジェクトがありません");
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, project.Id);
-        var main = assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault() ?? throw new PipelineException("E-ING-UNSUPPORTED", "素材が登録されていません");
+        var main = AssetRoles.Master(assets) ?? throw new PipelineException("E-ING-UNSUPPORTED", "素材が登録されていません");
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, project.Id).Select(r => r.AssetId).ToHashSet();
         if (assets.Any(a => !rights.Contains(a.Id))) throw new PipelineException("E-RIGHTS-REQUIRED", "素材の権利確認が完了していません");
         var preset = s.Presets[job.PresetIds[0]];
@@ -279,10 +279,11 @@ public sealed class PipelineRunner(PipelineServices s)
         else if (preset.Planner == "screen") used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         else if (preset.Planner == "pip")
         {
-            var screens = assets.Where(a => a.Id != main.Id && a.Role == AssetRole.Screen).ToList();
-            if (screens.Count != 1) throw new PipelineException("E-PIP-ASSETS", "主映像と、役割を「画面」にした副映像を 1 本ずつ指定してください");
-            if (screens[0].PipScenes.Count == 0) throw new PipelineException("E-PIP-SCENES", "副画面のシーンを分割・確認して、使うシーンを選んでください");
-            used.Add(screens[0]);
+            var screens = AssetRoles.Screens(assets);
+            var presenter = AssetRoles.Presenter(assets);
+            if (screens.Count == 0 || presenter == null)
+                throw new PipelineException("E-PIP-ASSETS", "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材を指定してください");
+            used = assets.Where(a => a.Id == main.Id || a.Id == presenter.Id || screens.Any(x => x.Id == a.Id)).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         }
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
         if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
@@ -353,34 +354,41 @@ public sealed class PipelineRunner(PipelineServices s)
                     break;
             }
         }
-        if (preset.Planner == "pip" && (used.Count != 2 || used[1].SyncMethod is not ("audio" or "audio-map" or "manual")))
-            throw new PipelineException("E-PIP-SYNC", "副映像を音声で同期できませんでした。同期結果を確認し、必要なら「ずれ(秒)」を指定してください");
-        if (preset.Planner == "pip" && used[1].PipScenes.Count > 0)
+        if (preset.Planner == "pip")
         {
-            // meeting recordings frame the shared slide with black bars and participant tiles: show only the content
-            var content = await ScreenScenes.ContentAsync(s.Ff, used[1], ct);
-            if (content != used[1].PipContent)
-            {
-                used[1] = used[1] with { PipContent = content };
-                s.Store.Put(Kinds.Asset, used[1].Id, used[1].ProjectId, used[1]);
-            }
-            if (content != null) warnings.Add($"副画面の資料部分（{content.W}×{content.H}）だけを表示します。会議アプリの黒帯や参加者の映像は除きます");
-            if (used[1].Deck is { } deck)
-            {
-                var missing = deck.Slides.Where(x => !File.Exists(x.Path)).ToList();
-                if (missing.Count > 0) throw new PipelineException("E-DECK", "スライドの画像が見つかりません。副画面のスライド資料を追加し直してください");
-                var slides = await SlideDecks.AnalyzeAsync(s.Ff, used[1], Path.Combine(s.DataDir, "cache", used[1].Sha256), ct);   // shared with the scene-split API
-                if (!slides.Spans.SequenceEqual(used[1].SlideSpans))
-                {
-                    used[1] = used[1] with { SlideSpans = slides.Spans };
-                    s.Store.Put(Kinds.Asset, used[1].Id, used[1].ProjectId, used[1]);
-                }
-                double inScenes = used[1].PipScenes.Sum(sc => used[1].SlideSpans.Where(p => p.T1 > sc.T0 && p.T0 < sc.T1).Sum(p => Math.Min(sc.T1, p.T1) - Math.Max(sc.T0, p.T0)));
-                warnings.Add(inScenes > 0
-                    ? $"選んだシーンのうち {inScenes:0.#} 秒はスライド資料（{Path.GetFileName(deck.Path)}）と一致したため、録画の代わりに資料の高解像度画像を表示します"
-                    : "スライド資料が、選んだシーンの画面と一致しませんでした（録画のまま表示します）。資料が録画と同じ版か確認してください");
-            }
+            if (used.Any(a => a.Id != main.Id && a.SyncMethod is not ("audio" or "audio-map" or "manual")))
+                throw new PipelineException("E-PIP-SYNC", "映像を音声で同期できませんでした。同期結果を確認し、必要なら「ずれ(秒)」を指定してください");
+            if (AssetRoles.Presenter(used) == null || AssetRoles.Screens(used).Count == 0)
+                throw new PipelineException("E-PIP-SYNC", "話し手のカメラまたは画面の音声を同期できず、使えませんでした。同じ場面を録画した素材を選んでください");
         }
+        if (preset.Planner == "pip")
+            for (int i = 0; i < used.Count; i++)
+            {
+                if (used[i].Role != AssetRole.Screen) continue;
+                var scr = used[i];
+                // no scenes chosen by hand: show the screen while it is changing (typing, slides, scrolling) and a few seconds after
+                var auto = scr.PipScenes.Count > 0 ? [] : ScreenScenes.Auto(await ScreenActivity.AnalyzeAsync(s.Ff, (await ProxyAsync(scr, ct)).Item1,
+                    Path.Combine(CacheDir(scr), ScreenActivityFile), ct, Redo(Path.Combine(CacheDir(scr), ScreenActivityFile))), scr.Media.Duration);
+                if (!auto.SequenceEqual(scr.AutoPipScenes)) scr = scr with { AutoPipScenes = auto };
+                if (scr.EffectiveScenes.Count == 0) throw new PipelineException("E-PIP-SCENES", $"{Path.GetFileName(scr.Path)} に使える画面のシーンがありません。使うシーンを選んでください");
+                if (scr.PipScenes.Count == 0) warnings.Add($"{Path.GetFileName(scr.Path)}: 使うシーンを選んでいないため、画面の動きと発話から {scr.AutoPipScenes.Sum(x => x.Length):0.#} 秒分を自動で選びました");
+                // meeting recordings frame the shared slide with black bars and participant tiles: show only the content
+                var content = await ScreenScenes.ContentAsync(s.Ff, scr, ct);
+                if (content != null) warnings.Add($"{Path.GetFileName(scr.Path)}: 資料部分（{content.W}×{content.H}）だけを表示します。会議アプリの黒帯や参加者の映像は除きます");
+                scr = scr with { PipContent = content };
+                if (scr.Deck is { } deck)
+                {
+                    var missing = deck.Slides.Where(x => !File.Exists(x.Path)).ToList();
+                    if (missing.Count > 0) throw new PipelineException("E-DECK", "スライドの画像が見つかりません。副画面のスライド資料を追加し直してください");
+                    var slides = await SlideDecks.AnalyzeAsync(s.Ff, scr, Path.Combine(s.DataDir, "cache", scr.Sha256), ct);   // shared with the scene-split API
+                    if (!slides.Spans.SequenceEqual(scr.SlideSpans)) scr = scr with { SlideSpans = slides.Spans };
+                    double inScenes = scr.EffectiveScenes.Sum(sc => scr.SlideSpans.Where(p => p.T1 > sc.T0 && p.T0 < sc.T1).Sum(p => Math.Min(sc.T1, p.T1) - Math.Max(sc.T0, p.T0)));
+                    warnings.Add(inScenes > 0
+                        ? $"選んだシーンのうち {inScenes:0.#} 秒はスライド資料（{Path.GetFileName(deck.Path)}）と一致したため、録画の代わりに資料の高解像度画像を表示します"
+                        : "スライド資料が、選んだシーンの画面と一致しませんでした（録画のまま表示します）。資料が録画と同じ版か確認してください");
+                }
+                if (scr != used[i]) { used[i] = scr; s.Store.Put(Kinds.Asset, scr.Id, scr.ProjectId, scr); }
+            }
         if (preset.Planner == "switch" && used.Count < 2) throw new PipelineException("E-SWT-SYNC", "カメラの音声を同期できませんでした。同じ場面を撮影した素材を選んでください");
         Mark("ingest");
 
@@ -452,7 +460,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             var selector = new SelectionService(s.Llm, s.Log, s.SelectionCharBudget);
             var instruction = job.Instruction;
-            var pipWindows = preset.Planner == "pip" ? PipPlanner.SceneWindows(main, used[1]) : [];
+            var pipWindows = preset.Planner == "pip" ? PipPlanner.SceneWindows(main, AssetRoles.Screens(used)) : [];
             if (pipWindows.Count > 0)
                 instruction = (string.IsNullOrWhiteSpace(instruction) ? "" : instruction + "\n")
                     + $"副画面（資料）が映るのは次の時間帯だけです。この時間帯の会話を含む候補にしてください: {string.Join(", ", pipWindows.Select(w => $"{w.T0:F1}-{w.T1:F1}"))}";
@@ -699,9 +707,11 @@ public sealed class PipelineRunner(PipelineServices s)
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, old.ProjectId);
         var main = assets.First(a => a.Id == old.Audio.Master);
         var p = s.Presets[old.Preset.Id];
-        if (p.Planner == "pip" && main.Role != AssetRole.Main)
-            throw new PipelineException("E-PIP-SYNC", "主映像が変更されています。現在の主映像で新しく生成して、音声を再同期してください");
-        var used = p.Planner is "switch" or "screen" or "pip"
+        if (p.Planner == "pip" && AssetRoles.Master(assets)?.Id != main.Id)
+            throw new PipelineException("E-PIP-SYNC", "音声の元が変更されています。現在の設定で新しく生成して、音声を再同期してください");
+        var used = p.Planner == "pip"
+            ? assets.Where(a => a.Id == main.Id || a.Role == AssetRole.Screen || AssetRoles.Presenter(assets)?.Id == a.Id).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList()
+            : p.Planner is "switch" or "screen"
             ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id || t.Pip?.AssetId == a.Id)).ToList() : [main];
         var faces = new Dictionary<string, List<FaceSample>>();
         foreach (var a in used) { var f = FaceService.Load(Path.Combine(CacheDir(a), "faces.json")); if (f.Count > 0) faces[a.Id] = f; }

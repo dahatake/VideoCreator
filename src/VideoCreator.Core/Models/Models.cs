@@ -73,6 +73,20 @@ public sealed record SceneCardImage(string Path, int Width, int Height, string? 
 
 public enum AssetRole { Main, CamA, CamB, Wide, AudioMaster, Screen }
 
+/// <summary>Which recording plays which part. The audio source (time spine) and the picture roles are chosen separately.</summary>
+public static class AssetRoles
+{
+    /// <summary>The audio source: the asset marked <see cref="SourceAsset.AudioRef"/> (with sound), else the one with role Main, else the first.</summary>
+    public static SourceAsset? Master(IReadOnlyList<SourceAsset> assets) =>
+        assets.FirstOrDefault(a => a.AudioRef && a.Media.AudioChannels > 0) ?? assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault();
+
+    /// <summary>The recording that shows the speaker for the picture-in-picture pattern: Main, then camera A, then any other camera (never a screen, wide shot or audio-only source).</summary>
+    public static SourceAsset? Presenter(IReadOnlyList<SourceAsset> assets) =>
+        assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault(a => a.Role == AssetRole.CamA) ?? assets.FirstOrDefault(a => a.Role == AssetRole.CamB);
+
+    public static List<SourceAsset> Screens(IReadOnlyList<SourceAsset> assets) => assets.Where(a => a.Role == AssetRole.Screen).ToList();
+}
+
 public sealed record MediaInfo
 {
     public double Duration { get; init; }
@@ -95,6 +109,15 @@ public sealed record SourceAsset
     public required string Sha256 { get; init; }
     public required MediaInfo Media { get; init; }
     public AssetRole Role { get; init; } = AssetRole.Main;
+    /// <summary>
+    /// This asset's audio is the dialogue master (transcript and time spine), independent of <see cref="Role"/>: the video of such an asset is used as
+    /// its role says. Several recordings can show the scene while only the one with the clearest sound is chosen as the audio source.
+    /// </summary>
+    public bool AudioRef { get; init; }
+    /// <summary>Screen intervals chosen automatically from the recording's activity (own time), used while <see cref="PipScenes"/> is empty.</summary>
+    public List<Interval> AutoPipScenes { get; init; } = [];
+    /// <summary>The scenes a background-first PiP may show: the user's selection, else the automatic one.</summary>
+    public IReadOnlyList<Interval> EffectiveScenes => PipScenes.Count > 0 ? PipScenes : AutoPipScenes;
     /// <summary>Which speaker this camera shows (1-based, order of first appearance in the transcript). Null = wide / no single speaker.</summary>
     public int? Speaker { get; init; }
     /// <summary>Seconds such that cameraTime = masterTime + SyncOffset + SyncDriftPpm·1e-6·masterTime (audio alignment, metadata or manual).</summary>
