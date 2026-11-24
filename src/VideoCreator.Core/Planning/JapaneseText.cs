@@ -19,6 +19,9 @@ public static partial class JapaneseText
         "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿｧｨｩｪｫｯｬｭｮ…‥%％‰℃°′″";
     /// <summary>行末禁則 (JIS X 4051): opening brackets cl-01 and prefixed currency/number signs cl-19.</summary>
     public const string NoLineEnd = "（「『【〔〈《［｛〘〖〝‘“([{｟«｢￥＄¥$＃#№";
+    /// <summary>Marks that may be dropped from the head / tail of any displayed text without losing a word (letters, ー, small kana and prefixed ¥/$/# are never touched).</summary>
+    const string DroppableHead = "、。，．・･：；？！‼⁇⁈⁉）」』】〕〉》］｝〙〗〟’”)]}｠»｣…‥";
+    const string DroppableTail = "（「『【〔〈《［｛〘〖〝‘“([{｟«｢";
     /// <summary>Counters/units that must stay with the number before them (分離禁止: 「100｜円」).</summary>
     const string Counters = "円万億兆千百十個人回年月日時分秒歳本枚台件杯匹頭冊着足品点倍位度割番階号代周週種問曲話kKmMgGcC";
     /// <summary>Auxiliaries/suffixes that belong to the previous word; a caption starting with them reads as a broken word (「行き｜ました」).</summary>
@@ -137,6 +140,7 @@ public static partial class JapaneseText
     /// </summary>
     public static List<string> WrapLines(string text, double maxWidth, int maxLines)
     {
+        text = KinsokuSafe(text);
         if (maxLines <= 1 || text.Length < 2 || DisplayWidth(text) <= maxWidth) return [text];
         int best = -1; double bestCost = double.PositiveInfinity;
         for (int k = 1; k < text.Length; k++)
@@ -144,6 +148,8 @@ public static partial class JapaneseText
             if (char.IsLowSurrogate(text[k])) continue;
             var left = text[..k].TrimEnd(' ', '　'); var right = text[k..].TrimStart(' ', '　');
             if (left.Length == 0 || right.Length == 0) continue;
+            // kinsoku outranks fit and balance: a break that breaks a rule is never an option (the line then runs long and the font shrinks)
+            if (BreakPenalty(left[^1], right[0]) >= Forbidden) continue;
             double wl = DisplayWidth(left), wr = DisplayWidth(right);
             // splitting a word across lines reads worse than shrinking a slightly long line
             double cost = BreakPenalty(text[k - 1], text[k]) + (InsideWord(text[..k], text[k..]) ? 30 : 0) + Math.Abs(wl - wr) * 0.6 + (wl > wr ? 0.5 : 0)
@@ -151,6 +157,19 @@ public static partial class JapaneseText
             if (cost < bestCost) { bestCost = cost; best = k; }
         }
         return best < 0 ? [text] : [text[..best].TrimEnd(' ', '　'), text[best..].TrimStart(' ', '　')];
+    }
+
+    /// <summary>Text as displayed: marks that would sit at a line start (closing brackets, 、, ！ …) or line end (opening brackets) are dropped from its edges.</summary>
+    public static string KinsokuSafe(string text)
+    {
+        var t = text.Trim(' ', '　');
+        for (int guard = 0; guard < 64 && t.Length > 0; guard++)
+        {
+            if (DroppableHead.Contains(t[0])) t = t[1..].TrimStart(' ', '　');
+            else if (DroppableTail.Contains(t[^1])) t = t[..^1].TrimEnd(' ', '　');
+            else break;
+        }
+        return t.Length == 0 ? text : t;
     }
 
     /// <summary>Kinsoku problems of a displayed caption (line starts/ends that JIS X 4051 forbids), for QA.</summary>

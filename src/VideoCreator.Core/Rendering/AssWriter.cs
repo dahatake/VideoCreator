@@ -214,6 +214,12 @@ public static partial class AssWriter
     public static string Write(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement>? layout = null)
     {
         layout ??= TelopLayout.Resolve(plan, p);
+        // kinsoku outranks everything else: every shown string (captions, telops, cards) is cleaned at its edges before any writer lays it out
+        plan = plan with
+        {
+            Telops = plan.Telops.Select(t => t with { Text = Planning.JapaneseText.KinsokuSafe(t.Text) }).ToList(),
+            Inserts = plan.Inserts.Select(i => i with { Text = i.Text.Length == 0 ? i.Text : Planning.JapaneseText.KinsokuSafe(i.Text) }).ToList(),
+        };
         var ass = p.Telop.IsShort ? WriteShort(plan, p, layout) : p.Telop.IsVariety ? WriteVariety(plan, p, layout) : p.Telop.IsStudy || p.Telop.IsCorporate ? WriteLayered(plan, p, layout) : WriteStandard(plan, p, layout);
         var font = FontFor(plan.Language);
         return string.Join("\n", ass.Split('\n').Select(line => line.StartsWith("Style:", StringComparison.Ordinal)
@@ -518,7 +524,7 @@ public static partial class AssWriter
             {
                 sb.AppendLine((++i).ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine($"{SrtTime(s)} --> {SrtTime(e)}");
-                foreach (var line in p == null ? [t.Text] : CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language)) sb.AppendLine(line);
+                foreach (var line in p == null ? [Planning.JapaneseText.KinsokuSafe(t.Text)] : CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language)) sb.AppendLine(line);
                 sb.AppendLine();
             }
         return sb.ToString();

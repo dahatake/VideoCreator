@@ -17,11 +17,12 @@ public static class CaptionText
     public static List<string> WrapLines(string text, double maxWidth, int maxLines, string language)
     {
         if (language is "ja-JP" or "zh-CN") return JapaneseText.WrapLines(text, maxWidth, maxLines);
+        text = JapaneseText.KinsokuSafe(text);
         if (maxLines <= 1 || JapaneseText.DisplayWidth(text) <= maxWidth) return [text];
         var choices = Enumerable.Range(1, Math.Max(0, text.Length - 1))
             .Where(i => char.IsWhiteSpace(text[i]) && !char.IsWhiteSpace(text[i - 1]))
             .Select(i => (Left: text[..i].TrimEnd(), Right: text[i..].TrimStart()))
-            .Where(x => x.Left.Length > 0 && x.Right.Length > 0 && !JapaneseText.NoLineStart.Contains(x.Right[0]))
+            .Where(x => x.Left.Length > 0 && x.Right.Length > 0 && !JapaneseText.NoLineStart.Contains(x.Right[0]) && !JapaneseText.NoLineEnd.Contains(x.Left[^1]))
             .Select(x => (x.Left, x.Right, Wl: JapaneseText.DisplayWidth(x.Left), Wr: JapaneseText.DisplayWidth(x.Right)))
             .OrderBy(x => Math.Max(0, x.Wl - maxWidth) + Math.Max(0, x.Wr - maxWidth))
             .ThenBy(x => Math.Abs(x.Wl - x.Wr)).ToList();

@@ -148,8 +148,14 @@ public sealed class QaEngine(FFmpeg ff)
 
         // S-08 禁則: every displayed caption line (incl. hand edits) obeys JIS X 4051 line-start/line-end rules, and a caption never starts with a particle/auxiliary of the previous caption
         var kinsoku = caps.Select(t => (t, why: cc.Kinsoku(t, caps))).Where(x => x.why != null).ToList();
-        res.Add(new("S-08", kinsoku.Count == 0 ? QaStatus.Pass : QaStatus.Warn, kinsoku.Count == 0 ? "ok" : string.Join(", ", kinsoku.Take(3).Select(x => $"{x.t.Id} {x.why}")), "行頭・行末の禁則を守る", "字幕の禁則")
-            { Items = kinsoku.Select(x => TelopItem(x.t, x.why!)).ToList() });
+        // the same rule for every other shown string (telops, cards) and for the stored text of captions: the renderer cleans edges, but the stored text should be right too
+        string? EdgeWhy(string s) => s.Length == 0 || JapaneseText.KinsokuSafe(s) == s.Trim(' ', '　') ? null : JapaneseText.KinsokuViolations([s]).FirstOrDefault() ?? "行頭・行末の記号";
+        var otherKinsoku = plan.Telops.Where(t => t.Enabled && t.Type != TelopType.Caption).Select(t => (t, why: EdgeWhy(t.Text))).Where(x => x.why != null)
+            .Concat(caps.Where(t => kinsoku.All(k => k.t.Id != t.Id)).Select(t => (t, why: EdgeWhy(t.Text)))).Where(x => x.why != null).ToList();
+        var cardKinsoku = plan.Inserts.Where(i => i.Enabled && i.Kind == "card").Select(i => (i, why: EdgeWhy(i.Text))).Where(x => x.why != null).ToList();
+        int kinsokuCount = kinsoku.Count + otherKinsoku.Count + cardKinsoku.Count;
+        res.Add(new("S-08", kinsokuCount == 0 ? QaStatus.Pass : QaStatus.Warn, kinsokuCount == 0 ? "ok" : string.Join(", ", kinsoku.Select(x => $"{x.t.Id} {x.why}").Concat(otherKinsoku.Select(x => $"{x.t.Id} {x.why}")).Concat(cardKinsoku.Select(x => $"{x.i.Id} {x.why}")).Take(3)), "行頭・行末の禁則を守る", "字幕の禁則")
+            { Items = kinsoku.Select(x => TelopItem(x.t, x.why!)).Concat(otherKinsoku.Select(x => TelopItem(x.t, x.why!))).Concat(cardKinsoku.Select(x => InsertItem(x.i, x.why!))).ToList() });
 
         var mapped = TelopBuilder.MapWords(plan.Timeline, tr);
         bool hookOk = mapped.Any(m => m.Start <= p.Hook.MaxSec) || plan.Timeline.FirstOrDefault()?.Role == "teaser" || tr.Words.Count == 0;

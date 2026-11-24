@@ -437,6 +437,22 @@ public static class QaRepair
         return new("S-08", item, "rule", p2, $"{prev.Text}｜{t.Text}", $"{joined}｜{rest}", false);
     }
 
+    /// <summary>S-08 on a telop or card: drop the closing bracket / 、 at its head or the opening bracket at its tail (no word is lost). Captions are left to the renderer and the resegmenter.</summary>
+    static Proposal? EdgeProposal(EditPlan plan, QaItem item)
+    {
+        if (item.Kind == "telop" && plan.Telops.FirstOrDefault(t => t.Id == item.Target) is { Type: not TelopType.Caption } t)
+        {
+            var s = JapaneseText.KinsokuSafe(t.Text);
+            return s == t.Text ? null : new("S-08", item, "rule", SetTelop(plan, t.Id, x => x with { Text = s }), t.Text, s, false);
+        }
+        if (item.Kind == "insert" && plan.Inserts.FirstOrDefault(i => i.Id == item.Target) is { } ins)
+        {
+            var s = JapaneseText.KinsokuSafe(ins.Text);
+            return s == ins.Text ? null : new("S-08", item, "rule", SetInsert(plan, ins.Id, x => x with { Text = s }), ins.Text, s, false);
+        }
+        return null;
+    }
+
     static IEnumerable<Proposal> One(Proposal? p) => p == null ? [] : [p];
 
     /// <summary>Rule candidates for one finding, least invasive first. Captions keep the speaker's exact words: only time, grouping and word boundaries move.
@@ -447,7 +463,7 @@ public static class QaRepair
         {
             "H-10" => One(MaskProposal(plan, ctx, item)),
             "H-11" => One(BindProposal(plan, ctx, item)),
-            "S-08" => One(KinsokuProposal(plan, ctx, item, prep)).Concat(Resegment(plan, ctx, item, check, prep)),
+            "S-08" => One(EdgeProposal(plan, item)).Concat(One(KinsokuProposal(plan, ctx, item, prep))).Concat(Resegment(plan, ctx, item, check, prep)),
             "S-01" => One(TimingProposal(plan, ctx, item, prep)).Concat(Resegment(plan, ctx, item, check, prep)),
             "S-02" => Resegment(plan, ctx, item, check, prep),
             _ => [],

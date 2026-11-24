@@ -126,6 +126,73 @@ public class CaptionLayoutTests
         Assert.Contains(@"\N", AssWriter.Write(plan with { Preset = varietyTwo.Ref }, varietyTwo));
     }
 
+    // Independent oracle: W3C JLReq / UAX #14 classes (CL, CP, EX, IS, NS, OP), written out here rather than read from JapaneseText.
+    const string NoStartOracle = "、。，．）」』】〕〉》］｝！？‼⁁⁈⁉：；・ゝゞヽヾー々ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ…‥)]}!?:;,.";
+    const string NoEndOracle = "（「『【〔〈《［｛([{";
+
+    static IEnumerable<string> Violations(string line)
+    {
+        var l = line.Trim(' ', '　');
+        if (l.Length == 0) yield break;
+        if (NoStartOracle.Contains(l[0])) yield return $"head {l[0]}";
+        if (NoEndOracle.Contains(l[^1])) yield return $"tail {l[^1]}";
+    }
+
+    [Fact] // kinsoku outranks fit and balance: no break position the rules forbid is ever used, whatever the width
+    public void WrapLines_never_breaks_a_rule_for_any_width()
+    {
+        string[] texts =
+        [
+            "今日は、みんなで（笑）パワーアップの方法を話します！", "えっ、そうなんですか？　すごいですね。", "「はい」と言って、『ありがとう』と答えた",
+            "ちょっと待って、っていうかそれって本当に大丈夫なの", "（笑）（笑）（笑）（笑）（笑）（笑）（笑）", "あああああああああああ、、、、、、ああああ",
+            "ええっ！？　まじで！？　やっぱりすごいー", "ここは「（重要）」の部分ですよね、ほんとに。",
+        ];
+        foreach (var text in texts)
+            for (double width = 3; width <= 20; width++)
+                foreach (var maxLines in new[] { 1, 2 })
+                {
+                    var lines = JapaneseText.WrapLines(text, width, maxLines);
+                    Assert.True(lines.Count <= maxLines, $"{text} @ {width}");
+                    Assert.All(lines, l => Assert.Empty(Violations(l)));
+                    Assert.Equal(Compact(JapaneseText.KinsokuSafe(text)), Compact(string.Concat(lines)));   // only edge marks may disappear, never a word
+                }
+    }
+
+    static string Compact(string s) => s.Replace(" ", "").Replace("　", "");
+
+    [Fact] // every writer, every telop type and the cards: not one displayed line starts or ends against the rules
+    public void Ass_output_has_no_kinsoku_violation_in_any_item()
+    {
+        foreach (var id in new[] { "P1", "P3", "P4", "P10" })
+        {
+            var p = Fixtures.Presets[id];
+            var two = p with { Telop = p.Telop with { Caption = p.Telop.Caption with { MaxLines = 2 } } };
+            var types = new[] { TelopType.Caption, TelopType.Emphasis, TelopType.Headline, TelopType.Hook, TelopType.Counter, TelopType.Sfx, TelopType.Tsukkomi };
+            var telops = types.SelectMany((ty, i) => new[]
+            {
+                new Telop { Id = $"a{i}", Type = ty, Start = i * 5, End = i * 5 + 4, Text = "、ここは（重要）な話です。ちょっと待って（", Style = ty == TelopType.Caption ? "Caption" : ty.ToString() },
+                new Telop { Id = $"b{i}", Type = ty, Start = i * 5, End = i * 5 + 4, Text = "）すごい！", Style = ty == TelopType.Caption ? "Caption" : ty.ToString() },
+            }).ToList();
+            var plan = new EditPlan { EditplanId = "e", ProjectId = "p", Preset = two.Ref, Audio = new AudioSpec { Master = "a1" }, Telops = telops };
+            var ass = AssWriter.Write(plan, two);
+            var shown = ass.Split('\n').Where(l => l.StartsWith("Dialogue:", StringComparison.Ordinal))
+                .Select(l => System.Text.RegularExpressions.Regex.Replace(string.Join(",", l.Split(',').Skip(9)), @"\{[^}]*\}", "")).ToList();
+            Assert.NotEmpty(shown);
+            foreach (var d in shown)
+                foreach (var line in d.Split(@"\N"))
+                    Assert.True(!Violations(line).Any(), $"{id}: 「{line}」 in {d}");
+        }
+    }
+
+    [Fact] // the display-edge cleaner drops only marks, never letters, ー, prefixed symbols or Latin dots
+    public void KinsokuSafe_drops_only_edge_marks()
+    {
+        Assert.Equal("すごい", JapaneseText.KinsokuSafe("）すごい（"));
+        Assert.Equal("C#", JapaneseText.KinsokuSafe("C#"));
+        Assert.Equal(".NET", JapaneseText.KinsokuSafe(".NET"));
+        Assert.Equal("ーすごい", JapaneseText.KinsokuSafe("ーすごい"));
+    }
+
     [Fact] // S-08: generated captions pass; a hand edit that starts a caption with ー or ends it with 「 is flagged
     public void Qa_flags_kinsoku_in_captions()
     {
