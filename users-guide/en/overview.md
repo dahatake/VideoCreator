@@ -100,7 +100,7 @@ File selection/drag-and-drop in “1. Choose assets” supports large MOVs above
 ## Requirements
 
 - Windows 10/11 (x64 / ARM64) and Internet. **`run.cmd` installs the other software automatically** (below).
-- Azure (required for transcription/subtitles; AI selection optional): a Fast Transcription-compatible resource, your own endpoint, and `Cognitive Services User` for the user. Microsoft Foundry additionally needs a compatible model deployment and `Cognitive Services OpenAI User`. Keyless authentication uses an Azure CLI or equivalent sign-in. See [quickstart](quickstart.md#2-prepare-your-cloud-settings).
+- Azure (required for transcription/subtitles; AI selection optional): one Microsoft Foundry (Azure AI Services) resource and the `Cognitive Services Speech User` role for the user. AI selection additionally needs a compatible model deployment and the `Cognitive Services OpenAI User` role. Keyless authentication uses an Azure CLI or equivalent sign-in. See the [quickstart](quickstart.md#2-install-3-steps) and [Azure access](azure-access.md).
 - For GitHub Copilot: signed-in GitHub Copilot CLI (install with `run.cmd --setup --with-copilot`).
 
 ## Setup and launch
@@ -165,10 +165,14 @@ The packaged edition runs without an installer or a separate .NET SDK, FFmpeg or
 
 ### Employee / administrator setup
 
-1. Download your platform's file and `appsettings.json` from [Releases](https://github.com/dahatake/VideoCreator/releases) into the same folder.
-2. With IT approval, install Azure CLI (`winget install Microsoft.AzureCLI` on Windows, `brew install azure-cli` on macOS), then use `az login`. Your Speech account still needs the permissions in the [quickstart](quickstart.md). Copilot selection additionally needs a signed-in Copilot CLI.
-3. Have your administrator set `VideoCreator:Llm:Endpoint` / `Llm:Deployment`, or set `Llm:Provider` to `copilot` / `none`. Captions use Speech on the same resource. Distribution settings intentionally contain no endpoints.
-4. On Windows x64, double-click `VideoCreator.exe`; the default browser opens `http://127.0.0.1:8765/`. To stop, press Ctrl+C in the console and wait for shutdown. Closing only the browser does not stop the app.
+1. Install Azure CLI and sign in (Windows: `winget install -e --id Microsoft.AzureCLI`, then reopen the terminal and run `az login`; macOS: `brew install azure-cli` → `az login`).
+   The required roles are the same as in [Requirements](#requirements). Azure CLI is not needed if you use API key authentication. Copilot selection additionally needs a signed-in Copilot CLI.
+2. Download the one file for your OS / CPU from [Releases](https://github.com/dahatake/VideoCreator/releases/latest).
+3. On Windows, double-click the exe (if SmartScreen appears, choose [More info] → [Run anyway]). The default browser opens <http://127.0.0.1:8765/>. To stop, press Ctrl+C in the console and wait for shutdown. Closing only the browser does not stop the app.
+4. In the app, open **Settings → AI connections**, select your Microsoft Foundry resource (**Choose from Azure**) and choose **Test and save**. The connection is saved to `%LOCALAPPDATA%\VideoCreator\ai-settings.json` and takes priority over `appsettings.json`.
+   To distribute a settings file instead, place `appsettings.json` in the same folder as the executable and set `VideoCreator:Llm:Endpoint` / `Llm:Deployment` (or set `Llm:Provider` to `copilot` / `none`). Captions use Speech on the same resource.
+
+The packaged edition needs no setup script ([scripts/setup.ps1](../../scripts/setup.ps1) installs the .NET SDK, FFmpeg and other tools and builds the source edition; the packaged edition bundles them). Before you connect, Settings shows “Microsoft Foundry is not connected yet” (1.2.2 and earlier: “Run scripts/setup.ps1.”); step 4 resolves either message. Starting the app again while it is running does not start a second copy; it opens the running app's page instead (so that two apps never use the same `DataDir`).
 
 On macOS, launch from Terminal so `az` is found on PATH:
 

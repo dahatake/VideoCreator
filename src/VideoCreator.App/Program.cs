@@ -27,6 +27,26 @@ if (userSettings != null)
 var options = builder.Configuration.GetSection(AppOptions.Section).Get<AppOptions>() ?? new AppOptions();
 builder.Services.AddSingleton(options);
 
+var instance = SingleInstance.TryAcquire(options.ResolvedDataDir);
+if (instance == null)
+{
+    using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+    var running = await SingleInstance.RunningUrlAsync(options.ResolvedDataDir, probe);
+    if (running == null)
+    {
+        Console.Error.WriteLine($"Another VideoCreator is using the data folder {options.ResolvedDataDir}. Close it, or start with a different VideoCreator:DataDir.");
+        Environment.ExitCode = 1;
+        return;
+    }
+    Console.WriteLine($"VideoCreator is already running at {running} (data folder {options.ResolvedDataDir}). Opening it instead of starting a second copy.");
+    if (options.OpenBrowser && (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()))
+    {
+        try { using var _ = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(running) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { Console.WriteLine($"Open {running} in your web browser."); }
+    }
+    return;
+}
+
 // NFR-SEC-01: loopback only. No authentication by design (single local user).
 var endpoint = new IPEndPoint(IPAddress.Loopback, options.Port);
 builder.WebHost.ConfigureKestrel(k =>
@@ -85,6 +105,7 @@ builder.Services.AddSingleton(sp => new JobQueue(sp.GetRequiredService<Runtime>(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<JobQueue>());
 
 var app = builder.Build();
+app.Lifetime.ApplicationStopped.Register(instance.Dispose);
 
 // Never show stack traces: bad requests and unexpected errors become the same JSON error shape as the API.
 app.UseExceptionHandler(e => e.Run(async ctx =>
@@ -139,6 +160,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
     if (address is null)
         return;
     var url = address.TrimEnd('/') + "/";
+    instance.Publish(url);
     if (usedFallbackPort)
         app.Logger.LogWarning("Port {Port} is already in use; using {Url} instead", options.Port, url);
     app.Logger.LogInformation("VideoCreator {Version} is running at {Url}", AppVersion.InformationalVersion, url);

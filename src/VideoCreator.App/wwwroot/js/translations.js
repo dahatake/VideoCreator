@@ -60,7 +60,7 @@ export const translated = `
 58|Recommended. JSON schema keeps candidate output in a reliable format.|推荐。使用 JSON 架构约束输出，候选格式更稳定。|권장. JSON 스키마로 출력 형식을 고정하여 후보 형식이 안정적입니다.
 59|Sends transcript and volume summary, not video/audio files. Sign in with Entra ID (az login).|发送转写文本和音量摘要，不发送视频或音频文件。使用 Entra ID（az login）登录。|받아쓰기와 음량 요약만 전송하며 영상·음성 파일은 보내지 않습니다. Entra ID(az login)로 로그인합니다.
 60|Azure pay-as-you-go. An estimate is shown before generation.|Azure 按量计费。生成前显示估算费用。|Azure 종량제입니다. 생성 전에 예상 비용을 표시합니다.
-61|Endpoint (VideoCreator:Llm:Endpoint) missing. Run scripts/setup.ps1.|未设置端点（VideoCreator:Llm:Endpoint）。请运行 scripts/setup.ps1。|엔드포인트(VideoCreator:Llm:Endpoint)가 없습니다. scripts/setup.ps1을 실행하세요.
+61|Microsoft Foundry is not connected yet. Choose your resource under “AI connections” below, then choose “Test and save”.|尚未连接 Microsoft Foundry。请在下方“AI 连接”中选择资源，然后点击“测试并保存”。|Microsoft Foundry가 아직 연결되지 않았습니다. 아래 “AI 연결”에서 리소스를 선택한 뒤 “테스트 후 저장”을 누르세요.
 62|Default model|默认模型|기본 모델
 63|Uses your installed Copilot CLI without file-operation tools.|使用本机已安装的 Copilot CLI，不提供文件操作等工具。|설치된 Copilot CLI를 사용하며 파일 작업 등의 도구는 제공하지 않습니다.
 64|Sends transcript and volume summary to GitHub. Included in your Copilot plan.|将转写文本和音量摘要发送至 GitHub。费用包含在 Copilot 套餐中。|받아쓰기와 음량 요약을 GitHub에 보냅니다. 비용은 Copilot 요금제에 포함됩니다.

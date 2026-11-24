@@ -299,8 +299,8 @@ else {
             Step 'Azure endpoints (live probe with your token)'
             $token = Invoke-Az @('account', 'get-access-token', '--resource', 'https://cognitiveservices.azure.com', '--query', 'accessToken', '-o', 'tsv')
             $probes = @()
-            if ($useAsr) { $probes += [pscustomobject]@{ Kind = 'speech'; Item = 'Azure Speech (subtitles)'; Endpoint = $asrEndpoint; Role = 'Cognitive Services User' } }
-            if ($useAsr -and $useMai) { $probes += [pscustomobject]@{ Kind = 'speech-mai'; Item = "$asrModel (subtitles)"; Endpoint = $asrEndpoint; Role = 'Cognitive Services User' } }
+            if ($useAsr) { $probes += [pscustomobject]@{ Kind = 'speech'; Item = 'Azure Speech (subtitles)'; Endpoint = $asrEndpoint; Role = 'Cognitive Services Speech User' } }
+            if ($useAsr -and $useMai) { $probes += [pscustomobject]@{ Kind = 'speech-mai'; Item = "$asrModel (subtitles)"; Endpoint = $asrEndpoint; Role = 'Cognitive Services Speech User' } }
             if ($useLlm) { $probes += [pscustomobject]@{ Kind = 'openai'; Item = "Microsoft Foundry ($deployment)"; Endpoint = $llmEndpoint; Role = 'Cognitive Services OpenAI User' } }
             $denied = @()
             foreach ($pr in $probes) {

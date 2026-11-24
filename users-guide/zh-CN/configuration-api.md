@@ -19,6 +19,7 @@
 | 配置 | 默认值与含义 |
 |---|---|
 | Port / OpenBrowser | `8765` / `true`。回环监听及启动后打开浏览器 |
+| AllowPortFallback | `true`。Port 被其他软件占用时，在空闲的回环端口上监听并打开该 URL。同一 DataDir 的 VideoCreator 正在运行时（`DataDir/instance.lock`），不启动第二个，而是打开正在运行的应用页面后退出 |
 | DataDir | 未指定时为 `%LOCALAPPDATA%\VideoCreator`。存放 DB 和缓存 |
 | ProjectsDir | 未指定时为 Windows MyVideos 下的 `VideoCreator`。用于新项目，界面保存的值优先 |
 | FfmpegBin / FontsDir / PresetsDir | 未指定时向仓库上级寻找 tools 等 |
@@ -105,13 +106,13 @@ dotnet run --project src\VideoCreator.App -c Release
 | Job | GET `/jobs/{id}/events` | SSE（EventSource），stage、progress 等 |
 | 候选 | GET `/jobs/{id}/candidates` | candidate、preview、preview_url、approval、export、final_render_id |
 | 批准 | PUT `/jobs/{id}/candidates/{candidateId}/approval` | `{"approved":true}`／false 撤销 |
-| 批量 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`。全部预验证后返回 202。任一项不可导出则不启动任何操作，返回与单独导出相同的代码（`E-NOT-APPROVED`、`E-PLAN-STALE`、422 `E-QA-HARDFAIL`、`E-EXPORT-BUSY` 中最先遇到的），以及每个候选的 `code`、`reason` |
+| 批量 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."],"pattern_names":{"P4":"Highlight clip (long → 30 s)"}}`（`pattern_names` 可选。用界面显示名称命名导出目标的模式文件夹；省略或名称无效时使用预设名称）。全部预验证后返回 202。任一项不可导出则不启动任何操作，返回与单独导出相同的代码（`E-NOT-APPROVED`、`E-PLAN-STALE`、422 `E-QA-HARDFAIL`、`E-EXPORT-BUSY` 中最先遇到的），以及每个候选的 `code`、`reason` |
 | 重新生成 | POST `/jobs/{id}/regenerate` | instruction、exclude_candidate_ids，排除前次候选后重新筛选 |
 | 编辑 | GET / PATCH `/editplans/{id}` | 计划及计划 QA／通过 ops 编辑 |
 | QA 批准 | PUT `/editplans/{id}/qa/approval` | `plan_hash`、`checks:[{check_id,result_hash}]`、`approved`，记录结果确认，false 撤销 |
 | Preview | POST `/editplans/{id}/preview` | 重新生成该计划的预览 |
 | Preview | GET `/editplans/{id}/preview/progress` | running、progress、step |
-| 直接输出 | POST `/editplans/{id}/render` | 依次检查候选批准→批准 PlanHash 一致→计划硬 QA→导出忙，然后受理单独导出 |
+| 直接输出 | POST `/editplans/{id}/render` | 正文可省略。用 `{"pattern_name":"..."}` 指定导出目标的模式文件夹名称（界面显示名称）。依次检查候选批准→批准 PlanHash 一致→计划硬 QA→导出忙，然后受理单独导出 |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled 等 |
 | Render | POST `/renders/{id}/cancel` | 仅取消 queued |
 | Artifacts | GET `/renders/{id}/artifacts` | 已完成导出的 `path`（绝对路径）、`available`、`files:[{key,path,available,preview_type}]`。类型为 `video` / `image` / `text`（不支持的省略）。仅列已记录产物，不生成投稿文案 |

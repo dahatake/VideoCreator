@@ -50,7 +50,9 @@ public static class Api
     /// <summary>Current projects folder; <c>source</c> = default | config | app (chosen in the settings screen).</summary>
     public sealed record ProjectsDirResponse(string Path, string Source, string ConfiguredPath, int Projects, MoveProgress Progress);
     /// <summary>Approved candidates of one job to export, in any order (exported in rank / part order).</summary>
-    public sealed record BatchExportRequest(List<string>? CandidateIds);
+    /// <summary><c>PatternNames</c>: preset id → the pattern name the UI shows in its current language; it names the export folder (else the preset's name).</summary>
+    public sealed record BatchExportRequest(List<string>? CandidateIds, Dictionary<string, string>? PatternNames = null);
+    public sealed record ExportRequest(string? PatternName = null);
     /// <summary>One started export of a batch: poll <c>/api/renders/{render_id}</c>.</summary>
     public sealed record BatchExportItem(string CandidateId, string RenderId);
     /// <summary>The exports started by a batch request.</summary>
@@ -848,7 +850,7 @@ public static class Api
             {
                 var renderId = "r_" + Guid.NewGuid().ToString("N")[..12];
                 // the approved snapshot is what gets rendered, even if it is edited while waiting in the queue
-                q.EnqueueExport(renderId, plan, c.Rank);
+                q.EnqueueExport(renderId, plan, c.Rank, req.PatternNames?.GetValueOrDefault(plan.Preset.Id));
                 started.Add(new(c.Id, renderId));
             }
             ctx.Response.Headers.Location = $"/api/jobs/{Uri.EscapeDataString(jobId)}/candidates";
@@ -1065,7 +1067,7 @@ public static class Api
         });
         api.MapGet("/editplans/{id}/preview/progress", (JobQueue q, string id) =>
             Results.Json(q.Previews.TryGetValue(id, out var p) ? p : new PreviewProgress(false, 0, null), Json.Options));
-        api.MapPost("/editplans/{id}/render", (Runtime rt, JobQueue q, string id) => rt.Store.Atomic<IResult>(() =>
+        api.MapPost("/editplans/{id}/render", (Runtime rt, JobQueue q, string id, ExportRequest? req) => rt.Store.Atomic<IResult>(() =>
         {
             var plan = rt.Store.Get<EditPlan>(Kinds.EditPlan, id);
             if (plan == null) return Error(404, "E-NOT-FOUND", "編集計画がありません");
@@ -1081,7 +1083,7 @@ public static class Api
             if (q.ActiveExport(id) is { } active) return Error(409, "E-EXPORT-BUSY", "この動画は書き出し中です。完了を待ってください", new { render_id = active.RenderId });
             var rank = plan.Provenance.CandidateId is string cid ? rt.Store.Get<Candidate>(Kinds.Candidate, cid)?.Rank ?? 1 : 1;
             var renderId = "r_" + Guid.NewGuid().ToString("N")[..12];
-            q.EnqueueExport(renderId, plan, rank);
+            q.EnqueueExport(renderId, plan, rank, req?.PatternName);
             return Results.Json(new { render_id = renderId }, Json.Options, statusCode: 202);
         }));
         api.MapGet("/renders/{id}", (Runtime rt, JobQueue q, string id) =>

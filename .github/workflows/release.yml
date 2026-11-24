@@ -172,19 +172,23 @@ jobs:
             echo "| \`VideoCreator.exe\` | Windows 10/11 x64 |"
             echo "| \`VideoCreator-$VERSION-win-arm64.exe\` | Windows 11 ARM64 |"
             echo "| \`VideoCreator-$VERSION-osx-arm64.tar.gz\` | macOS on Apple Silicon (M1 or later). Intel Macs are not supported |"
-            echo "| \`appsettings.json\` | Settings template: put it next to the executable and fill in your endpoints |"
+            echo "| \`appsettings.json\` | Optional settings template for administrators who distribute settings as a file. Not needed when you connect in the app |"
             echo
-            echo "Each executable contains the .NET runtime, UI, presets, FFmpeg/ffprobe, fonts and models. No installer and no .NET SDK are needed."
+            echo "Each executable contains the .NET runtime, UI, presets, FFmpeg/ffprobe, fonts and models. No installer, no .NET SDK and no setup script are needed."
             echo
             echo "## Before the first start"
             echo
-            echo "1. Azure CLI: \`winget install Microsoft.AzureCLI\` (Windows) / \`brew install azure-cli\` (macOS), then \`az login\`."
-            echo "   Your account needs **Cognitive Services User** and **Cognitive Services OpenAI User** on the Microsoft Foundry resource (it also serves captions)."
-            echo "2. Download \`appsettings.json\` into the same folder as the executable and set \`VideoCreator:Llm:Endpoint\`"
-            echo "   (\`https://<resource>.cognitiveservices.azure.com/openai/v1\`) and \`Llm:Deployment\` (captions use Speech on the same resource),"
-            echo "   or \`Llm:Provider\` = \`copilot\` (signed-in GitHub Copilot CLI) or \`none\`. Environment variables such as"
-            echo "   \`VideoCreator__Llm__Endpoint\` also work. The startup log shows which settings file was loaded."
-            echo "3. Start the executable. The UI opens at http://127.0.0.1:8765/ ; close the console or press Ctrl+C to stop."
+            echo "1. Azure CLI: \`winget install -e --id Microsoft.AzureCLI\` (Windows; then reopen the terminal) / \`brew install azure-cli\` (macOS), then \`az login\`."
+            echo "   Your administrator assigns **Cognitive Services Speech User** (captions) and **Cognitive Services OpenAI User** (AI selection) on the Microsoft Foundry resource."
+            echo "2. Download only the executable for your OS / CPU and start it. The UI opens at http://127.0.0.1:8765/ (another free port if 8765 is taken);"
+            echo "   keep the console open, press Ctrl+C there to stop. Starting it again while it runs opens the running one."
+            echo "3. In the app: **Settings > AI connections > Microsoft Foundry > Choose from Azure**, pick your resource and choose **Test and save**."
+            echo "   Captions use Speech on the same resource. Ready when the header shows \`Transcription: MAI-Transcribe-2\` (or the standard model)."
+            echo
+            echo "Administrators can instead put \`appsettings.json\` next to the executable and set \`VideoCreator:Llm:Endpoint\`"
+            echo "(\`https://<resource>.cognitiveservices.azure.com/openai/v1\`) and \`Llm:Deployment\`, or use environment variables such as"
+            echo "\`VideoCreator__Llm__Endpoint\`. A connection saved in the app takes precedence. The startup log shows which settings file was loaded."
+            echo "Step-by-step guide: $repo_url/blob/$GITHUB_SHA/users-guide/en/quickstart.md"
             echo
             echo "**macOS:** extract and start from Terminal so \`az\` is on PATH:"
             echo '```sh'

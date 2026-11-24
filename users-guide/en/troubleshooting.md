@@ -12,7 +12,7 @@
 
 ## Isolate the problem first
 
-1. Is the launch terminal running? Opening a browser does not start the server.
+1. Is the app's black window (the launch terminal for the source edition) still open? Opening a browser does not start the server.
 2. Are Settings' providers/destinations **your own**?
 3. Check source audio, duration, rights, selected pattern.
 4. Record failed stage, error code, QA ID/measurements. Never share sign-in tokens.
@@ -22,9 +22,14 @@
 
 | Symptom/code | Check / next action |
 |---|---|
-| Cannot launch, missing tools | Inspect `FAIL` in `.\run.cmd --check`; reinstall with `.\run.cmd --setup`. Ask administrators about offline/install restrictions |
+| Cannot launch, missing tools (source edition) | Inspect `FAIL` in `.\run.cmd --check`; reinstall with `.\run.cmd --setup`. Ask administrators about offline/install restrictions |
+| Double-clicking the packaged exe shows “Windows protected your PC” | The packaged edition is not code-signed, so this may appear. Choose **More info** → **Run anyway**. If company rules do not allow running it, ask your administrator |
+| The packaged edition's black window closes immediately | VideoCreator is already running with the same data folder. To prevent data corruption, a second copy does not start; it opens the running app's page in the browser instead. If the browser does not open, open the URL shown in the running black window (default <http://127.0.0.1:8765/>). If it closes even though nothing is running, run the exe from a terminal and check the message shown (packaged editions 1.2.2 and earlier close with a port-in-use error when started twice) |
+| `az` is not found, or the connection test says to run `az login` first | After installing Azure CLI, reopen the terminal and then run `az login`. If it still appears, exit the exe once and start it again (a running app keeps using the PATH from before the installation) |
+| Settings shows “Unavailable: Microsoft Foundry is not connected yet.” | The connection has not been saved yet. It goes away when you **Test and save** Microsoft Foundry under **Settings → AI connections**. Packaged editions 1.2.2 and earlier show “Run scripts/setup.ps1.” instead, but the remedy is the same |
+| The exported video is landscape (1920×1080) | **Output orientation** was left at “Match the input” with a landscape video. For portrait, choose **Portrait 9:16 (1080×1920)** and create the candidates again |
 | Browser cannot connect | Use startup-log URL, default `http://127.0.0.1:8765/`; changed port means changed URL. Other PCs cannot connect by design |
-| Port already in use | Check existing instance; do not indiscriminately stop processes. Choose another port |
+| Port already in use at launch | If another program is using the default port (8765), the app starts on a free local port and opens that URL (both packaged and source editions; packaged editions 1.2.2 and earlier do not switch automatically, so start with an option such as `--VideoCreator:Port=8766`). If the browser does not open, use the URL in the startup log. If VideoCreator is already running with the same data folder, a second copy does not start and that app's page opens instead |
 | `E-RIGHTS-REQUIRED` | Confirm every source's rights; separately confirm BGM/registered clips/images |
 | `E-ING-UNSUPPORTED` | Check path, real format, video track, 10-second–3-hour duration; renaming an extension does not fix encoding |
 | Receive/copy failure | Check temporary/project free space; consider full-path reference for large sources |

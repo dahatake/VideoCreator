@@ -137,9 +137,9 @@ public sealed class AiConnectionTests : IDisposable
         Assert.Null(store.Reveal("not base64!"));
     }
 
-    WebApplicationFactory<Program> App(bool localOnly = false, HttpMessageHandler? speechHandler = null, string llmEndpoint = "", string? asrProvider = null, string? asrEndpoint = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+    WebApplicationFactory<Program> App(bool localOnly = false, HttpMessageHandler? speechHandler = null, string llmEndpoint = "", string? asrProvider = null, string? asrEndpoint = null, string data = "data") => new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
     {
-        b.UseSetting("VideoCreator:DataDir", Path.Combine(_root, "data"));
+        b.UseSetting("VideoCreator:DataDir", Path.Combine(_root, data));
         b.UseSetting("VideoCreator:ProjectsDir", Path.Combine(_root, "projects"));
         b.UseSetting("VideoCreator:OpenBrowser", "false");
         b.UseSetting("VideoCreator:LocalOnly", localOnly ? "true" : "false");
@@ -393,11 +393,12 @@ public sealed class AiConnectionTests : IDisposable
         Assert.NotNull(rt.Asr);
         Assert.Null(rt.Llm);   // local-only: no LLM, captions still work
 
-        await using var off = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrProvider: "none");
+        // one running app per data folder, so the apps that run side by side here each get their own
+        await using var off = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrProvider: "none", data: "data-off");
         Assert.Null(off.Services.GetRequiredService<Runtime>().Asr);
 
         // verification fixtures may pin captions to a loopback port so no audio can reach the cloud
-        await using var fixture = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrEndpoint: "http://127.0.0.1:1/");
+        await using var fixture = App(speechHandler: handler, llmEndpoint: "https://configured.cognitiveservices.azure.com/openai/v1", asrEndpoint: "http://127.0.0.1:1/", data: "data-fixture");
         Assert.Equal("http://127.0.0.1:1/", fixture.Services.GetRequiredService<Runtime>().Speech!.Endpoint);
     }
 

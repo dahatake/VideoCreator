@@ -1,7 +1,7 @@
 // VideoCreator UI — vanilla ES modules + Fluent 2 web components.
 // Every dynamic string is escaped with esc() before reaching innerHTML (LLM/user text is untrusted).
 import { trUi, getLanguage, setLanguage, formatDate, formatNumber, applyShell, VIDEO_LANGUAGES } from './i18n.js';
-import { serverText, localizePreset, localizeQa, jobMessage, errorMessage, libraryTrackName } from './server-i18n.js';
+import { serverText, localizePreset, localizeQa, jobMessage, errorMessage, libraryTrackName, shownPatternNames } from './server-i18n.js';
 import { layoutSvg, layoutPanel, assetChip } from './layout-preview.js';
 import { initTips, helpSettingsHtml, wireHelpSettings, startTour, shouldAutoStartTour } from './help.js';
 const $ = (s, el = document) => el.querySelector(s);
@@ -2207,7 +2207,7 @@ function wireApprovals(j, list, steps = [3, 3]) {
     if (!ids.length) return;
     const b = $('#batchExport'); b.disabled = true; $('#batchMsg').innerHTML = '';
     try {
-      const r = await api(`/api/jobs/${j.id}/exports`, { method: 'POST', body: { candidate_ids: ids } });
+      const r = await api(`/api/jobs/${j.id}/exports`, { method: 'POST', body: { candidate_ids: ids, pattern_names: shownPatternNames(j.preset_ids) } });
       batch = r.exports.map(e => e.render_id);
       sessionStorage.setItem(key, JSON.stringify(batch));
       for (const x of items.values()) { const p = block(x.candidate.id)?.querySelector('.exp-pick'); if (p) p.checked = false; }
@@ -2657,7 +2657,7 @@ async function review(epId) {
     }));
     $('#approveBack')?.addEventListener('click', () => approveThen(() => { location.hash = `#/job/${job.id}`; }));
     $('#export').addEventListener('click', () => approveThen(async () => {
-      const r = await api(`/api/editplans/${epId}/render`, { method: 'POST' }); location.hash = `#/render/${r.render_id}`;
+      const r = await api(`/api/editplans/${epId}/render`, { method: 'POST', body: { pattern_name: shownPatternNames([plan.preset.id])[plan.preset.id] ?? null } }); location.hash = `#/render/${r.render_id}`;
     }));
   };
   draw();

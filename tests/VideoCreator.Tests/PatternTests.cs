@@ -132,6 +132,21 @@ public sealed class PatternTests : IDisposable
         Assert.True(q.IsJobBusy(a.Job.Id, [a.Plan]), "a preview re-render also holds the files");
     }
 
+    [Theory]
+    [InlineData("Highlight clip (long → 30 s)", "Highlight clip (long → 30 s)")]
+    [InlineData("精彩剪辑（长视频→30 秒）", "精彩剪辑（长视频→30 秒）")]
+    [InlineData(" a/b: c. ", "a_b： c")]
+    [InlineData(null, "切り抜き（長尺→30秒）")]
+    [InlineData("..", "切り抜き（長尺→30秒）")]
+    [InlineData("CON", "切り抜き（長尺→30秒）")]
+    [InlineData("nul.txt", "切り抜き（長尺→30秒）")]
+    [InlineData("→ ・", "切り抜き（長尺→30秒）")]
+    public void The_export_folder_is_the_pattern_name_shown_on_screen_when_it_is_a_safe_folder_name(string? shown, string expected)
+    {
+        Assert.Equal(expected, PipelineRunner.PatternFolderName(Fixtures.Presets["P4"], shown));
+        Assert.Equal("切り抜き（長尺→30秒）", PipelineRunner.PatternFolderName(Fixtures.Presets["P4"], new string('x', PipelineRunner.MaxPatternFolderName + 1)));
+    }
+
     [Fact]
     public void A_locked_file_leaves_the_pattern_intact()
     {

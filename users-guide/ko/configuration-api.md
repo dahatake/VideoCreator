@@ -19,6 +19,7 @@ UI 표시 언어는 브라우저의 언어 선택으로 저장합니다. 동영�
 | 설정 | 기본값·의미 |
 |---|---|
 | Port / OpenBrowser | `8765` / `true`. loopback 수신과 시작 후 브라우저 표시 |
+| AllowPortFallback | `true`. Port를 다른 프로그램이 사용 중이면 비어 있는 loopback 포트로 수신하고 그 URL을 연다. 같은 DataDir의 VideoCreator가 실행 중이면(`DataDir/instance.lock`) 두 번째 앱은 시작하지 않고 실행 중인 화면을 연 뒤 종료 |
 | DataDir | 미지정 시 `%LOCALAPPDATA%\VideoCreator`. DB와 캐시 |
 | ProjectsDir | 미지정 시 Windows MyVideos의 `VideoCreator`. 새 프로젝트용. 화면에서 저장한 값 우선 |
 | FfmpegBin / FontsDir / PresetsDir | 미지정 시 저장소 상위의 tools 등 탐색 |
@@ -105,13 +106,13 @@ dotnet run --project src\VideoCreator.App -c Release
 | Job | GET `/jobs/{id}/events` | SSE(EventSource), stage·progress 등 |
 | 후보 | GET `/jobs/{id}/candidates` | candidate, preview, preview_url, approval, export, final_render_id |
 | 승인 | PUT `/jobs/{id}/candidates/{candidateId}/approval` | `{"approved":true}`/false로 취소 |
-| 일괄 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`. 전체 사전 검증 후 202. 불가 항목이 하나라도 있으면 아무것도 시작하지 않고 개별 내보내기와 같은 코드(`E-NOT-APPROVED`·`E-PLAN-STALE`·422 `E-QA-HARDFAIL`·`E-EXPORT-BUSY` 중 가장 먼저 해당한 것)와 후보별 `code`·`reason` 반환 |
+| 일괄 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."],"pattern_names":{"P4":"Highlight clip (long → 30 s)"}}`(`pattern_names`는 선택. 화면 표시 이름으로 내보내기 대상 패턴 폴더 이름을 정하며, 생략하거나 이름이 잘못되면 프리셋 이름). 전체 사전 검증 후 202. 불가 항목이 하나라도 있으면 아무것도 시작하지 않고 개별 내보내기와 같은 코드(`E-NOT-APPROVED`·`E-PLAN-STALE`·422 `E-QA-HARDFAIL`·`E-EXPORT-BUSY` 중 가장 먼저 해당한 것)와 후보별 `code`·`reason` 반환 |
 | 재생성 | POST `/jobs/{id}/regenerate` | instruction, exclude_candidate_ids. 이전 후보 제외 후 다시 선정 |
 | 편집 | GET / PATCH `/editplans/{id}` | 계획과 계획 QA/ops로 편집 |
 | QA 승인 | PUT `/editplans/{id}/qa/approval` | `plan_hash`, `checks:[{check_id,result_hash}]`, `approved`. 결과 확인 기록. false로 취소 |
 | Preview | POST `/editplans/{id}/preview` | 해당 계획 미리 보기 재생성 |
 | Preview | GET `/editplans/{id}/preview/progress` | running, progress, step |
-| 직접 출력 | POST `/editplans/{id}/render` | 후보 승인→승인 PlanHash 일치→하드 계획 QA→출력 중 순으로 확인 후 개별 내보내기 접수 |
+| 직접 출력 | POST `/editplans/{id}/render` | 본문은 생략 가능. `{"pattern_name":"..."}`로 내보내기 대상 패턴 폴더 이름(화면 표시 이름) 지정. 후보 승인→승인 PlanHash 일치→하드 계획 QA→출력 중 순으로 확인 후 개별 내보내기 접수 |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled 등 |
 | Render | POST `/renders/{id}/cancel` | queued만 취소 |
 | Artifacts | GET `/renders/{id}/artifacts` | 완료 내보내기의 `path`(절대 경로), `available`, `files:[{key,path,available,preview_type}]`. 종류는 `video` / `image` / `text`(미지원은 생략). 기록된 결과물만 반환하며 게시글은 생성하지 않음 |

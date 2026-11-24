@@ -780,7 +780,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// When <paramref name="renderId"/> is given the caller owns that id and persists the Render itself (after adding its own outputs),
     /// so a final export is stored exactly once under the id the UI already polls.
     /// </summary>
-    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null, IProgress<(double Progress, string Step)>? progress = null)
+    public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null, IProgress<(double Progress, string Step)>? progress = null, string? patternName = null)
     {
         var project = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)!;
         var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).ToDictionary(a => a.Id);
@@ -796,7 +796,7 @@ public sealed class PipelineRunner(PipelineServices s)
             var pre = QaEngine.PlanChecks(ctx).Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
             if (pre.Count > 0) throw new QaBlockedException(pre);
         }
-        var dir = preview ? Path.Combine(project.Directory, "previews") : ExportDirectory(project, preset);
+        var dir = preview ? Path.Combine(project.Directory, "previews") : ExportDirectory(project, preset, patternName);
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
         if (!preview) EnsureInside(ProjectsRootOf(project), file);
         var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
@@ -914,15 +914,26 @@ public sealed class PipelineRunner(PipelineServices s)
         Path.GetDirectoryName(Path.GetFullPath(project.Directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         ?? throw new PipelineException("E-PATH", "プロジェクトフォルダの場所を特定できません");
 
-    /// <summary>Finished videos go to "&lt;projects folder&gt;/&lt;pattern name as shown on screen&gt;/", all files side by side.</summary>
-    public static string ExportDirectory(Project project, Preset preset) => Path.Combine(ProjectsRootOf(project), PatternFolderName(preset));
+    /// <summary>Finished videos go to "&lt;projects folder&gt;/&lt;pattern name as shown on screen&gt;/", all files side by side.
+    /// <paramref name="displayName"/> is the name the UI shows in its current language; without it the preset's own name is used.</summary>
+    public static string ExportDirectory(Project project, Preset preset, string? displayName = null) => Path.Combine(ProjectsRootOf(project), PatternFolderName(preset, displayName));
 
-    public static string PatternFolderName(Preset preset)
+    public const int MaxPatternFolderName = 80;
+
+    public static string PatternFolderName(Preset preset, string? displayName = null)
     {
         var bad = Path.GetInvalidFileNameChars();
-        var name = new string(preset.Name.Select(ch => ch == ':' ? '：' : bad.Contains(ch) || char.IsControl(ch) ? '_' : ch).ToArray()).Trim().TrimEnd('.');
+        static string Clean(string? text, char[] bad) =>
+            new string((text ?? "").Select(ch => ch == ':' ? '：' : bad.Contains(ch) || char.IsControl(ch) ? '_' : ch).ToArray()).Trim().TrimEnd('.').Trim();
+        var shown = Clean(displayName, bad);
+        if (shown.Length is > 0 and <= MaxPatternFolderName && shown.Any(char.IsLetterOrDigit) && !IsReservedDeviceName(shown)) return shown;
+        var name = Clean(preset.Name, bad);
         return name.Length == 0 ? preset.Id : name;
     }
+
+    // Windows refuses these as folder names (with or without an extension)
+    static bool IsReservedDeviceName(string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(name.Split('.')[0].TrimEnd(), @"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     public static string ExportBaseName(Project project, EditPlan plan, int rank)
     {

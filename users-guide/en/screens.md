@@ -92,6 +92,7 @@ These are not source durations. Inserts extend totals; series uses other rules. 
 
 | Component | Meaning/caution |
 |---|---|
+| Output orientation | Match the input (default; landscape video → landscape 1920×1080, portrait → portrait 1080×1920) / Portrait 9:16 (1080×1920) / Landscape 16:9 (1920×1080). **To make a vertical short from a landscape video, choose “Portrait 9:16”.** Use opening/closing assets that match the orientation |
 | Divide into series | Off: highlights; on: whole source into consecutive parts |
 | By count | 2–20; balance lengths at topic boundaries |
 | By duration | 1–60 min, 0.5 min step; approximate, not identical |
@@ -103,7 +104,7 @@ These are not source durations. Inserts extend totals; series uses other rules. 
 | Destinations | Always above button: audio→ASR, text/signal summary→LLM, authentication; ASR independent of LLM. Cost breakdown expands amounts/costs |
 | Create 3 candidates | Requires assets/rights; shows blockers. Up to three results; estimated cost beside button |
 
-Groups: Series, Long-video narrowing, Audio, Opening/closing/transitions, Previous analysis. Click headings to expand/collapse; collapsed headings summarize settings (“BGM Auto / SFX On / Reactions Off”). Expansion persists in this browser. Packaging initially collapsed; series collapses narrowing because full text is sent. Scroll to Created patterns.
+Groups: Output orientation, Series, Long-video narrowing, Audio, Opening/closing/transitions, Previous analysis. Click headings to expand/collapse; collapsed headings summarize settings (“BGM Auto / SFX On / Reactions Off”). Expansion persists in this browser. Packaging initially collapsed; series collapses narrowing because full text is sent. Scroll to Created patterns.
 
 Series supports speech-based P1–P4/P6/P7/P9/P10, not P5/P8. Specify one split method. **Each part must retain at least one minute after silence removal.** Teasers/recaps/headings/next previews make total duration differ from main splits.
 
@@ -221,7 +222,7 @@ Workflow Review/edit links first unreviewed; Export links export list.
 | Automatic checks | Left of the captions and transitions panel, or above it on narrower screens. Immediate plan QA, not final loudness/resolution |
 | Approve/revoke check review | Save/revoke review record/time |
 | Bulk check approval | All performed/unapproved, including pass; excludes not-run |
-| Approve/export (1080×1920) | Single video; approve current then export |
+| Approve and export this content | Single video; approve current then export (size follows the output orientation) |
 | Approve only and return | Single video; save approval, candidates |
 
 With ≥2 same-pattern videos, heading controls change:
@@ -232,7 +233,7 @@ With ≥2 same-pattern videos, heading controls change:
 | Approve/next (name) | Approve current; next unapproved, wrapping |
 | Approve/proceed to export | When all others approved; Stage 6 |
 | Approve/return to candidates | Save, inspect progress |
-| Export only this now (1080×1920) | Approve/export without list |
+| Export only this video now | Approve/export without list |
 
 Already-current approvals are not duplicated. Hard failures disable all approval buttons.
 
@@ -303,8 +304,8 @@ While exporting: composition, loudness, QA, related-file creation. Afterwards:
 |---|---|
 | Foundry/Copilot/no LLM | Highlight selection; immediate server change. Close is not Save |
 | Unavailable | Missing endpoint/CLI, forced no-LLM startup |
-| AI connections | Configure Azure Speech (endpoint, key or Entra ID, tenant), Foundry (endpoint, deployments, independent authentication) and GitHub Copilot (sign-in, model, reasoning effort, context). **Test connection** does not save; **Test and save** tests again and persists only on success. Speech remains usable in LLM-disabled mode. Keys/tokens use Windows DPAPI and are never returned; unsupported OSes refuse secret storage. **Choose from Azure** lists the Speech/Foundry resources and deployments available to the signed-in Entra ID identity and fills the boxes (saving still requires a test). See [Azure access](azure-access.md) |
-| Unapplied input (drafts) | Speech/Foundry/Copilot and save-location input is auto-saved as a draft in the local DB about 0.5 s after each change and on Close/page exit, and is restored after reopening the dialog or restarting the app, with "Restored unsaved input (time)" and **Discard draft**. Drafts are never used for connections (only settings saved after a passing test and an applied location change are used), and keys/tokens are never put in drafts (only **Test and save** stores them, DPAPI-encrypted). A successful save, forget or location change removes that draft, as does returning to the saved values |
+| AI connections | Azure uses **a single Microsoft Foundry connection**, and subtitles (Azure Speech) use the same resource. Choose the authentication method (Microsoft Entra ID / API key) and specify the endpoint and deployment names. GitHub Copilot: sign-in, model, reasoning effort, context. **Test connection** does not save; **Test and save** tests again and persists only on success. As the subtitle test, one second of synthesized silence is sent; if transcription fails, nothing can be saved. Required even in LLM-disabled mode. Keys/tokens use Windows DPAPI and are never returned; unsupported OSes refuse secret storage. **Choose from Azure** lists the resources and deployments available to the signed-in Entra ID identity and fills the boxes (saving still requires a test). Until configured, the top of the screen shows `Transcription: None`. See [Azure access](azure-access.md) |
+| Unapplied input (drafts) | Foundry/Copilot and save-location input is auto-saved as a draft in the local DB about 0.5 s after each change and on Close/page exit, and is restored after reopening the dialog or restarting the app, with "Restored unsaved input (time)" and **Discard draft**. Drafts are never used for connections (only settings saved after a passing test and an applied location change are used), and keys/tokens are never put in drafts (only **Test and save** stores them, DPAPI-encrypted). A successful save, forget or location change removes that draft, as does returning to the saved values |
 | Dialog width, folder picker | Width is 65% of the window, at least 600px and at most 1140px (never wider than the window minus 32px). Basis: Fluent 2's 600px default dialog width, Bootstrap's 1140px XL width, and WCAG 1.4.8 line length (80 characters, about 40 for CJK); explanatory text is capped at 40em. 1280px window → 832px (65%); 1920px → 1140px cap (59%). The **Choose folder** dialog opens in front of other windows with a purpose-specific title |
 | Destinations | Audio/text/authentication; no LLM ≠ no ASR |
 | Current storage/count | New-project location, existing count |

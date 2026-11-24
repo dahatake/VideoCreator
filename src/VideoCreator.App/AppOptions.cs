@@ -4,7 +4,8 @@ public sealed class AppOptions
 {
     public const string Section = "VideoCreator";
     public int Port { get; set; } = 8765;
-    public bool AllowPortFallback { get; set; }
+    /// <summary>When <see cref="Port"/> is taken by another program, listen on a free loopback port instead (a second VideoCreator on the same DataDir is stopped by <see cref="SingleInstance"/> first).</summary>
+    public bool AllowPortFallback { get; set; } = true;
     public string? DataDir { get; set; }
     public string? ProjectsDir { get; set; }
     public string? FfmpegBin { get; set; }

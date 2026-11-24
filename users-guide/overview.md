@@ -108,7 +108,7 @@ P11では音声で開始時刻差とドリフトを同期し、選択シーン�
 ## 必要なもの
 
 - Windows 10/11（x64 / ARM64）とインターネット接続。**ほかのソフトは `run.cmd` が自動で入れます**（下記）。ソースからではなく実行ファイル1個で使う場合（Windows / Apple Silicon の macOS）は[単一実行ファイル](#単一実行ファイルwindows--macos)を参照
-- Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Fast Transcription を利用できるリソースと自分のエンドポイント、利用者への `Cognitive Services User` ロール。Microsoft Foundry も使う場合だけ、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](quickstart.md#2-自分のクラウド設定を用意する)を参照してください
+- Azure（字幕のための書き起こしに必要。選定用の AI は任意）: Microsoft Foundry（Azure AI Services）のリソース1つと、利用者への `Cognitive Services Speech User` ロール。AI による選定も使う場合は、対応モデルのデプロイと `Cognitive Services OpenAI User` ロールが必要です。キーは使わず、Azure CLI などのサインインで認証します。準備方法は[クイックスタート](quickstart.md#2-インストールする3ステップ)と[Azure の準備と認証](azure-access.md)を参照してください
 - GitHub Copilot を使う場合: GitHub Copilot CLI（`run.cmd --setup --with-copilot` で導入）にサインイン済み
 
 ## セットアップと起動
@@ -177,11 +177,14 @@ dotnet run --project src/VideoCreator.App -c Release
 
 ### 使う人がすること
 
-1. [Releases](https://github.com/dahatake/VideoCreator/releases) から自分の OS / CPU 用のファイルと `appsettings.json` を同じフォルダーにダウンロードします
-2. Azure CLI を入れて `az login`（Windows: `winget install Microsoft.AzureCLI`、macOS: `brew install azure-cli`）。
-   必要なロールは[必要なもの](#必要なもの)と同じです。Copilot を使う場合はサインイン済みの Copilot CLI
-3. `appsettings.json` の `VideoCreator:Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を自分の値にします。字幕の Speech も同じリソースを使います
-4. Windows x64 は `VideoCreator.exe` をダブルクリックします。既定ブラウザーで <http://127.0.0.1:8765/> が開きます。終了はコンソールで Ctrl+C を押し、処理の終了を待ちます。ブラウザーを閉じるだけではアプリは終了しません
+1. Azure CLI を入れてサインインします（Windows: `winget install -e --id Microsoft.AzureCLI` の後にターミナルを開き直して `az login`、macOS: `brew install azure-cli` → `az login`）。
+   必要なロールは[必要なもの](#必要なもの)と同じです。API キー認証を使う場合は Azure CLI は不要です。Copilot を使う場合はサインイン済みの Copilot CLI
+2. [Releases](https://github.com/dahatake/VideoCreator/releases/latest) から自分の OS / CPU 用のファイルを1つダウンロードします
+3. Windows は exe をダブルクリックします（SmartScreen が出たら［詳細情報］→［実行］）。既定ブラウザーで <http://127.0.0.1:8765/> が開きます。終了はコンソールで Ctrl+C を押し、処理の終了を待ちます。ブラウザーを閉じるだけではアプリは終了しません
+4. 画面の **設定 → AI の接続** で Microsoft Foundry のリソースを選び（**Azure から選択**）、**テストして保存** します。保存先は `%LOCALAPPDATA%\VideoCreator\ai-settings.json` で、`appsettings.json` より優先されます。
+   設定ファイルで配る場合は、代わりに `appsettings.json` を実行ファイルと同じフォルダーに置き、`VideoCreator:Llm:Endpoint` / `Llm:Deployment`（または `Llm:Provider` を `copilot` / `none`）を設定します。字幕の Speech も同じリソースを使います
+
+配布版にはセットアップスクリプトは不要です（[scripts/setup.ps1](../scripts/setup.ps1) はソース版のための .NET SDK・FFmpeg などの導入とビルド用で、配布版はそれらを同梱しています）。接続前の設定画面には「Microsoft Foundry の接続が未設定です」と出ます（1.2.2 以前は「scripts/setup.ps1 を実行してください」）。どちらも手順4で解消します。起動中にもう一度起動すると、2つ目は起動せずに起動中の画面を開きます（同じ `DataDir` を2つのアプリで使わないため）。
 
 macOS では Terminal から起動します（`az` を PATH から見つけるため）。
 

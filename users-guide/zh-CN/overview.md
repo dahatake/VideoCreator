@@ -104,7 +104,7 @@
 ## 必需条件
 
 - Windows 10/11（x64 / ARM64）及互联网。**其他软件由 `run.cmd` 自动安装**。
-- Azure（字幕转写必需，筛选 AI 可选）：支持 Fast Transcription 的资源、自有端点、用户 `Cognitive Services User` 角色。仅使用 Microsoft Foundry 时需对应模型部署和 `Cognitive Services OpenAI User`。不使用密钥，通过 Azure CLI 等登录认证。准备方法见[快速入门](quickstart.md#2-准备自己的云端配置)。
+- Azure（字幕转写必需，筛选 AI 可选）：一个 Microsoft Foundry（Azure AI Services）资源，以及授予用户的 `Cognitive Services Speech User` 角色。如果还使用 AI 筛选，则需要对应模型部署和 `Cognitive Services OpenAI User` 角色。不使用密钥，通过 Azure CLI 等登录认证。准备方法见[快速入门](quickstart.md#2-安装3-步)和 [Azure 访问](azure-access.md)。
 - 使用 GitHub Copilot 时：已登录 GitHub Copilot CLI（可用 `run.cmd --setup --with-copilot` 安装）。
 
 ## 安装与启动
@@ -169,10 +169,14 @@ dotnet run --project src/VideoCreator.App -c Release
 
 ### 使用者与管理员准备
 
-1. 从 [Releases](https://github.com/dahatake/VideoCreator/releases) 下载适用文件和 `appsettings.json`，放在同一文件夹。
-2. 经 IT 批准安装 Azure CLI（Windows：`winget install Microsoft.AzureCLI`，macOS：`brew install azure-cli`），然后 `az login`。Speech 仍需要[快速入门](quickstart.md)中的权限。使用 Copilot 筛选还需要已登录的 Copilot CLI。
-3. 请管理员设置 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`，或将 `Llm:Provider` 设为 `copilot` / `none`。字幕 Speech 使用同一资源。分发用配置不包含终结点。
-4. 在 Windows x64 上双击 `VideoCreator.exe`，默认浏览器打开 `http://127.0.0.1:8765/`。退出时在控制台按 Ctrl+C 并等待应用停止。仅关闭浏览器不会退出应用。
+1. 安装 Azure CLI 并登录（Windows：运行 `winget install -e --id Microsoft.AzureCLI` 后重新打开终端，再运行 `az login`；macOS：`brew install azure-cli` → `az login`）。
+   所需角色与[必需条件](#必需条件)相同。使用 API 密钥身份验证时不需要 Azure CLI。使用 Copilot 时还需要已登录的 Copilot CLI。
+2. 从 [Releases](https://github.com/dahatake/VideoCreator/releases/latest) 下载一个适用于自己系统／CPU 的文件。
+3. 在 Windows 上双击 exe（出现 SmartScreen 时点击［更多信息］→［仍要运行］）。默认浏览器会打开 <http://127.0.0.1:8765/>。退出时在控制台按 Ctrl+C 并等待应用停止。仅关闭浏览器不会退出应用。
+4. 在界面的 **设置 → AI 连接** 中选择 Microsoft Foundry 资源（**从 Azure 选择**），然后点击 **测试并保存**。保存位置为 `%LOCALAPPDATA%\VideoCreator\ai-settings.json`，优先于 `appsettings.json`。
+   若通过配置文件分发，请改为将 `appsettings.json` 放在可执行文件所在的文件夹中，并设置 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`（或将 `Llm:Provider` 设为 `copilot` / `none`）。字幕 Speech 也使用同一资源。
+
+发行版不需要安装脚本（[scripts/setup.ps1](../../scripts/setup.ps1) 用于为源码版安装 .NET SDK、FFmpeg 等并构建，发行版已内置这些组件）。连接前的设置界面会显示“尚未连接 Microsoft Foundry”（1.2.2 及更早版本显示“请运行 scripts/setup.ps1”），两者都可通过第 4 步解决。应用运行时再次启动，不会启动第二个应用，而是打开正在运行的应用页面（避免两个应用使用同一个 `DataDir`）。
 
 macOS 请从 Terminal 启动，确保能在 PATH 中找到 `az`：
 

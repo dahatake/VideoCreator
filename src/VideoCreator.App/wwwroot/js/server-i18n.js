@@ -26,6 +26,10 @@ export function serverText(value, fallback) {
   return fallback ?? text;
 }
 
+// The export folder is named after the pattern as shown in the current language (the server falls back to the Japanese name).
+export function shownPatternNames(presetIds) {
+  return Object.fromEntries((presetIds ?? []).map(id => [id, presetDisplays[id]?.[getLanguage()]?.[0]]).filter(([, name]) => name));
+}
 export function localizePreset(preset) {
   const values = presetDisplays[preset.id]?.[getLanguage()];
   if (!values) return preset;

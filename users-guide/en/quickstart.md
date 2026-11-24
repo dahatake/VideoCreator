@@ -10,7 +10,7 @@
 
 [App README](start.md) / [Guide index](README.md) / [Screens](screens.md) / [Troubleshooting](troubleshooting.md) / [Configuration/API](configuration-api.md)
 
-**Goal:** make P4 candidates from one speech video, review content, and save a 1080×1920 MP4 and subtitles. Processing time depends on footage, PC, and services; no fixed completion time is guaranteed.
+**Goal:** install the packaged edition, make P4 candidates from one speech video, review the content, and save a portrait (1080×1920) MP4 plus subtitles and other files. Processing time depends on footage, PC, and services; no fixed completion time is guaranteed.
 
 ## Before starting: agree on the administrator handoff
 
@@ -19,74 +19,75 @@ Ordinary users do not need to create cloud resources or grant themselves access.
 | Owner | Confirm |
 |---|---|
 | Employee | Footage, permission for people/slides/music, approval to send audio/transcripts outside the company, and who reviews before posting |
-| Administrator / IT | Approved package, installation policy, account/endpoints/permissions, prepared settings, billing owner and spending-limit process, support contact |
+| Administrator / IT | Approved package, whether Azure CLI may be installed, account, Microsoft Foundry resource name / deployment name / tenant ID, role assignment, billing owner and spending-limit process, support contact |
 | Together | The signed-in account matches the configured services. Test transcription through saving with approved short footage, not just opening the page |
 
-If IT supplied a configured executable, follow the packaged-edition instructions in the [detailed overview](overview.md), then continue at step 4 below. Steps 1–3 cover the source edition; choose one route, not both. Administrators can use [Configuration/API](configuration-api.md); engineers making changes should use the [technical reference](technical-reference.md).
+**The easiest route is the packaged edition (the executable from Releases).** It needs no installer, .NET, or FFmpeg; the only thing you install beforehand is Azure CLI. Follow steps 1–3 below in order. Launching from source (`run.cmd` and the setup script) is for people who develop or customize the app and is collected in the [appendix](#appendix-launch-the-source-edition-runcmd). Choose one route, not both. Administrators can use [Configuration/API](configuration-api.md); engineers making changes should use the [technical reference](technical-reference.md).
 
 ## 1. Prepare your PC and footage
 
-- Windows 10/11 (x64 / ARM64), Internet. Screens verified in Microsoft Edge.
-- Download/extract the repository. Without Git, use GitHub “Code → Download ZIP”; open the extracted folder, not the ZIP.
+- Windows 10/11 (x64) or Windows 11 (ARM64), and an Internet connection. Screens are verified in Microsoft Edge. For Apple Silicon macOS, see the [packaged-edition instructions in the detailed overview](overview.md#single-executable-windows--macos).
+- To check your PC type, open Windows **Settings → System → About** and look at “System type”. “x64-based processor” means x64; “ARM-based processor” means ARM64.
 - Prepare **one video you have permission to use**, including music, faces, logos. Listed formats: MP4 / MOV / MKV / WebM, 10 seconds–3 hours. Start with a few minutes of speech. P4 requires 25–35 seconds of main content; a 10-second input does not guarantee success.
 - Check free space. File selection/drag-drop needs the source size in both temporary and destination storage. On one drive allow about twice the source size plus proxies, cache, previews, exports.
 - **Full-path input** avoids copying, but moving/deleting the original makes the project unusable.
+- Ask your administrator for **the name of the Azure resource (Microsoft Foundry) to use** and, if it is in a tenant other than your default, the **tenant ID**. Assigning the roles (`Cognitive Services Speech User` and `Cognitive Services OpenAI User`) is the administrator's job ([Azure access](azure-access.md)).
 
-## 2. Prepare your cloud settings
+## 2. Install (3 steps)
 
-Automatic subtitles use Azure Speech Fast Transcription. Ask your Azure administrator to confirm:
+### Step 1: Install Azure CLI and sign in
 
-| Purpose | Information/permissions |
-|---|---|
-| Required: transcription | Compatible resource, custom-subdomain endpoint `https://<your-resource>.cognitiveservices.azure.com/`, supported region, user's `Cognitive Services Speech User` role |
-| Optional: Foundry selection | Compatible model deployment name, `https://<your-resource>.cognitiveservices.azure.com/openai/v1`, `Cognitive Services OpenAI User` |
-| Optional: Copilot selection | Copilot entitlement and installed, signed-in GitHub Copilot CLI |
+Subtitle transcription (Azure Speech) and AI selection authenticate with the Microsoft Entra ID account you sign in with on this PC. Azure CLI is used for that sign-in.
 
-Azure is metered. Configure **the deployment name you created**, not a model name. Setup creates neither resources nor deployments.
+1. Right-click the Start button and open **Terminal** (or **Windows PowerShell**).
+2. Paste the following and press Enter. If a confirmation appears, choose **Yes**.
 
-After launch, **Settings → AI connections** lets you configure Foundry and Speech independently,
-choose **API key / Microsoft Entra ID**, test and save. For shared users, assign Speech User /
-OpenAI User in the resource group's IAM; each user signs in to the same tenant on their PC.
-Keys also require Azure local authentication to be enabled. See [Azure access](azure-access.md)
-for current resource status, roles, costs and the limits of verification.
+   ```powershell
+   winget install -e --id Microsoft.AzureCLI
+   ```
 
-Before launch, edit the `VideoCreator` section in [appsettings.json](../../src/VideoCreator.App/appsettings.json). This is a section example, not a replacement for the entire file.
+3. **Close the terminal and open it again.** Otherwise `az` is not found.
+4. Run the following and choose your work account in the browser that opens. If asked for a subscription number, choose the one your administrator specified (press Enter if you are not sure).
 
-```json
-{
-  "Asr": {
-    "Provider": "azure",
-    "Endpoint": "https://<your-resource>.cognitiveservices.azure.com/",
-    "Locale": "ja-JP"
-  },
-  "Llm": {
-    "Provider": "none"
-  }
-}
-```
+   ```powershell
+   az login
+   ```
 
-Starting with `Llm.Provider=none` is fine: Speech makes subtitles; volume peaks select candidates. Configure Foundry or Copilot for content-based selection.
+   If the resource is in a tenant other than your default, use `az login --tenant <tenant ID>`. If `winget` is unavailable or software installation is restricted, ask IT to install Azure CLI.
 
-**Warning:** source settings may contain the distributor's example endpoints; distribution settings may be blank. In either case, have your administrator configure your organization's endpoints. Do not store keys/tokens in settings. Check your organization's transmission/data-use policy.
+### Step 2: Download VideoCreator
 
-Official references: [Fast Transcription](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/fast-transcription-create) / [Speech Entra ID authentication](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-configure-azure-ad-auth) / [Regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions).
+1. Open the [latest release](https://github.com/dahatake/VideoCreator/releases/latest) and download only the one file for your PC from **Assets**.
+   - x64: `VideoCreator.exe`
+   - ARM64: `VideoCreator-<version>-win-arm64.exe`
+2. Move the downloaded file to a folder that is easy to find (for example `Documents\VideoCreator`). It also works from the Downloads folder.
+3. You do not need to download `appsettings.json`. You set the connection on screen in step 3.
 
-## 3. Launch and check readiness
+To confirm the file has not been tampered with, use the `SHA256SUMS.txt` and `gh attestation verify` checks in the [detailed overview](overview.md#maintainers-build-verify-and-publish).
 
-Double-click root [run.cmd](../../run.cmd), or run from the repository folder:
+### Step 3: Launch
 
-```powershell
-.\run.cmd
-```
+1. Double-click the downloaded exe. If “Windows protected your PC” appears, choose **More info** → **Run anyway**. The packaged edition is not code-signed, so this prompt may appear.
+2. A black window (console) opens, and after startup your default browser opens <http://127.0.0.1:8765/> (if another program is using port 8765, the URL uses a free port number instead). The first launch takes a little longer while components are extracted. If the browser does not open, open the `http://127.0.0.1:…` URL shown in the black window.
+3. **Do not close the black window.** Closing it stops the app. Closing the browser does not stop the app.
+4. Next time, just double-click the same exe. If you double-click it again while it is running, a second copy does not start; instead the running app's page opens in your browser (the new window closes immediately).
 
-First run installs missing .NET SDK 10, FFmpeg, Japanese fonts, models, and Azure CLI. Administrator/sign-in (`az login`) prompts may appear. To install Copilot CLI too, use `.\run.cmd --setup --with-copilot`.
+## 3. Set up the AI connection on first launch
 
-- Every launch builds current sources; failed builds do not launch old artifacts.
-- When ready, the installed/configured Windows default browser opens <http://127.0.0.1:8765/> (or configured port). No browser installation or new profiles. If opening fails, use the warning's URL manually. `--check` / `--no-start` launch neither app nor browser.
-- Keep the launch terminal open; closing it stops the app.
-- `FAIL` means missing required local components. `WARN`, particularly Azure warnings, may mean uncached transcription is unavailable. “Started” does not mean “subtitle generation ready.”
-- `.\run.cmd --check` installs/saves nothing, but **sends minimal Speech/OpenAI requests to configured endpoints, potentially causing traffic and small charges**.
-- If unable to assign missing roles, send the displayed information to an administrator. Do not use `--assign-roles` casually.
+1. On first launch, a “Welcome to VideoCreator” tour (6 screens) appears. Read through it with **Next**, or choose **Skip**. You can view it again later from **Settings** → **Watch the tutorial again**.
+2. Check the status at the top of the screen. While it shows `Transcription: None`, subtitles cannot be made yet.
+3. Open **Settings** at the top right and, under **AI connections** → **Microsoft Foundry**, do the following.
+   1. Leave **Authentication** as **Microsoft Entra ID (recommended)**.
+   2. Choose **Choose from Azure** and select the resource your administrator told you. The endpoint is filled in, and you can pick the chat, embedding, and image deployment names from the suggestions. If your administrator did not specify them, the suggestions shown are fine. If the resource is not listed, ask your administrator for the endpoint (`https://<resource-name>.cognitiveservices.azure.com/`) and the chat model's deployment name, and type them in.
+   3. Choose **Test and save**. Settings are saved only when the chat, embedding, and subtitle transcription tests all pass.
+4. Close Settings. When the top of the screen changes to something like `Transcription: MAI-Transcribe-2 · Selection: Microsoft Foundry (<deployment name>)`, you are ready. Depending on the resource's region, transcription may use the standard model.
+
+- Before you connect, Settings shows “Unavailable: Microsoft Foundry is not connected yet. Choose your resource under “AI connections” below, then choose “Test and save”.” It disappears once you save with the steps above. Packaged editions 1.2.2 and earlier show “Run scripts/setup.ps1.” instead; that message is meant for the source edition, and the same steps above resolve it.
+- The connection test sends one second of synthesized silence and a short text, so small metered charges may occur. Your videos are not sent.
+- If a test fails, follow the on-screen explanation. If you are asked to run `az login`, recheck step 1 (especially reopening the terminal). If you lack permission (403), ask your administrator to assign the roles and wait a few minutes. If the deployment is not found, enter the deployment name, not the model name. For details, see [Azure access](azure-access.md#persistence-tests-and-troubleshooting).
+- Even if you do not use AI selection, subtitles still need the Microsoft Foundry connection (Speech on the same resource). You can switch the selection method with **Do not use an LLM** at the top of Settings; candidates are then chosen from volume peaks.
+- If your organization's policy requires API key authentication, choose **API key** under **Authentication** and enter the key you received securely from your administrator. Azure CLI is not needed in that case. The key is stored so that only this Windows user on this PC can decrypt it.
+- Azure services are metered. Destinations and estimated costs are shown before generation. Check your organization's transmission/data-use policy.
 
 ## 4. Add footage and choose P4
 
@@ -94,12 +95,13 @@ First run installs missing .NET SDK 10, FFmpeg, Japanese fonts, models, and Azur
 2. **Choose file** or drag/drop footage.
 3. Check name, duration, resolution, audio; confirm rights for each asset.
 4. Choose **P4 Clip (long video → 30 seconds)**; a blue border indicates selection.
-5. Series off; **Standard** narrowing. BGM/openings are unnecessary initially.
-6. Read destinations/cost estimates in Settings or at the bottom, then **Create 3 candidates**.
+5. In the right column, set **Output orientation** to **Portrait 9:16 (1080×1920)**. If you leave the default “Match the input”, a landscape video produces a landscape (1920×1080) result.
+6. Series off; **Standard** narrowing. BGM/openings are unnecessary initially.
+7. Read the destinations and cost estimate shown above the button, then **Create 3 candidates**.
 
 ![Assets, patterns, generation in the real app](../images/screen-project.svg)
 
-This screen has three columns. Scroll within each to reveal lower controls. The six-stage indicator shows progress; it is not a set of navigation tabs.
+This screen has three columns. Scroll within each to reveal lower controls. Settings in the right column are grouped; click a heading to expand or collapse it. The six-stage indicator shows progress. Click a completed stage (✓) to return to that screen; you cannot jump ahead to stages not yet reached.
 
 ## 5. Review and revise candidates
 
@@ -120,10 +122,10 @@ Open **Review/edit**. After text changes, move focus out of the field to apply, 
 
 Choose either:
 
-- **Export one directly:** in Review, **Approve this content and export (1080×1920)** (or **Export only this video now (1080×1920)** with multiple videos). Approves current content before exporting. Hard QA and required AI-text approvals must also pass.
+- **Export one directly:** in Review, **Approve and export this content** (or **Export only this video now** with multiple videos). Approves current content before exporting. Hard QA and required AI-text approvals must also pass.
 - **Review multiple videos individually, export together:** **Approve and next video**, then on the last **Approve and proceed to export** → **Export selected videos**. **Approve this content and return to candidates** lets you check remaining work in the candidates' **Review progress**. Editing requires reapproval.
 
-In the export list, play/seek each completed final file. Inspect its absolute path; **Copy path** or **Open folder** opens storage. Individual completion screens offer the same operations and final QA.
+Finished files are saved in a **folder named after the pattern** (the pattern name shown on screen; with the English UI, e.g. `Highlight clip (long → 30 s)`) inside the project storage location (default `Videos\VideoCreator`). In the export list, play/seek each completed final file. Inspect its absolute path; **Copy path** or **Open folder** opens storage. Individual completion screens offer the same operations and final QA.
 
 ![Real export-completion screen](../images/screen-export.svg)
 
@@ -145,6 +147,33 @@ In the export list, play/seek each completed final file. Inspect its absolute pa
 
 Showing SRT alongside burned-in subtitles may double captions; choose the platform's display behavior. The app does not post/publish or automatically populate series URLs.
 
-Stop with Ctrl+C in the launch terminal. Reopen a project next time to resume its last project-settings, generation, candidates, review, or export stage; missing references fall back to a recoverable earlier stage. See [backup](troubleshooting.md#storage-and-backups).
+To stop, press Ctrl+C in the black window (the launch terminal for the source edition). Reopen a project next time to resume its last project-settings, generation, candidates, review, or export stage; missing references fall back to a recoverable earlier stage. See [backup](troubleshooting.md#storage-and-backups).
+
+## Appendix: launch the source edition (run.cmd)
+
+This is for people who develop or customize the app. You do not need it if you use the packaged edition.
+
+1. Download/extract the repository. Without Git, use GitHub “Code → Download ZIP”; open the extracted folder, not the ZIP.
+2. Double-click [run.cmd](../../run.cmd) in the extracted folder. On first run, the [setup script](../../scripts/setup.ps1) installs whichever of .NET SDK 10, FFmpeg, fonts, models, and Azure CLI are missing, and opens the `az login` screen if you are not signed in. It then builds the current sources and opens your default browser. To register the app in the Start menu, run `.\install.ps1` in the repository folder instead.
+3. As with the packaged edition, you can save the connection under **Settings → AI connections**. To specify it in startup settings instead, edit the `VideoCreator` section in [appsettings.json](../../src/VideoCreator.App/appsettings.json). This is a section example, not a replacement for the entire file.
+
+```json
+{
+  "Llm": {
+    "Provider": "azure-openai",
+    "Endpoint": "https://<your-resource>.cognitiveservices.azure.com/openai/v1",
+    "Deployment": "<chat model deployment name>"
+  }
+}
+```
+
+- Subtitle transcription (Speech) uses the same resource as `Llm.Endpoint`. `Asr.Endpoint` is a setting for verification, so normally leave it unset. Configure **the deployment name you created**, not a model name.
+- The source edition's example settings contain the distributor's endpoint. Change it to your organization's values or save the connection on screen. Do not store keys/tokens in settings files.
+- Every launch builds current sources; failed builds do not launch old artifacts. If the configured port is in use, a free local port is used and that URL is opened. Keep the launch terminal open.
+- `.\run.cmd --check` checks status without installing anything. `FAIL` means missing required local components; `WARN` is a warning. **It sends minimal Speech/OpenAI requests to the configured endpoints, potentially causing traffic and small charges.** It checks the startup settings (appsettings.json and azd values); check connections saved on screen with the connection test in Settings.
+- To install Copilot CLI too, use `.\run.cmd --setup --with-copilot`. Creating Azure resources (`--provision-azure`) and assigning missing roles (`--assign-roles`) are for administrators. Do not use them casually; read [Azure access](azure-access.md).
+
+Official references: [Fast Transcription](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/fast-transcription-create) / [Speech Entra ID authentication](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-configure-azure-ad-auth) / [Regions](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions).
+
 ---
 

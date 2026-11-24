@@ -102,7 +102,7 @@
 ## 필요한 것
 
 - Windows 10/11(x64 / ARM64)·인터넷. **다른 소프트웨어는 `run.cmd`가 자동 설치**(아래).
-- Azure(자막 전사 필수, 선정 AI 선택): Fast Transcription 리소스·본인 엔드포인트·사용자 `Cognitive Services User` 역할. Microsoft Foundry도 쓸 때만 지원 모델 배포·`Cognitive Services OpenAI User` 필요. 키 대신 Azure CLI 등 로그인 인증. [빠른 시작](quickstart.md#2-본인의-클라우드-설정-준비하기).
+- Azure(자막 전사 필수, 선정 AI 선택): Microsoft Foundry(Azure AI Services) 리소스 1개와 사용자 `Cognitive Services Speech User` 역할. AI 선정도 쓸 때는 지원 모델 배포·`Cognitive Services OpenAI User` 필요. 키 대신 Azure CLI 등 로그인 인증. 준비 방법은 [빠른 시작](quickstart.md#2-설치하기3단계)과 [Azure 접근 설정](azure-access.md) 참조.
 - GitHub Copilot 사용 시: GitHub Copilot CLI(`run.cmd --setup --with-copilot` 설치) 로그인 완료.
 
 ## 설정과 실행
@@ -167,10 +167,14 @@ dotnet run --project src/VideoCreator.App -c Release
 
 ### 사용자·관리자 준비
 
-1. [Releases](https://github.com/dahatake/VideoCreator/releases)에서 플랫폼에 맞는 파일과 `appsettings.json`을 같은 폴더에 받습니다.
-2. IT 승인 아래 Azure CLI를 설치하고(Windows: `winget install Microsoft.AzureCLI`, macOS: `brew install azure-cli`) `az login`으로 로그인합니다. Speech 권한은 [빠른 시작](quickstart.md)과 같습니다. Copilot 선정에는 로그인된 Copilot CLI도 필요합니다.
-3. 관리자가 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`를 설정하거나 `Llm:Provider`를 `copilot` / `none`으로 지정합니다. 자막 Speech도 같은 리소스를 사용합니다. 배포용 설정에는 엔드포인트가 없습니다.
-4. Windows x64에서는 `VideoCreator.exe`를 더블 클릭하면 기본 브라우저에 `http://127.0.0.1:8765/`가 열립니다. 종료하려면 콘솔에서 Ctrl+C를 누르고 종료될 때까지 기다립니다. 브라우저만 닫으면 앱은 종료되지 않습니다.
+1. Azure CLI를 설치하고 로그인합니다(Windows: `winget install -e --id Microsoft.AzureCLI` 후 터미널을 다시 열고 `az login`, macOS: `brew install azure-cli` → `az login`).
+   필요한 역할은 [필요한 것](#필요한-것)과 같습니다. API 키 인증을 사용하면 Azure CLI가 필요 없습니다. Copilot을 쓰려면 로그인된 Copilot CLI도 필요합니다.
+2. [Releases](https://github.com/dahatake/VideoCreator/releases/latest)에서 본인의 OS / CPU용 파일 하나를 받습니다.
+3. Windows에서는 exe를 더블 클릭합니다(SmartScreen이 표시되면 [추가 정보] → [실행]). 기본 브라우저에 <http://127.0.0.1:8765/>가 열립니다. 종료하려면 콘솔에서 Ctrl+C를 누르고 종료될 때까지 기다립니다. 브라우저만 닫으면 앱은 종료되지 않습니다.
+4. 화면의 **설정 → AI 연결**에서 Microsoft Foundry 리소스를 선택하고(**Azure에서 선택**) **테스트 후 저장**합니다. 저장 위치는 `%LOCALAPPDATA%\VideoCreator\ai-settings.json`이며 `appsettings.json`보다 우선합니다.
+   설정 파일로 배포할 때는 대신 `appsettings.json`을 실행 파일과 같은 폴더에 두고 `VideoCreator:Llm:Endpoint` / `Llm:Deployment`를 설정하거나 `Llm:Provider`를 `copilot` / `none`으로 지정합니다. 자막 Speech도 같은 리소스를 사용합니다.
+
+배포 버전에는 설정 스크립트가 필요 없습니다([scripts/setup.ps1](../../scripts/setup.ps1)은 소스 버전용 .NET SDK·FFmpeg 등의 설치와 빌드를 위한 것이며, 배포 버전은 이를 포함하고 있습니다). 연결 전 설정 화면에는 「Microsoft Foundry가 아직 연결되지 않았습니다」가 표시됩니다(1.2.2 이전은 「scripts/setup.ps1을 실행하세요」). 어느 쪽이든 4단계로 해결됩니다. 실행 중에 다시 실행하면 두 번째 앱은 시작되지 않고 실행 중인 화면을 엽니다(같은 `DataDir`를 두 앱이 함께 쓰지 않기 위해).
 
 macOS에서는 PATH의 `az`를 찾을 수 있도록 Terminal에서 실행합니다.
 

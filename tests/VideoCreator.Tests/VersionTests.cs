@@ -109,4 +109,49 @@ public sealed class VersionTests
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task A_second_start_on_the_same_data_folder_finds_the_running_app_instead_of_sharing_its_database()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var root = Path.Combine(Path.GetTempPath(), "vc-single-" + Guid.NewGuid().ToString("N"));
+        var data = Path.Combine(root, "data");
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        Store? store = null;
+        try
+        {
+            await using (var factory = new WebApplicationFactory<Program>())
+            await using (var app = factory.WithWebHostBuilder(b =>
+            {
+                b.UseSetting("VideoCreator:Port", "0");
+                b.UseSetting("VideoCreator:DataDir", data);
+                b.UseSetting("VideoCreator:ProjectsDir", Path.Combine(root, "projects"));
+                b.UseSetting("VideoCreator:OpenBrowser", "false");
+                b.UseSetting("VideoCreator:LocalOnly", "true");
+                b.UseSetting("VideoCreator:Asr:Provider", "none");
+            }))
+            {
+                app.UseKestrel();
+                using var client = app.CreateClient();
+                store = app.Services.GetRequiredService<Runtime>().Store;
+                Assert.Null(SingleInstance.TryAcquire(data));
+                var running = await SingleInstance.RunningUrlAsync(data, http, ct);
+                Assert.Equal(client.BaseAddress!.GetLeftPart(UriPartial.Authority) + "/", running);
+            }
+            // stopping the app releases the folder for the next start
+            using (var next = SingleInstance.TryAcquire(data))
+            {
+                Assert.NotNull(next);
+                Assert.Null(await SingleInstance.RunningUrlAsync(data, http, ct));
+                // the published URL is only followed to a loopback VideoCreator
+                next.Publish("http://example.com/");
+                Assert.Null(await SingleInstance.RunningUrlAsync(data, http, ct));
+            }
+        }
+        finally
+        {
+            store?.Dispose();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
 }

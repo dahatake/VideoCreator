@@ -19,6 +19,7 @@ Use the `VideoCreator` section of [appsettings.json](../../src/VideoCreator.App/
 | Setting | Default / meaning |
 |---|---|
 | Port / OpenBrowser | `8765` / `true`: loopback port and browser launch |
+| AllowPortFallback | `true`: if another program uses Port, listen on a free loopback port and open that URL. If a VideoCreator using the same DataDir is already running (`DataDir/instance.lock`), the second start does not launch; it opens the running app's page and exits |
 | DataDir | `%LOCALAPPDATA%\VideoCreator` if unset; DB/cache |
 | ProjectsDir | `VideoCreator` inside Windows MyVideos if unset; new projects. UI-saved value takes precedence |
 | FfmpegBin / FontsDir / PresetsDir | If unset, searches ancestor repository tools etc. |
@@ -105,13 +106,13 @@ Variables apply to that PowerShell process and its children; reset in a new term
 | Job | GET `/jobs/{id}/events` | SSE/EventSource stage/progress |
 | Candidates | GET `/jobs/{id}/candidates` | candidate, preview, preview_url, approval, export, final_render_id |
 | Approval | PUT `/jobs/{id}/candidates/{candidateId}/approval` | `{"approved":true}`; false revokes |
-| Batch | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`; 202 after all validated. Any invalid candidate starts nothing; returns first applicable single-export code (`E-NOT-APPROVED`, `E-PLAN-STALE`, 422 `E-QA-HARDFAIL`, `E-EXPORT-BUSY`) plus per-candidate `code` / `reason` |
+| Batch | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."],"pattern_names":{"P4":"Highlight clip (long → 30 s)"}}` (`pattern_names` is optional: names the destination pattern folder with the on-screen display name; omitted or invalid names fall back to the preset name); 202 after all validated. Any invalid candidate starts nothing; returns first applicable single-export code (`E-NOT-APPROVED`, `E-PLAN-STALE`, 422 `E-QA-HARDFAIL`, `E-EXPORT-BUSY`) plus per-candidate `code` / `reason` |
 | Regeneration | POST `/jobs/{id}/regenerate` | instruction, exclude_candidate_ids; reselect excluding prior candidates |
 | Edit | GET / PATCH `/editplans/{id}` | Plan/plan QA; edit with ops |
 | QA review | PUT `/editplans/{id}/qa/approval` | `plan_hash`, `checks:[{check_id,result_hash}]`, `approved`; records result review, false revokes |
 | Preview | POST `/editplans/{id}/preview` | Rebuild plan preview |
 | Preview | GET `/editplans/{id}/preview/progress` | running, progress, step |
-| Direct output | POST `/editplans/{id}/render` | Validate candidate approval → approval PlanHash match → hard plan QA → export busy; accept individual export |
+| Direct output | POST `/editplans/{id}/render` | Body optional; `{"pattern_name":"..."}` sets the destination pattern folder name (on-screen display name). Validate candidate approval → approval PlanHash match → hard plan QA → export busy; accept individual export |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled etc. |
 | Render | POST `/renders/{id}/cancel` | Cancel queued only |
 | Artifacts | GET `/renders/{id}/artifacts` | Completed export `path` (absolute), `available`, `files:[{key,path,available,preview_type}]`; types `video` / `image` / `text`, unsupported omitted. Recorded outputs only; does not generate posting text |

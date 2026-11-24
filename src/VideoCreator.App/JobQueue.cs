@@ -83,7 +83,7 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
         foreach (var r in renderIds) Exports.TryRemove(r, out _);
     }
 
-    public void EnqueueExport(string renderId, EditPlan plan, int rank)
+    public void EnqueueExport(string renderId, EditPlan plan, int rank, string? patternName = null)
     {
         Exports[renderId] = new ExportStatus(renderId, plan.EditplanId, "queued", "待機中", QueuedAt: DateTimeOffset.UtcNow, PlanHash: EditPlanFingerprint.Of(plan));
         _work.Writer.TryWrite(async ct =>
@@ -97,7 +97,7 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
                 var project = store.Get<Project>(Kinds.Project, plan.ProjectId)!;
                 var report = new Media.SyncProgress<(double Progress, string Step)>(p =>
                     Exports[renderId] = Exports[renderId] with { Progress = Math.Round(Math.Max(Exports[renderId].Progress ?? 0, 0.95 * p.Progress), 4), Step = p.Step });
-                var render = await runner.RenderAsync(plan, preview: false, ct, PipelineRunner.ExportBaseName(project, plan, rank), renderId, report);
+                var render = await runner.RenderAsync(plan, preview: false, ct, PipelineRunner.ExportBaseName(project, plan, rank), renderId, report, patternName);
                 var cand = plan.Provenance.CandidateId is string cid ? store.Get<Candidate>(Kinds.Candidate, cid) : null;
                 if (cand != null)
                 {

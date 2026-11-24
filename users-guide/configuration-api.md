@@ -17,6 +17,7 @@ UIの表示言語はブラウザーの言語切り替えで保存します。動
 | 設定 | 既定・意味 |
 |---|---|
 | Port / OpenBrowser | `8765` / `true`。loopbackの待受と起動後のブラウザー表示 |
+| AllowPortFallback | `true`。Port を別のソフトが使っていたら空いているloopbackポートで待ち受け、そのURLを開く。同じ DataDir の VideoCreator が起動中なら（`DataDir/instance.lock`）、2つ目は起動せずに起動中の画面を開いて終了する |
 | DataDir | 未指定なら `%LOCALAPPDATA%\VideoCreator`。DBとキャッシュ |
 | ProjectsDir | 未指定ならWindowsのMyVideos内 `VideoCreator`。新規プロジェクト用。画面で保存した値が優先 |
 | FfmpegBin / FontsDir / PresetsDir | 未指定ならリポジトリ上位のtools等を探索 |
@@ -108,13 +109,13 @@ dotnet run --project src\VideoCreator.App -c Release
 | Job | GET `/jobs/{id}/events` | SSE（EventSource）、stage・progress等 |
 | 候補 | GET `/jobs/{id}/candidates` | candidate、preview、preview_url、approval、export、final_render_id |
 | 承認 | PUT `/jobs/{id}/candidates/{candidateId}/approval` | `{"approved":true}`／falseで取り消し |
-| 一括 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."]}`。全件事前検証後202。不可が1件でもあれば何も始めず、単独の書き出しと同じコード（`E-NOT-APPROVED`・`E-PLAN-STALE`・422 `E-QA-HARDFAIL`・`E-EXPORT-BUSY` のうち最も先に当たったもの）と、候補ごとの `code`・`reason` を返す |
+| 一括 | POST `/jobs/{id}/exports` | `{"candidate_ids":["..."],"pattern_names":{"P4":"Highlight clip (long → 30 s)"}}`（`pattern_names` は任意。画面の表示名で書き出し先のパターンフォルダーを名付け、省略・不正な名前ならプリセット名）。全件事前検証後202。不可が1件でもあれば何も始めず、単独の書き出しと同じコード（`E-NOT-APPROVED`・`E-PLAN-STALE`・422 `E-QA-HARDFAIL`・`E-EXPORT-BUSY` のうち最も先に当たったもの）と、候補ごとの `code`・`reason` を返す |
 | 再生成 | POST `/jobs/{id}/regenerate` | instruction、exclude_candidate_ids。前候補を除外して再選定 |
 | 編集 | GET / PATCH `/editplans/{id}` | 計画と計画QA／opsで編集 |
 | QA承認 | PUT `/editplans/{id}/qa/approval` | `plan_hash`、`checks:[{check_id,result_hash}]`、`approved`。結果の確認記録。falseで取り消し |
 | Preview | POST `/editplans/{id}/preview` | その計画のプレビュー再作成 |
 | Preview | GET `/editplans/{id}/preview/progress` | running、progress、step |
-| 直接出力 | POST `/editplans/{id}/render` | 候補承認→承認PlanHash一致→計画ハードQA→処理中の順に検証し、単独書き出し受付 |
+| 直接出力 | POST `/editplans/{id}/render` | 本文は省略可。`{"pattern_name":"..."}` で書き出し先のパターンフォルダー名（画面の表示名）を指定。候補承認→承認PlanHash一致→計画ハードQA→処理中の順に検証し、単独書き出し受付 |
 | Render | GET `/renders/{id}` | queued / rendering / done / failed / cancelled等。`notes` は書き出し時の補足（拡大表示する画面録画の高画質化の採否と実測値など） |
 | Render | POST `/renders/{id}/cancel` | queuedのみ取り消し |
 | Artifacts | GET `/renders/{id}/artifacts` | 完了した書き出しの `path`（絶対パス）、`available`、`files:[{key,path,available,preview_type}]`。種類は `video` / `image` / `text`（非対応は省略）。記録済み成果物のみで、投稿文を生成しない |

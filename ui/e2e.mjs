@@ -23,6 +23,9 @@ const api = (p, init = {}) => page.evaluate(async ([p, init]) => { const r = awa
 
 try {
   await page.goto(base + '/');
+  // a fresh data folder starts the first-run tour, which covers the page until it is skipped
+  const skipTour = page.locator('.vc-tour').getByText('スキップ');
+  if (await skipTour.isVisible({ timeout: 3000 }).catch(() => false)) await skipTour.click();
   await page.locator('#name input').fill('E2E 百円ショップ企画');
   await page.locator('form#new fluent-button').click();                       // (setup, not counted: creating a project)
   await page.waitForURL(/#\/p\//);
@@ -34,6 +37,10 @@ try {
   await click(page.locator('fluent-checkbox.rights'));
   await page.waitForFunction(() => !document.querySelector('#gen')?.hasAttribute('disabled'));
   await click(page.locator('#presets [data-id="P4"]'));
+  // quickstart: a vertical short needs "縦 9:16" (the default follows the source, so landscape footage stays 1920×1080)
+  const portrait = page.locator('#orientation fluent-radio[value="portrait"]');
+  if (!(await portrait.isVisible())) await page.getByText('出力の向き').first().click();
+  await portrait.click();
   await page.screenshot({ path: join(shots, '02-assets-patterns.png'), fullPage: true });
   await click(page.locator('#gen'));
   await page.waitForURL(/#\/job\//);
@@ -68,7 +75,7 @@ try {
   const original = await firstCaption.inputValue();
   const tEdit = Date.now();
   await firstCaption.fill('あいうえおかきくけこさしすせそたちつてとなに'); await firstCaption.press('Tab');
-  await page.waitForFunction(() => [...document.querySelectorAll('.qa-row')].some(r => r.innerText.startsWith('S-02') && r.innerText.includes('警告')));
+  await page.waitForFunction(() => document.querySelector('li.qa-issue[data-check="S-02"]')?.matches('.warn, .fail'));
   check(Date.now() - tEdit < 2000, `AT-09: S-02 warning appeared ${Date.now() - tEdit} ms after editing (incl. UI round-trip)`);
   await page.locator('tr:has(.tag.caption) input.telop').first().fill(original); await page.locator('tr:has(.tag.caption) input.telop').first().press('Tab');
   await page.waitForTimeout(500);
@@ -97,6 +104,8 @@ try {
   const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
   check(hard.length >= 9 && hard.every(q => q.status === 'pass'), `AT-01/02: final export hard QA ${hard.filter(q => q.status === 'pass').length}/${hard.length} pass: ${hard.map(q => `${q.check_id}=${q.measured}`).join('; ')}`);
   check(['mp4', 'srt', 'editplan', 'metadata', 'thumb1'].every(k => k in r.outputs), `FR-EXP-01/03: outputs ${Object.keys(r.outputs).join(', ')}`);
+  check(/[\\/]切り抜き（長尺→30秒）[\\/][^\\/]+\.mp4$/.test(r.path), `finished video is in the folder named after the pattern shown on screen: ${r.path}`);
+  check(hard.some(q => q.check_id === 'H-02' && q.stage === 'final' && String(q.measured).includes('1080x1920')), `portrait output measured 1080x1920: ${hard.find(q => q.check_id === 'H-02' && q.stage === 'final')?.measured}`);
 } catch (e) {
   check(false, `exception: ${e.message}`);
   await page.screenshot({ path: join(shots, 'error.png'), fullPage: true }).catch(() => { });
