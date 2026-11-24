@@ -292,4 +292,7 @@ export const additional = {
   'short.help': ['スマホの縦画面（1080×1920）で {0}〜{1} 秒。横長の動画は人物を追って縦に切り出します。出力の向き・シリーズ・オープニング／クロージング・場面カードの設定は使わず、冒頭2秒に見どころを置きます。一緒に作るときは2つ目の生成として続けて実行し、1つ目の文字起こし・分析を使い回します。', 'Phone portrait (1080×1920), {0}–{1} s. Landscape video is cropped to portrait, following the person. The output orientation, series, opening/closing and scene card settings are not used, and the highlight comes in the first 2 s. When made together, it runs as a second generation right after the first and reuses its transcript and analysis.', '手机竖屏（1080×1920），{0}～{1} 秒。横屏视频会跟随人物裁切为竖屏。不使用输出方向、系列、片头／片尾和场景卡设置，并在前 2 秒放置精彩内容。一起制作时，会作为第二个生成紧接着运行，并复用第一个生成的转写和分析结果。', '휴대폰 세로 화면(1080×1920), {0}~{1}초. 가로 영상은 인물을 따라 세로로 잘라냅니다. 출력 방향·시리즈·오프닝/클로징·장면 카드 설정은 쓰지 않고, 첫 2초에 하이라이트를 둡니다. 함께 만들 때는 두 번째 생성으로 이어서 실행하며 첫 번째의 자막 변환·분석을 재사용합니다.'],
   'short.onlyNote': ['ショート動画だけを作るので、上のパターンは使いません。', 'Only the short video is made, so the patterns above are not used.', '只制作短视频，因此不使用上方的模板。', '쇼츠 영상만 만들므로 위 패턴은 사용하지 않습니다.'],
   'short.companion': ['一緒に作ったもう1本を見る', 'Open the other video made with it', '查看一起制作的另一个视频', '함께 만든 다른 영상 보기'],
+  'patternBar.label': ['作ったパターン', 'Patterns made so far', '已制作的模板', '만든 패턴'],
+  'patternBar.title': ['この手順で見るパターン:', 'Patterns at this step:', '此步骤的模板：', '이 단계에서 볼 패턴:'],
+  'patternBar.notYet': ['{0}（この手順にはまだ進んでいません）', '{0} (has not reached this step yet)', '{0}（尚未进行到此步骤）', '{0} (아직 이 단계에 도달하지 않았습니다)'],
 };

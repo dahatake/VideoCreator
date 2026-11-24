@@ -872,6 +872,7 @@ public static class Api
                     candidates = cands.Count,
                     approved = cands.Count(c => c.Approval != null),
                     exported = finals,
+                    review_plan_id = (cands.FirstOrDefault(c => c.Approval == null) ?? cands.FirstOrDefault())?.EditPlanId,
                     busy = q.IsJobBusy(j.Id, planIds),
                 };
             });

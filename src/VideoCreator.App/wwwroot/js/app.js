@@ -57,7 +57,53 @@ function errorBar(e) {
   return `<fluent-message-bar intent="error" layout="multiline"><b>${esc(errorMessage(e))}</b>${hint ? `<br>${esc(hint)}` : ''}${e.code ? `<span class="caption"> (${esc(e.code)})</span>` : ''}</fluent-message-bar>`;
 }
 function info(msg, intent = 'info') { return `<fluent-message-bar intent="${intent}" layout="multiline">${esc(msg)}</fluent-message-bar>`; }
+// where a pattern (job) can be opened at each step; the patterns API gives candidates/approved/exported counts and review_plan_id
+const STEP_CTX = Symbol('stepCtx');
+const withStepCtx = (links, project, job) => Object.assign(links, { [STEP_CTX]: { project, job } });
+const patternReach = (x) => x.exported > 0 || x.approved > 0 ? 5 : x.candidates > 0 ? 3 : 2;
+const patternStepHref = (x, i) => {
+  const id = encodeURIComponent(x.job.id);
+  if (i <= 1) return `#/p/${x.job.project_id}/settings`;
+  if (i <= 3) return `#/job/${id}`;
+  if (!x.candidates) return null;
+  return i === 4 ? (x.review_plan_id ? `#/ep/${encodeURIComponent(x.review_plan_id)}` : null) : `#/job/${id}/exports`;
+};
+let stepsSeq = 0;
+// Every step is reachable up to the furthest pattern, and each step lists all patterns so any of them can be continued from there.
+async function widenSteps(current, links, ctx, seq) {
+  let items;
+  try { items = await api(`/api/projects/${ctx.project}/patterns`); } catch { return; }
+  if (seq !== stepsSeq || !items.length) return;
+  const furthest = Math.max(...items.map(patternReach));
+  const wide = { ...links };
+  for (let i = 2; i <= 5; i++) {
+    if (i === current) continue;
+    const mine = items.find(x => x.job.id === ctx.job && patternStepHref(x, i));
+    const best = mine ?? items.filter(x => patternStepHref(x, i)).sort((a, b) => patternReach(b) - patternReach(a) || String(b.job.created_at).localeCompare(String(a.job.created_at)))[0];
+    if (best) wide[i] = patternStepHref(best, i);
+  }
+  renderSteps(current, Math.max(current, furthest), wide);
+  const bar = $('#patternBar');
+  if (bar) bar.remove();
+  if (current < 2) return;
+  const names = (x) => x.preset_names.join(trUi('m329'));
+  const stateKey = (x) => ({ ready: trUi('m378'), done: trUi('m378'), failed: trUi('m379'), cancelled: trUi('m380') }[x.job.status] ?? trUi('m389'));
+  const entries = items.map(x => {
+    const href = patternStepHref(x, current), label = `${esc(names(x))} · ${esc(formatDate(x.job.created_at))} · ${stateKey(x)}`;
+    return x.job.id === ctx.job ? `<span class="pat cur" aria-current="true">${label}</span>`
+      : href ? `<a class="pat" href="${esc(href)}">${label}</a>`
+        : `<span class="pat off" title="${esc(trUi('patternBar.notYet', [names(x)]))}">${label}</span>`;
+  }).join('');
+  $('#steps').insertAdjacentHTML('afterend', `<nav class="pattern-bar" id="patternBar" aria-label="${trUi('patternBar.label')}"><span class="caption">${trUi('patternBar.title')}</span>${entries}</nav>`);
+}
 function setSteps(current, done = current, links = {}) {
+  const seq = ++stepsSeq;
+  $('#patternBar')?.remove();
+  renderSteps(current, done, links);
+  const ctx = links[STEP_CTX];
+  if (ctx && current >= 2) widenSteps(current, links, ctx, seq);
+}
+function renderSteps(current, done, links) {
   $('#steps').innerHTML = current < 0 ? '' : stepLabels().map((s, i) => {
     const cls = `step ${i === current ? 'current' : i < done ? 'done' : ''}`;
     const inner = `<span class="n">${i < done && i !== current ? '✓' : i + 1}</span>${s}`;
@@ -1813,7 +1859,7 @@ async function job(jobId) {
   if (gone()) return;
   if (j.status === 'ready' || j.status === 'done') return candidates(j);
   await saveWorkflowState(j.project_id, { step: 'job', job_id: j.id });
-  setSteps(2, 2, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
+  setSteps(2, 2, withStepCtx({ 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` }, j.project_id, j.id));
   const started = Date.now();
   const skeleton = (failed, message) => {
     main.innerHTML = `
@@ -1894,7 +1940,7 @@ async function job(jobId) {
 
 async function candidates(j) {
   const gone = routeGuard();
-  setSteps(3, 3, { 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` });
+  setSteps(3, 3, withStepCtx({ 0: `#/p/${j.project_id}/settings`, 1: `#/p/${j.project_id}/settings` }, j.project_id, j.id));
   const list = await api(`/api/jobs/${j.id}/candidates`);
   if (gone()) return;
   await saveWorkflowState(j.project_id, { step: 'candidates', job_id: j.id });
@@ -1991,7 +2037,7 @@ function nextToReview(list, epId) {
 function jobStepLinks(j, list = []) {
   const settings = `#/p/${j.project_id}/settings`;
   const first = list.find(x => !isReviewed(x)) ?? list[0];
-  return { 0: settings, 1: settings, 2: `#/job/${j.id}`, 3: `#/job/${j.id}`, ...(first?.candidate.edit_plan_id ? { 4: `#/ep/${first.candidate.edit_plan_id}` } : {}), 5: `#/job/${j.id}/exports` };
+  return withStepCtx({ 0: settings, 1: settings, 2: `#/job/${j.id}`, 3: `#/job/${j.id}`, ...(first?.candidate.edit_plan_id ? { 4: `#/ep/${first.candidate.edit_plan_id}` } : {}), 5: `#/job/${j.id}/exports` }, j.project_id, j.id);
 }
 // "n of N reviewed" + where to go next; shown on the candidates screen
 function workProgress(j, list, onExports = false) {
@@ -2819,7 +2865,7 @@ async function exportView(renderId) {
       const hard = r.qa.filter(q => q.check_id.startsWith('H-'));
       const jobId = await api(`/api/editplans/${s.editplan_id}`).then(v => v.plan?.provenance?.job_id).catch(() => null);
       if (gone()) return;
-      setSteps(5, 6, { 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}`, ...(jobId ? { 2: `#/job/${jobId}`, 3: `#/job/${jobId}`, 5: `#/job/${jobId}/exports` } : {}) });
+      setSteps(5, 6, withStepCtx({ 0: `#/p/${s.project_id}/settings`, 1: `#/p/${s.project_id}/settings`, 4: `#/ep/${s.editplan_id}`, ...(jobId ? { 2: `#/job/${jobId}`, 3: `#/job/${jobId}`, 5: `#/job/${jobId}/exports` } : {}) }, s.project_id, jobId));
       main.innerHTML = `
         <div class="row" style="justify-content:space-between"><h1>${trUi('m715')}</h1><div class="row">${jobId ? `<fluent-anchor-button href="#/job/${esc(jobId)}" appearance="subtle">${trUi('m712')}</fluent-anchor-button><fluent-anchor-button href="#/job/${esc(jobId)}/exports" appearance="subtle">${trUi('m713')}</fluent-anchor-button>` : ''}</div></div>
         ${info(trUi('m714', [hard.filter(q => q.status === 'pass').length, hard.length]), 'success')}
