@@ -35,9 +35,8 @@ public static class JobDeletion
                 files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "Artifact", r.Id), removeFolder);
                 files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "exports", r.Id), removeFolder);
                 files += RemoveFolderInside(project.Directory, Path.Combine(project.Directory, "rejected", r.Id), removeFolder);
-                foreach (var f in new[] { r.Path }.Concat(r.Outputs.Values))
-                    if (IsInside(project.Directory, f) && File.Exists(f)) { File.Delete(f); files++; }
             }
+            files += DeleteRecordedFiles(renders, project);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FolderInUseException)
         {
@@ -55,6 +54,27 @@ public static class JobDeletion
         foreach (var r in renderIds) ProjectDeletion.TryDeleteInside(Path.Combine(dataDir, "qa"), r);
         return new JobDeletionResult(job.Id, n, renderIds.Count, files);
     }
+
+    /// <summary>Deletes the files a render recorded (the project folder or its pattern folder under the projects folder), then pattern folders left empty.</summary>
+    internal static int DeleteRecordedFiles(IEnumerable<Render> renders, Project project)
+    {
+        var root = VideoCreator.Pipeline.PipelineRunner.ProjectsRootOf(project);
+        var files = 0;
+        var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in renders.SelectMany(r => new[] { r.Path }.Concat(r.Outputs.Values)).Where(f => IsInside(root, f)))
+        {
+            if (File.Exists(f)) { File.Delete(f); files++; }
+            if (Path.GetDirectoryName(Path.GetFullPath(f)) is { } d && !string.Equals(d, Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)) folders.Add(d);
+        }
+        foreach (var d in folders)
+            if (string.Equals(Path.GetDirectoryName(d), Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)
+                && Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any() && !IsProjectFolder(d, project))
+                try { Directory.Delete(d); } catch (IOException) { }
+        return files;
+    }
+
+    static bool IsProjectFolder(string dir, Project project) =>
+        string.Equals(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(project.Directory).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
 
     static bool IsInside(string root, string path)
     {

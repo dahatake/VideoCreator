@@ -37,7 +37,10 @@ public sealed class ProjectDeletionTests : IDisposable
         store.Put(Kinds.Job, "job_" + id, id, new Job { Id = "job_" + id, ProjectId = id, PresetIds = ["P4"], Status = JobStatus.Ready });
         store.Put(Kinds.Candidate, "c_" + id, "job_" + id, new { id = "c_" + id });
         store.Put(Kinds.EditPlan, "ep_" + id, id, new EditPlan { EditplanId = "ep_" + id, ProjectId = id, Preset = Fixtures.Presets["P4"].Ref, Audio = new AudioSpec { Master = asset.Id } });
-        store.Put(Kinds.Render, "r_" + id, "ep_" + id, new { id = "r_" + id });
+        var video = Path.Combine(Projects, "ショート動画", $"video_{id}.mp4");
+        Touch(video);
+        store.Put(Kinds.Render, "r_" + id, "ep_" + id, new Render { Id = "r_" + id, EditplanId = "ep_" + id, Kind = "final", Path = video, Outputs = new() { ["srt"] = Path.ChangeExtension(video, ".srt") } });
+        Touch(Path.ChangeExtension(video, ".srt"));
         Touch(Path.Combine(Data, "qa", "r_" + id, "frame.png"));
         Touch(Path.Combine(Data, "cache", sha[..16], "proxy.mp4"));
         return p;
@@ -65,6 +68,9 @@ public sealed class ProjectDeletionTests : IDisposable
         Assert.Equal(["job_p_1111111111"], jobs);
         Assert.Equal(["r_p_1111111111"], renders);
         Assert.False(Directory.Exists(p1.Directory));
+        Assert.False(File.Exists(Path.Combine(Projects, "ショート動画", "video_p_1111111111.mp4")));
+        Assert.False(File.Exists(Path.Combine(Projects, "ショート動画", "video_p_1111111111.srt")));
+        Assert.True(File.Exists(Path.Combine(Projects, "ショート動画", "video_p_2222222222.mp4")), "another project's video in the same pattern folder survives");
         Assert.False(Directory.Exists(Path.Combine(Data, "qa", "r_" + p1.Id)));
         Assert.False(Directory.Exists(Path.Combine(Data, "cache", own[..16])));
         Assert.Equal(1, r.CacheDirs);

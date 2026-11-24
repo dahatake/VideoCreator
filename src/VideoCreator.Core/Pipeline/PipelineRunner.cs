@@ -796,9 +796,9 @@ public sealed class PipelineRunner(PipelineServices s)
             var pre = QaEngine.PlanChecks(ctx).Where(q => q.Hard && q.Status == QaStatus.Fail).ToList();
             if (pre.Count > 0) throw new QaBlockedException(pre);
         }
-        var dir = preview ? Path.Combine(project.Directory, "previews") : Path.Combine(project.Directory, "Artifact", renderId);
+        var dir = preview ? Path.Combine(project.Directory, "previews") : ExportDirectory(project, preset);
         var file = Path.Combine(dir, preview ? $"{renderId}.mp4" : exportBaseName + ".mp4");
-        if (!preview) EnsureInside(project.Directory, file);
+        if (!preview) EnsureInside(ProjectsRootOf(project), file);
         var encodeStep = preview ? "映像と音声を合成しています" : "映像を書き出し、音量を 2 パスで合わせています";
         var toRender = plan; var notes = new List<string>();
         if (!preview)
@@ -896,7 +896,7 @@ public sealed class PipelineRunner(PipelineServices s)
         Directory.CreateDirectory(directory);
         foreach (var file in render.Outputs.Values.Append(render.Path).Distinct())
         {
-            EnsureInside(project.Directory, file);
+            EnsureInside(ProjectsRootOf(project), file);
             if (File.Exists(file)) File.Move(file, Path.Combine(directory, Path.GetFileName(file)), true);
         }
     }
@@ -909,12 +909,28 @@ public sealed class PipelineRunner(PipelineServices s)
         if (!p.StartsWith(r, StringComparison.OrdinalIgnoreCase)) throw new PipelineException("E-PATH", "プロジェクトフォルダの外には書き込めません");
     }
 
+    /// <summary>The projects folder: project folders are created directly under it, and so are the pattern folders of the finished videos.</summary>
+    public static string ProjectsRootOf(Project project) =>
+        Path.GetDirectoryName(Path.GetFullPath(project.Directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        ?? throw new PipelineException("E-PATH", "プロジェクトフォルダの場所を特定できません");
+
+    /// <summary>Finished videos go to "&lt;projects folder&gt;/&lt;pattern name as shown on screen&gt;/", all files side by side.</summary>
+    public static string ExportDirectory(Project project, Preset preset) => Path.Combine(ProjectsRootOf(project), PatternFolderName(preset));
+
+    public static string PatternFolderName(Preset preset)
+    {
+        var bad = Path.GetInvalidFileNameChars();
+        var name = new string(preset.Name.Select(ch => ch == ':' ? '：' : bad.Contains(ch) || char.IsControl(ch) ? '_' : ch).ToArray()).Trim().TrimEnd('.');
+        return name.Length == 0 ? preset.Id : name;
+    }
+
     public static string ExportBaseName(Project project, EditPlan plan, int rank)
     {
         var safe = new string(project.Name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) || ch is '.' ? '_' : ch).ToArray()).Trim();
         if (safe.Length == 0) safe = "video";
-        if (plan.Series is { } se) return $"{safe}_{plan.Preset.Id}_{se.Part:D2}{se.Label}_{DateTime.Now:yyyyMMdd-HHmm}";
-        return $"{safe}_{plan.Preset.Id}_{rank}_{DateTime.Now:yyyyMMdd-HHmm}";
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        if (plan.Series is { } se) return $"{safe}_{plan.Preset.Id}_{se.Part:D2}{se.Label}_{stamp}";
+        return $"{safe}_{plan.Preset.Id}_{rank}_{stamp}";
     }
 
     List<string> MaskWordsFor(EditPlan plan) =>

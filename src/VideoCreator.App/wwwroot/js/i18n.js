@@ -1,6 +1,7 @@
 import japanese from './ja.js';
 import { translated } from './translations.js';
 import { additional } from './locale-extra.js';
+import { helpText } from './help-text.js';
 
 export const UI_LANGUAGES = Object.freeze({ ja: '日本語', en: 'English', 'zh-CN': '简体中文', ko: '한국어' });
 export const VIDEO_LANGUAGES = Object.freeze(['ja-JP', 'en-US', 'zh-CN', 'ko-KR']);
@@ -10,7 +11,7 @@ for (const row of translated.split('\n').filter(row => /^\d+\|/.test(row))) {
   const key = `m${id.padStart(3, '0')}`;
   ['en', 'zh-CN', 'ko'].forEach((locale, i) => { catalogs[locale][key] = values[i]; });
 }
-for (const [key, values] of Object.entries(additional)) {
+for (const [key, values] of Object.entries({ ...additional, ...helpText })) {
   ['ja', 'en', 'zh-CN', 'ko'].forEach((locale, i) => { catalogs[locale][key] = values[i]; });
 }
 let language = 'ja';

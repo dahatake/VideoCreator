@@ -405,3 +405,18 @@ details.help p { margin: var(--s4) 0 0; }
 .ai-detail { overflow-wrap: anywhere; font-family: Consolas, ui-monospace, monospace; }
 .ai-prices .facts { margin: var(--s4) 0; }
 
+
+/* hover help and first-run tour (popovers sit in the top layer, above modal dialogs) */
+.vc-tip { position: fixed; inset: auto; margin: 0; border: 0; padding: 6px 10px; overflow: visible; max-width: 320px; pointer-events: none;
+  font: 12px/16px var(--font); color: var(--colorNeutralForegroundInverted, #fff); background: var(--colorNeutralBackgroundInverted, #292929);
+  border-radius: var(--borderRadiusMedium, 4px); box-shadow: 0 4px 8px rgba(0, 0, 0, .28); }
+.vc-tour { position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: hidden; background: transparent; }
+.vc-tour.dim { background: rgba(0, 0, 0, .5); }
+.vc-tour::backdrop { background: transparent; }
+.vc-tour-spot { position: fixed; border-radius: var(--borderRadiusMedium, 4px); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .5); outline: 2px solid var(--colorBrandStroke1, #0f6cbd); pointer-events: none; }
+.vc-tour-card { position: fixed; width: min(440px, calc(100vw - 16px)); box-sizing: border-box; padding: var(--s20); color: var(--colorNeutralForeground1, #242424);
+  background: var(--colorNeutralBackground1, #fff); border-radius: var(--borderRadiusXLarge, 8px); box-shadow: 0 8px 32px rgba(0, 0, 0, .35); }
+.vc-tour-card h2 { margin: 0 0 var(--s8); }
+.vc-tour-actions { display: flex; align-items: center; gap: var(--s8); margin-top: var(--s16); }
+.vc-tour-actions .spacer { flex: 1; }
+#help-settings h3 { margin-top: 0; }

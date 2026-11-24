@@ -59,6 +59,8 @@ export const additional = {
   'shell.deleteQuestion': ['プロジェクトを削除しますか？', 'Delete this project?', '删除此项目？', '프로젝트를 삭제할까요?'],
   'shell.language': ['表示言語', 'Interface language', '界面语言', '표시 언어'],
   'project.defaultName': ['新しいプロジェクト', 'New project', '新项目', '새 프로젝트'],
+  'home.resume': ['続きから', 'Continue at', '继续于', '이어서'],
+  'home.offline': ['元動画が見つからない素材 {0} 本。保存先を確認してください', '{0} source video(s) not found. Check where they are stored', '有 {0} 个素材原视频找不到。请确认保存位置', '원본 영상을 찾을 수 없는 소재 {0}개. 저장 위치를 확인하세요'],
   'video.language': ['動画の言語', 'Video language', '视频语言', '영상 언어'],
   'video.languageHelp': ['書き起こし・字幕・生成する文章の言語です。画面の表示言語とは別に設定します。既存の生成結果は変更しません。', 'Language for transcription, captions and generated text, independent of the interface. Existing results are unchanged.', '转写、字幕及生成文本的语言，独立于界面语言。不改变已有生成结果。', '받아쓰기·자막·생성 글의 언어입니다. 표시 언어와 별개이며 기존 생성 결과는 바뀌지 않습니다.'],
   'video.saved': ['動画の言語を保存しました。次回の生成から反映されます。', 'Video language saved. Applies to the next generation.', '已保存视频语言，下次生成时生效。', '영상 언어를 저장했습니다. 다음 생성부터 적용됩니다.'],

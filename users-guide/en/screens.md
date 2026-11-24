@@ -32,7 +32,7 @@ Examples captured the 2026-11-08 implementation in Microsoft Edge, viewport 1440
 | Component | Meaning/caution |
 |---|---|
 | Project name / New project | Creates work; empty allowed, distinctive names recommended |
-| Project card | Name opens work; created time, asset count, latest generation |
+| Project card | The name opens the last work position directly (shown as "Continue at"); also created time, asset count, latest generation. Warns when a source video is missing. Most recently worked-on first |
 | Delete | Confirmation; managed folder recycled, analysis/edit DB records deleted |
 
 **Deletion is cleanup, not finishing work.** Full-path originals remain; uploaded assets/exports go to Recycle Bin with the project. Restoring only the folder does not restore DB edits. Wait for completion/cancel when busy.

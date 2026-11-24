@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using VideoCreator.App;
 using VideoCreator.Models;
+using VideoCreator.Pipeline;
 using VideoCreator.Storage;
 
 namespace VideoCreator.Tests;
@@ -33,8 +34,10 @@ public sealed class PatternTests : IDisposable
         store.Put(Kinds.EditPlan, plan.EditplanId, p.Id, plan);
         store.Put(Kinds.Candidate, "c_" + tag, job.Id, new Candidate { Id = "c_" + tag, Segments = [new Interval(0, 30)], EditPlanId = plan.EditplanId, Approval = new CandidateApproval(DateTimeOffset.Now, "me", "h") });
         var preview = Path.Combine(p.Directory, "previews", $"r_prev_{tag}.mp4");
-        var final = Path.Combine(p.Directory, "Artifact", "r_fin_" + tag, "out.mp4");
-        Touch(preview); Touch(final); Touch(Path.Combine(p.Directory, "Artifact", "r_fin_" + tag, "out.srt"));
+        var final = tag == "bbb"
+            ? Path.Combine(Path.GetDirectoryName(p.Directory)!, PipelineRunner.PatternFolderName(Fixtures.Presets[preset]), "out_bbb.mp4")
+            : Path.Combine(p.Directory, "Artifact", "r_fin_" + tag, "out.mp4");
+        Touch(preview); Touch(final); Touch(Path.ChangeExtension(final, ".srt"));
         if (tag == "aaa") Touch(Path.Combine(p.Directory, "exports", "r_fin_aaa", "legacy.mp4"));
         store.Put(Kinds.Render, "r_prev_" + tag, plan.EditplanId, new Render { Id = "r_prev_" + tag, EditplanId = plan.EditplanId, Kind = "preview", Path = preview });
         store.Put(Kinds.Render, "r_fin_" + tag, plan.EditplanId, new Render { Id = "r_fin_" + tag, EditplanId = plan.EditplanId, Kind = "final", Path = final, Outputs = new() { ["srt"] = Path.ChangeExtension(final, ".srt") } });
@@ -103,6 +106,13 @@ public sealed class PatternTests : IDisposable
 
         Assert.Equal(HttpStatusCode.NotFound, (await http.DeleteAsync($"/api/jobs/{a.Job.Id}", ct)).StatusCode);
         Assert.Single((await http.GetFromJsonAsync<JsonElement>($"/api/projects/{id}/patterns", ct)).EnumerateArray());
+
+        // finished videos live in "<projects folder>/<pattern name>/": deleting the pattern removes them and the then-empty folder
+        var patternFolder = Path.GetDirectoryName(b.Final)!;
+        Assert.Equal(Projects, Path.GetDirectoryName(patternFolder));
+        Assert.Equal(HttpStatusCode.OK, (await http.DeleteAsync($"/api/jobs/{b.Job.Id}", ct)).StatusCode);
+        Assert.False(Directory.Exists(patternFolder));
+        Assert.True(Directory.Exists(p.Directory));
     }
 
     [Fact]

@@ -3,6 +3,7 @@
 import { trUi, getLanguage, setLanguage, formatDate, formatNumber, applyShell, VIDEO_LANGUAGES } from './i18n.js';
 import { serverText, localizePreset, localizeQa, jobMessage, errorMessage, libraryTrackName } from './server-i18n.js';
 import { layoutSvg, layoutPanel, assetChip } from './layout-preview.js';
+import { initTips, helpSettingsHtml, wireHelpSettings, startTour, shouldAutoStartTour } from './help.js';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -286,8 +287,11 @@ async function openSettings(flash = null) {
     <fluent-divider style="margin:16px 0"></fluent-divider>
     ${projectsDirSection(pd, dr.projects_dir)}
     <fluent-divider style="margin:16px 0"></fluent-divider>
+    ${helpSettingsHtml()}
+    <fluent-divider style="margin:16px 0"></fluent-divider>
     <dl class="facts"><dt>${trUi('m074')}</dt><dd id="app-version">${esc(h.version)}</dd><dt>${trUi('m075')}</dt><dd>${esc(h.informational_version)}</dd><dt>FFmpeg</dt><dd>${esc(h.ffmpeg)}</dd><dt>${trUi('m076')}</dt><dd>${esc(h.missing_filters.join(', ') || trUi('m041'))}</dd><dt>Copilot CLI</dt><dd>${esc(s.copilot_cli ?? trUi('m071'))}</dd><dt>${trUi('m077')}</dt><dd>${h.presets}</dd></dl>`;
   wireProjectsDir(pd);
+  wireHelpSettings($('#settings-body'), () => startTour({ prepare: tourPrepare }));
   wireAiConnections(s, flash, dr);
   $('#llm')?.addEventListener('change', async () => {
     const radios = $$('#llm fluent-radio');
@@ -845,6 +849,9 @@ async function router() {
 window.addEventListener('hashchange', router);
 
 // ---------------- home ----------------
+// the saved work position as the name of its step in the step bar
+const RESUME_STEP = { project: 0, settings: 0, job: 2, candidates: 3, review: 4, render: 5, exports: 5 };
+const resumeLabel = (step) => stepLabels()[RESUME_STEP[step] ?? 0];
 let flash = '';   // one-shot message shown on the next home render (e.g. after a delete)
 async function home() {
   const gone = routeGuard();
@@ -867,7 +874,9 @@ async function home() {
             <fluent-button appearance="subtle" size="small" class="del" data-id="${esc(p.id)}" aria-label="${trUi('m121', [esc(p.name)])}">${trUi('m122')}</fluent-button></div>
           <dl class="facts"><dt>${trUi('m123')}</dt><dd>${esc(formatDate(p.created_at))}</dd><dt>${trUi('m004')}</dt><dd>${trUi('m124', [p.assets])}</dd>
           <dt>${trUi('video.language')}</dt><dd>${trUi(`video.${p.language ?? 'ja-JP'}`)}</dd>
-          <dt>${trUi('m125')}</dt><dd>${p.last_job ? esc(jobMessage(p.last_job)) : '—'}</dd></dl>
+          <dt>${trUi('m125')}</dt><dd>${p.last_job ? esc(jobMessage(p.last_job)) : '—'}</dd>
+          <dt>${trUi('home.resume')}</dt><dd>${esc(resumeLabel(p.resume_step))}</dd></dl>
+          ${p.offline_assets ? `<p class="caption" role="status">⚠ ${trUi('home.offline', [p.offline_assets])}</p>` : ''}
         </article>`).join('')}</div>`}`;
   $('#new').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -2948,4 +2957,10 @@ $('#ui-language').addEventListener('change', async e => {
   finally { selector.value = getLanguage(); selector.disabled = false; selector.focus(); }
 });
 refreshProvider();
-router();
+initTips();
+// First launch: introduce the screens once (the settings screen can switch this off or replay it).
+const tourPrepare = async () => {
+  $('#settings-dialog').hide?.();
+  if (location.hash && location.hash !== '#/') { location.hash = '#/'; await router(); }
+};
+router().then(() => { if (shouldAutoStartTour()) startTour({ prepare: tourPrepare }); });

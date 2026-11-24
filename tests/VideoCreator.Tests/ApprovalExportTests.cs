@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using VideoCreator.App;
 using VideoCreator.Media;
 using VideoCreator.Models;
+using VideoCreator.Pipeline;
 using VideoCreator.Planning;
 using VideoCreator.Rendering;
 using VideoCreator.Selection;
@@ -135,7 +136,8 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal(post.Engage, provenance.Post);
         Assert.True(File.Exists(render.Outputs["engage_image"]));
         Assert.True(File.Exists(render.Outputs["thumb1"]));
-        var artifactDirectory = Path.GetFullPath(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "Artifact")) + Path.DirectorySeparatorChar;
+        var exportProject = Rt.Store.Get<Project>(Kinds.Project, _project)!;
+        var artifactDirectory = Path.GetFullPath(PipelineRunner.ExportDirectory(exportProject, Rt.Presets[Rt.Store.Get<EditPlan>(Kinds.EditPlan, render.EditplanId)!.Preset.Id])) + Path.DirectorySeparatorChar;
         Assert.All(new[] { render.Path }.Concat(render.Outputs.Values), path =>
             Assert.True(Path.GetFullPath(path).StartsWith(artifactDirectory, StringComparison.OrdinalIgnoreCase), path));
         Assert.All(render.Outputs.Values, path => Assert.True(File.Exists(path), path));
@@ -395,7 +397,9 @@ public sealed class ApprovalExportTests : IAsyncLifetime
         Assert.Equal("failed", Q.Exports[rid].State);
         Assert.Equal("E-PLAN-STALE", Q.Exports[rid].ErrorCode);
         Assert.Null(Rt.Store.Get<Render>(Kinds.Render, rid));
-        Assert.Empty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "Artifact"), "*.mp4", SearchOption.AllDirectories));
+        var staleProject = Rt.Store.Get<Project>(Kinds.Project, _project)!;
+        var staleFolder = PipelineRunner.ExportDirectory(staleProject, Rt.Presets[plan.Preset.Id]);
+        Assert.Empty(Directory.Exists(staleFolder) ? Directory.GetFiles(staleFolder, "*.mp4") : []);
         Assert.NotEmpty(Directory.GetFiles(Path.Combine(Rt.Store.Get<Project>(Kinds.Project, _project)!.Directory, "rejected"), "*.mp4", SearchOption.AllDirectories));
     }
 

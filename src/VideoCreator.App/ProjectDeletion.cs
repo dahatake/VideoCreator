@@ -31,6 +31,7 @@ public static class ProjectDeletion
         jobIds = store.Ids(Kinds.Job, p.Id);
         var planIds = store.Ids(Kinds.EditPlan, p.Id);
         renderIds = planIds.SelectMany(e => store.Ids(Kinds.Render, e)).ToList();
+        var renders = planIds.SelectMany(e => store.List<Render>(Kinds.Render, e)).ToList();
         var docs = new List<(string, string)>();
         foreach (var k in ProjectChildren) docs.AddRange(store.Ids(k, p.Id).Select(id => (k, id)));
         foreach (var j in jobIds) docs.AddRange(store.Ids(Kinds.Candidate, j).Select(id => (Kinds.Candidate, id)));
@@ -40,7 +41,17 @@ public static class ProjectDeletion
         var shas = store.List<SourceAsset>(Kinds.Asset, p.Id).Select(a => CacheKey(a.Sha256)).Where(s => s != null).ToHashSet();
 
         string folder; string? folderPath = null;
-        if (!projectsRoots.Any(r => OwnsFolder(p, r))) { folder = "kept"; folderPath = p.Directory; }
+        var owned = projectsRoots.Any(r => OwnsFolder(p, r));
+        if (owned)
+        {
+            // finished videos live in pattern folders beside the project folder
+            try { JobDeletion.DeleteRecordedFiles(renders, p); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new FolderInUseException($"動画ファイルを削除できませんでした。動画を開いているアプリ（プレーヤーやエクスプローラー）を閉じてから、もう一度お試しください（{ex.Message}）");
+            }
+        }
+        if (!owned) { folder = "kept"; folderPath = p.Directory; }
         else if (!Directory.Exists(p.Directory)) folder = "missing";
         else
         {

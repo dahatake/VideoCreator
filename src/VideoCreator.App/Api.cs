@@ -226,11 +226,19 @@ public static class Api
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options, statusCode: 201);
         });
-        api.MapGet("/projects", (Runtime rt) => Results.Json(rt.Store.List<Project>(Kinds.Project).Select(p => new
+        // Like the recent-projects list of a video editor's start-up dialog: newest work first, where to continue, and whether a source file went missing.
+        api.MapGet("/projects", (Runtime rt, JobQueue q) => Results.Json(rt.Store.List<Project>(Kinds.Project).Select(p =>
         {
-            p.Id, p.Name, p.CreatedAt, p.Directory, p.Language,
-            assets = rt.Store.List<SourceAsset>(Kinds.Asset, p.Id).Count,
-            last_job = rt.Store.List<Job>(Kinds.Job, p.Id).FirstOrDefault(),
+            var assets = rt.Store.List<SourceAsset>(Kinds.Asset, p.Id);
+            var jobs = rt.Store.List<Job>(Kinds.Job, p.Id);
+            return new
+            {
+                p.Id, p.Name, p.CreatedAt, p.Directory, p.Language,
+                assets = assets.Count,
+                offline_assets = assets.Count(a => !File.Exists(a.Path)),
+                resume_step = ResolveWorkflowState(rt, q, p, jobs).Step,
+                last_job = jobs.FirstOrDefault(),
+            };
         }), Json.Options));
         api.MapGet("/projects/{id}", (Runtime rt, JobQueue q, string id) =>
         {
