@@ -25,6 +25,33 @@ await page.waitForSelector('#settings-btn');
 await page.waitForTimeout(800);
 check(await page.locator('.vc-tour-card').count() === 0, 'tour is not shown again after it was seen');
 
+// every kind of control gets a tip: specific text, or one built from its kind and label
+const hoverTip = async (selector) => {
+  await page.mouse.move(5, 400); await page.waitForTimeout(150);
+  await page.hover(selector);
+  await page.waitForSelector('#vc-tip:popover-open', { timeout: 3000 });
+  return page.textContent('#vc-tip');
+};
+await page.goto(`${base}/#/`);
+await page.waitForSelector('#name');
+check((await hoverTip('#name')).includes('名前'), 'text input has a tip');
+check((await hoverTip('#new-video-language')).includes('言語'), 'select has a tip');
+await page.evaluate(() => fetch('/api/projects', { method: 'POST', headers: { 'X-VideoCreator': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'tip-test' }) }));
+await page.reload();
+await page.waitForSelector('.project-card a.stretch');
+check((await hoverTip('.project-card a.stretch')).includes('tip-test'), 'link tip names its target');
+await page.click('.project-card a.stretch');
+await page.waitForSelector('main fluent-button, main input, main select');
+const untipped = await page.evaluate(async () => {
+  const { TIPS, GENERIC } = await import('/js/help.js');
+  const all = [...TIPS.map(([s]) => s), ...GENERIC.map(([s]) => s)].join(',');
+  return [...document.querySelectorAll('main fluent-button, main fluent-anchor-button, main fluent-text-input, main fluent-radio, main fluent-checkbox, main fluent-switch, main select, main input:not([type=hidden]), main textarea, main summary, main a[href]')]
+    .filter(el => !el.matches(all)).map(el => el.tagName + '#' + el.id);
+});
+check(untipped.length === 0, `every control on the project screen is covered (${untipped.join(', ')})`);
+await page.goto(`${base}/#/`);
+await page.waitForSelector('#name');
+
 // hover help
 await page.hover('#settings-btn');
 await page.waitForSelector('#vc-tip:popover-open', { timeout: 3000 });

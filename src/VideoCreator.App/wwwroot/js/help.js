@@ -36,7 +36,54 @@ export const TIPS = [
   ['#approveAll', 'tip.approveAllQuips'], ['#approveCards', 'tip.approveAllCards'],
   ['.artifact-retry', 'tip.artifactRetry'], ['.path-copy', 'tip.pathCopy'], ['.folder-open', 'tip.folderOpen'],
   ['.post-create', 'tip.postCreate'], ['.post-copy', 'tip.postCopy'], ['.post-again', 'tip.postAgain'],
+
+  ['#new #name', 'tip.newName'], ['#new-video-language', 'tip.videoLang'], ['#project-video-language', 'tip.videoLang'],
+  ['#rename-input', 'tip.renameInput'], ['#path', 'tip.pathInput'], ['#kitPath', 'tip.kitPath'], ['#pdirPath', 'tip.pdirPath'],
+  ['#pdirMove fluent-radio[value="move"]', 'tip.pdirMoveAll'], ['#pdirMove fluent-radio[value="keep"]', 'tip.pdirKeep'],
+  ['#llm fluent-radio', 'tip.llm'], ['#cAuth fluent-radio', 'tip.auth'], ['#fAuth fluent-radio', 'tip.auth'],
+  ['#cEffort fluent-radio', 'tip.effort'], ['#cTier fluent-radio', 'tip.tier'],
+  ['#settings-body [id$="Resource"]', 'tip.resource'], ['#fChatDep', 'tip.chatDep'], ['#fEmbDep', 'tip.embDep'], ['#fImageDep', 'tip.imgDep'], ['#cModel', 'tip.cModel'],
+  ['.rights', 'tip.rights'], ['#bgmRights', 'tip.rights'], ['#sharedBgmRights', 'tip.rights'], ['#kitRights', 'tip.rights'],
+  ['#kitUpscale', 'tip.kitUpscale'], ['#kitCardSec', 'tip.kitSec'], ['#cardCount', 'tip.cardCount'],
+  ['#partCount', 'tip.partCount'], ['#partMin', 'tip.partMin'], ['#shortCount', 'tip.shortCount'],
+  ['input[name="seriesBy"][value="minutes"]', 'tip.seriesMinutes'], ['input[name="seriesBy"][value="parts"]', 'tip.seriesParts'],
+  ['#maskWords', 'tip.maskWords'], ['#orientation fluent-radio', 'tip.orientation'], ['#shortMode fluent-radio', 'tip.shortMode'],
+  ['#tsukkomiStyle fluent-radio', 'tip.tsukkomiStyle'], ['#analysisReuse fluent-radio', 'tip.analysisReuse'], ['#cardMake fluent-radio', 'tip.cardMake'],
+  ['#openingSw', 'tip.sw.opening'], ['#closingSw', 'tip.sw.closing'], ['#cardsSw', 'tip.sw.cards'], ['#sfxSw', 'tip.sw.sfxPlan'], ['#useSharedBgm', 'tip.sw.sharedBgm'],
+  ['fluent-switch.en', 'tip.sw.telopOne'], ['fluent-switch.ins-en', 'tip.sw.insertOne'], ['fluent-switch[data-type]', 'tip.sw.telopType'],
+  ['.exp-pick', 'tip.expPick'], ['.pip-use', 'tip.pipUse'], ['.pip-start', 'tip.pipTime'], ['.pip-end', 'tip.pipTime'],
+  ['input.telop', 'tip.telopEdit'], ['input.wd', 'tip.wordEdit'], ['input.card-text', 'tip.cardEdit'],
+  ['#instr', 'tip.instr'], ['#chips fluent-button', 'tip.instrChip'], ['#videoSel', 'tip.videoSel'],
+  ['#prevVideo', 'tip.prevVideo'], ['#nextVideo', 'tip.nextVideo'], ['#toExports', 'tip.toExports'],
+  ['#bgm', 'tip.bgmPick'], ['#bgmSel', 'tip.bgmPick'], ['#bgmLd', 'tip.bgmLd'], ['#bgmGap', 'tip.bgmGap'], ['.bgm-trim', 'tip.bgmTrim'], ['.bgm-cue-track', 'tip.bgmCue'],
+  ['#bgmFile', 'tip.bgmFile'], ['#sharedBgmFile', 'tip.bgmFile'], ['.deck-file', 'tip.deckFile'],
+  ['.artifact-path', 'tip.pathText'], ['.post-text', 'tip.postText'],
 ];
+
+// Anything without its own text above is explained from its kind and its label.
+export const GENERIC = [
+  ['fluent-button', 'tip.g.button'], ['fluent-anchor-button, a[href]', 'tip.g.link'], ['fluent-text-input, input[type=text], input:not([type])', 'tip.g.input'],
+  ['input[type=number]', 'tip.g.number'], ['select', 'tip.g.select'], ['fluent-radio, input[type=radio]', 'tip.g.radio'],
+  ['fluent-checkbox, fluent-switch, input[type=checkbox]', 'tip.g.check'], ['input[type=file]', 'tip.g.file'], ['textarea', 'tip.g.text'], ['summary', 'tip.g.details'],
+];
+const GENERIC_ALL = GENERIC.map(([selector]) => selector).join(',');
+const clean = text => (text ?? '').replace(/\s+/g, ' ').trim();
+const clip = text => (text.length > 50 ? `${text.slice(0, 50)}…` : text);
+
+function labelOf(el) {
+  const aria = clean(el.getAttribute('aria-label'));
+  if (aria) return clip(aria);
+  if (el.matches('fluent-button, fluent-anchor-button, a, summary, fluent-radio')) { const own = clean(el.textContent); if (own) return clip(own); }
+  const wrap = el.closest('label');
+  if (wrap) {
+    const copy = wrap.cloneNode(true);
+    copy.querySelectorAll('select, input, textarea, fluent-text-input, fluent-switch, fluent-checkbox').forEach(n => n.remove());
+    const text = clean(copy.textContent); if (text) return clip(text);
+  }
+  const fieldLabel = clean(el.closest('fluent-field')?.querySelector('[slot=label]')?.textContent); if (fieldLabel) return clip(fieldLabel);
+  return clip(clean(el.getAttribute('placeholder'))) || trUi('tip.g.unnamed');
+}
+
 const ALL = TIPS.map(([selector]) => selector).join(',');
 
 // target: the element to point at (none = centered card)
@@ -55,10 +102,14 @@ const hide = el => { try { el.hidePopover(); } catch { el.hidden = true; } };
 
 // ---------------- hover help ----------------
 function tipFor(target) {
-  const el = target instanceof Element ? target.closest(ALL) : null;
-  if (!el) return null;
-  const hit = TIPS.find(([selector]) => el.matches(selector));
-  return hit ? { el, key: hit[1] } : null;
+  const start = target instanceof Element ? target : null;
+  if (!start || start.closest('.vc-tour, #vc-tip')) return null;
+  const el = start.closest(ALL);
+  if (el) { const hit = TIPS.find(([selector]) => el.matches(selector)); if (hit) return { el, text: () => trUi(hit[1]) }; }
+  const generic = start.closest(GENERIC_ALL);
+  if (!generic) return null;
+  const hit = GENERIC.find(([selector]) => generic.matches(selector));
+  return hit ? { el: generic, text: () => trUi(hit[1], [labelOf(generic)]) } : null;
 }
 
 export function initTips() {
@@ -71,8 +122,8 @@ export function initTips() {
     if (owner) { owner.removeAttribute('aria-describedby'); owner = null; }
     hide(tip);
   };
-  const open = ({ el, key }) => {
-    tip.textContent = trUi(key);
+  const open = ({ el, text }) => {
+    tip.textContent = text();
     owner = el;
     el.setAttribute('aria-describedby', tip.id);
     show(tip);
@@ -93,7 +144,7 @@ export function initTips() {
     schedule(found, 350);
   });
   document.addEventListener('pointerout', e => {
-    const to = e.relatedTarget instanceof Element ? e.relatedTarget.closest(ALL) : null;
+    const to = e.relatedTarget instanceof Element ? tipFor(e.relatedTarget)?.el : null;
     if (owner && to !== owner) close(); else if (!owner && timer && !to) close();
   });
   document.addEventListener('focusin', e => { const found = tipFor(e.target); if (found && e.target.matches?.(':focus-visible')) schedule(found, 0); });

@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>1.2.1</VersionPrefix>
+    <VersionPrefix>1.2.2</VersionPrefix>
   </PropertyGroup>
   <PropertyGroup>
     <!-- Windows builds (win-* RIDs, or no RID on a Windows host) use WinForms and DirectML; others (osx-arm64) use portable APIs. -->

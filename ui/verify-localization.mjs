@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { catalogs, setLanguage, trUi, formatDate, getLanguage, VIDEO_LANGUAGES } from '../src/VideoCreator.App/wwwroot/js/i18n.js';
 import { localizePreset, localizeQa, serverText, errorMessage, libraryTrackName } from '../src/VideoCreator.App/wwwroot/js/server-i18n.js';
 import { presetDisplays, qaNames, qaRecommendations, serverMessages, serverPatterns } from '../src/VideoCreator.App/wwwroot/js/server-resources.js';
-import { TIPS, TOUR } from '../src/VideoCreator.App/wwwroot/js/help.js';
+import { TIPS, GENERIC, TOUR } from '../src/VideoCreator.App/wwwroot/js/help.js';
 
 const root = new URL('../src/VideoCreator.App/wwwroot/', import.meta.url);
 const source = fs.readFileSync(new URL('js/app.js', root), 'utf8');
@@ -22,7 +22,8 @@ for (const [locale, catalog] of Object.entries(catalogs)) {
 }
 for (const match of source.matchAll(/trUi\('([^']+)'/g)) assert.ok(catalogs.ja[match[1]], match[1]);
 for (const match of shell.matchAll(/data-i18n(?:-aria)?="([^"]+)"/g)) assert.ok(catalogs.ja[match[1]], match[1]);
-for (const [selector, key] of TIPS) assert.ok(catalogs.ja[key], `${selector}: missing ${key}`);
+for (const [selector, key] of [...TIPS, ...GENERIC]) assert.ok(catalogs.ja[key], `${selector}: missing ${key}`);
+assert.ok(catalogs.ja['tip.g.unnamed']);
 for (const step of TOUR) for (const part of ['title', 'body']) assert.ok(catalogs.ja[`tour.${step.id}.${part}`], `tour ${step.id}.${part}`);
 for (const match of fs.readFileSync(new URL('js/help.js', root), 'utf8').matchAll(/trUi\('([^']+)'/g)) assert.ok(catalogs.ja[match[1]], match[1]);
 assert.ok(!source.includes('MutationObserver'));
