@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+# Used by "run.cmd --provision-azure" (scripts/setup.ps1 -ProvisionAzure). VideoCreator runs on the user's PC,
+# so there are no services to deploy: azd only provisions the Azure AI Services account and model deployments.
+name: videocreator
+infra:
+  provider: bicep
+  path: infra/azd
+  module: main

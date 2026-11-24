@@ -4,6 +4,7 @@ rem   run.cmd                  first run: install/configure everything, then bui
 rem   run.cmd --setup          run the setup again (installs what is missing, re-checks Azure), then start
 rem   run.cmd --check          report what is installed / configured, change nothing
 rem   options: --with-copilot (also install GitHub Copilot CLI)  --assign-roles (assign missing Azure roles)
+rem            --provision-azure [--azure-location southeastasia] [--azure-env videocreator]  (create the Azure resources with azd)
 rem            --skip-azure  --non-interactive  --no-start
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -19,6 +20,9 @@ if /i "%~1"=="--check"           ( set "DO_CHECK=1" & goto :next )
 if /i "%~1"=="--no-start"        ( set "NO_START=1" & goto :next )
 if /i "%~1"=="--with-copilot"    ( set "PS_ARGS=%PS_ARGS% -WithCopilot" & goto :next )
 if /i "%~1"=="--assign-roles"    ( set "PS_ARGS=%PS_ARGS% -AssignRoles" & goto :next )
+if /i "%~1"=="--provision-azure" ( set "PS_ARGS=%PS_ARGS% -ProvisionAzure" & goto :next )
+if /i "%~1"=="--azure-location"  ( set "PS_ARGS=%PS_ARGS% -AzureLocation %~2" & shift & goto :next )
+if /i "%~1"=="--azure-env"       ( set "PS_ARGS=%PS_ARGS% -AzureEnvName %~2" & shift & goto :next )
 if /i "%~1"=="--skip-azure"      ( set "PS_ARGS=%PS_ARGS% -SkipAzure" & goto :next )
 if /i "%~1"=="--non-interactive" ( set "PS_ARGS=%PS_ARGS% -NonInteractive" & goto :next )
 if /i "%~1"=="--help" goto :help
@@ -81,8 +85,8 @@ if not "%RC%"=="0" (
 exit /b %RC%
 
 :help
-echo Usage: run.cmd [--setup ^| --check] [--with-copilot] [--assign-roles] [--skip-azure] [--non-interactive] [--no-start]
+echo Usage: run.cmd [--setup ^| --check] [--with-copilot] [--assign-roles] [--provision-azure [--azure-location ^<region^>] [--azure-env ^<name^>]] [--skip-azure] [--non-interactive] [--no-start]
 exit /b 0
 :help_fail
-echo Usage: run.cmd [--setup ^| --check] [--with-copilot] [--assign-roles] [--skip-azure] [--non-interactive] [--no-start]
+echo Usage: run.cmd [--setup ^| --check] [--with-copilot] [--assign-roles] [--provision-azure [--azure-location ^<region^>] [--azure-env ^<name^>]] [--skip-azure] [--non-interactive] [--no-start]
 exit /b 2

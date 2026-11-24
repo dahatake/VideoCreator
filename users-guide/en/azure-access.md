@@ -87,6 +87,23 @@ az deployment group create  -g rg-videocreator-jpe -f infra/main.bicep -p accoun
 Enter the outputs `speechEndpoint`, `foundryEndpoint`, `chatDeployment`, `embeddingDeployment` and
 `tenantId` in Settings. Pass model names, versions, capacity and region available in your region as parameters.
 
+### Create the resources from setup with azd
+
+If you can sign in with the Azure CLI, the setup script can create the same resources with the
+Azure Developer CLI (azd). It creates nothing by default; it runs only when you ask for it.
+
+```cmd
+run.cmd --provision-azure [--azure-location southeastasia] [--azure-env videocreator]
+```
+
+- [azure.yaml](../../azure.yaml) and [infra/azd/main.bicep](../../infra/azd/main.bicep) (subscription scope)
+  create the resource group `rg-<environment name>` and call the `infra/main.bicep` above. The signed-in user
+  is granted the Speech and OpenAI user roles. If azd is missing, winget installs it.
+- The resulting endpoint and deployment names are written to the `VideoCreator__Llm__*` variables in
+  `tools/setup-env.cmd`; `appsettings.json` is not modified. The connection test that follows confirms HTTP 200.
+- It is safe to re-run. If an azd environment already exists, `run.cmd --setup` / `--check` use its values.
+- The resources are pay-as-you-go. Remove them with `azd down -e <environment name>` when no longer needed.
+
 ## Administrator: add a user to the resource group
 
 "Add an account" means **assign roles in the resource group's Access control

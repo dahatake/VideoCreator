@@ -10,6 +10,10 @@
     4. Azure sign-in + live probe of the configured Speech / OpenAI endpoints with a real token
        (HTTP 403 = missing role -> prints, or with consent runs, the role assignment)
     5. GitHub Copilot CLI (optional, -WithCopilot)
+  With -ProvisionAzure, step 4 first installs Azure Developer CLI (azd) and runs "azd provision" (azure.yaml +
+  infra/azd): resource group, AI Services account, chat/embedding deployments and your Speech/OpenAI roles.
+  The resulting endpoints are written to tools/setup-env.cmd as VideoCreator__* variables (appsettings.json is
+  not modified) and are probed like any other endpoint. Later runs reuse an existing azd environment.
   Writes tools/setup-env.cmd (PATH for run.cmd) and tools/setup-state.json.
   Exit code: 0 = app can start (Azure problems are warnings), 1 = a required local component is missing.
 #>
@@ -18,7 +22,10 @@ param(
     [switch]$NonInteractive, # never prompt / never open a sign-in window
     [switch]$SkipAzure,      # do not install Azure CLI or probe Azure
     [switch]$WithCopilot,    # also install GitHub Copilot CLI
-    [switch]$AssignRoles     # assign missing Azure roles without asking
+    [switch]$AssignRoles,    # assign missing Azure roles without asking
+    [switch]$ProvisionAzure, # create the Azure resources with azd (infra/azd) and use them
+    [string]$AzureLocation = 'southeastasia', # region for -ProvisionAzure (MAI-Transcribe regions: see below)
+    [string]$AzureEnvName = 'videocreator'    # azd environment name (resource group: rg-<name>)
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -74,6 +81,7 @@ function Get-Sdk10 {
 }
 
 $extraPath = New-Object System.Collections.Generic.List[string]
+$azureEnvLines = @()
 $dotnetRoot = $null
 Update-SessionPath
 Write-Host "VideoCreator setup  (Windows $([Environment]::OSVersion.Version), $arch, PowerShell $($PSVersionTable.PSVersion), winget: $([bool]$winget))"
@@ -198,7 +206,7 @@ function Send-Probe([string]$Kind, [string]$Token) {
 }
 
 if ($SkipAzure) { Add-Result 'Azure' SKIP '-SkipAzure' }
-elseif (-not $useAsr -and -not $useLlm) { Add-Result 'Azure' SKIP 'no Azure endpoint configured in appsettings.json' }
+elseif (-not $useAsr -and -not $useLlm -and -not $ProvisionAzure) { Add-Result 'Azure' SKIP 'no Azure endpoint configured in appsettings.json' }
 else {
     Step 'Azure CLI and sign-in'
     $azCmd = (Get-Command az.cmd -ErrorAction SilentlyContinue).Source
@@ -234,6 +242,59 @@ else {
         else {
             $a = $acct | ConvertFrom-Json
             Add-Result 'Azure sign-in' OK "$($a.user.name) (subscription: $($a.name))"
+
+            Step 'Azure resources (azd)'
+            $azd = (Get-Command azd.exe -ErrorAction SilentlyContinue).Source
+            if (-not $azd -and $ProvisionAzure -and -not $CheckOnly) {
+                $null = Install-WithWinget 'Microsoft.Azd'
+                $azd = (Get-Command azd.exe -ErrorAction SilentlyContinue).Source
+                if (-not $azd -and (Test-Path "$env:LOCALAPPDATA\Programs\Azure Dev CLI\azd.exe")) { $azd = "$env:LOCALAPPDATA\Programs\Azure Dev CLI\azd.exe" }
+                if ($azd) { Add-Result 'azd' INSTALLED $azd } else { Add-Result 'azd' WARN 'installation failed (needs winget): https://aka.ms/azd-install' }
+            }
+            $azdEnvDir = Join-Path $root ".azure\$AzureEnvName"
+            if (-not $azd) {
+                if ($ProvisionAzure) { $ProvisionAzure = $false } else { Add-Result 'azd' SKIP 'not installed (only needed with --provision-azure)' }
+            } else {
+                $extraPath.Add((Split-Path $azd -Parent))
+                $ErrorActionPreference = 'Continue'
+                Push-Location $root
+                try {
+                    if ($ProvisionAzure -and -not $CheckOnly) {
+                        & $azd auth login --check-status 2>$null | Out-Null
+                        if ($LASTEXITCODE -ne 0) {
+                            if (-not $interactive) { Add-Result 'azd sign-in' WARN 'azd is not signed in: run "azd auth login", then run again'; $ProvisionAzure = $false }
+                            else { & $azd auth login | Out-Host }
+                        }
+                    }
+                    if ($ProvisionAzure -and -not $CheckOnly) {
+                        if (-not (Test-Path $azdEnvDir)) { & $azd env new $AzureEnvName --subscription $a.id --location $AzureLocation --no-prompt | Out-Host }
+                        Write-Host "  azd provision (environment $AzureEnvName, region $AzureLocation) ..."
+                        & $azd provision -e $AzureEnvName --no-prompt | Out-Host
+                        if ($LASTEXITCODE -eq 0) { Add-Result 'azd provision' INSTALLED "resource group rg-$AzureEnvName" }
+                        else { Add-Result 'azd provision' WARN 'failed (see output above; quota, region or permission?). Re-run: run.cmd --provision-azure' }
+                    }
+                    # Whatever azd has provisioned (now or earlier) overrides appsettings.json through environment variables.
+                    if (Test-Path $azdEnvDir) {
+                        $azdValues = @{}
+                        foreach ($line in @(& $azd env get-values -e $AzureEnvName 2>$null)) {
+                            if ($line -match '^([A-Z0-9_]+)="?(.*?)"?$') { $azdValues[$Matches[1]] = $Matches[2] }
+                        }
+                        if ($azdValues['AZURE_FOUNDRY_ENDPOINT']) {
+                            $azdEnv = [ordered]@{
+                                'VideoCreator__Llm__Endpoint'            = $azdValues['AZURE_FOUNDRY_ENDPOINT']
+                                'VideoCreator__Llm__Deployment'          = $azdValues['AZURE_CHAT_DEPLOYMENT']
+                                'VideoCreator__Llm__EmbeddingDeployment' = $azdValues['AZURE_EMBEDDING_DEPLOYMENT']
+                            }
+                            foreach ($k in $azdEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $azdEnv[$k], 'Process'); $azureEnvLines += 'set "' + $k + '=' + $azdEnv[$k] + '"' }
+                            $llmEndpoint = $azdEnv['VideoCreator__Llm__Endpoint']; $deployment = $azdEnv['VideoCreator__Llm__Deployment']
+                            $asrEndpoint = if ($llmEndpoint -match '^(https://[^/]+)') { $Matches[1] + '/' } else { $asrEndpoint }
+                            $useAsr = $asrProvider -eq 'azure' -and [bool]$asrEndpoint
+                            $useLlm = $llmProvider -eq 'azure-openai' -and -not $localOnly
+                            Add-Result 'Azure resources' OK "azd environment '$AzureEnvName': $(([Uri]$llmEndpoint).Host)"
+                        } elseif ($ProvisionAzure) { Add-Result 'Azure resources' WARN 'azd did not report endpoints' }
+                    } elseif (-not $ProvisionAzure) { Add-Result 'Azure resources' SKIP 'none provisioned by azd (use appsettings.json; or run.cmd --provision-azure)' }
+                } finally { Pop-Location; $ErrorActionPreference = 'Stop' }
+            }
 
             Step 'Azure endpoints (live probe with your token)'
             $token = Invoke-Az @('account', 'get-access-token', '--resource', 'https://cognitiveservices.azure.com', '--query', 'accessToken', '-o', 'tsv')
@@ -316,6 +377,7 @@ if (-not $CheckOnly) {
     $lines = @('@echo off', 'rem Generated by scripts\setup.ps1 - do not edit.')
     foreach ($d in ($extraPath | Select-Object -Unique)) { $lines += 'set "PATH=' + $d.Replace('%', '%%') + ';%PATH%"' }
     if ($dotnetRoot) { $lines += 'set "DOTNET_ROOT=' + $dotnetRoot + '"' }
+    $lines += $azureEnvLines
     $lines += 'set "DOTNET_NOLOGO=1"'
     Set-Content (Join-Path $tools 'setup-env.cmd') $lines -Encoding ASCII
     if (-not $failed.Count) {

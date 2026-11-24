@@ -79,6 +79,23 @@ az deployment group create  -g rg-videocreator-jpe -f infra/main.bicep -p accoun
 将输出的 `speechEndpoint`、`foundryEndpoint`、`chatDeployment`、`embeddingDeployment`、`tenantId`
 填入设置界面。模型名称、版本、容量和区域请通过参数指定该区域可用的值。
 
+### 通过安装脚本使用 azd 创建
+
+只要能用 Azure CLI 登录，安装脚本就可以用 Azure Developer CLI（azd）创建同样的资源。
+默认不会创建任何内容，只有明确指定时才会执行。
+
+```cmd
+run.cmd --provision-azure [--azure-location southeastasia] [--azure-env videocreator]
+```
+
+- [azure.yaml](../../azure.yaml) 和 [infra/azd/main.bicep](../../infra/azd/main.bicep)（订阅范围）
+  会创建资源组 `rg-<环境名>` 并调用上面的 `infra/main.bicep`，同时给执行者授予 Speech 和 OpenAI 用户角色。
+  如果没有 azd，会通过 winget 安装。
+- 生成的终结点和部署名称会写入 `tools/setup-env.cmd` 中的 `VideoCreator__Llm__*` 环境变量，
+  不会修改 `appsettings.json`。随后的连接测试会确认 HTTP 200。
+- 可安全重复运行。已有 azd 环境时，`run.cmd --setup` / `--check` 会使用其中的值。
+- 这些资源按用量计费。不再需要时用 `azd down -e <环境名>` 删除。
+
 ## 管理员：将用户添加到资源组
 
 “添加账户”是指在资源组的**访问控制 (IAM) 中分配角色**。仅授予 Contributor 或 Owner

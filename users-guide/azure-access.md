@@ -87,6 +87,23 @@ az deployment group create  -g rg-videocreator-jpe -f infra/main.bicep -p accoun
 を設定画面に入力します。モデル名・バージョン・容量・リージョンは、
 そのリージョンで利用できる値をパラメーターで指定します。
 
+### セットアップから azd で作成する
+
+Azure CLI でサインインできる環境なら、セットアップスクリプトが Azure Developer CLI（azd）で
+同じリソースを作成できます。既定では何も作成せず、明示したときだけ実行します。
+
+```cmd
+run.cmd --provision-azure [--azure-location southeastasia] [--azure-env videocreator]
+```
+
+- [azure.yaml](../azure.yaml) と [infra/azd/main.bicep](../infra/azd/main.bicep)（サブスクリプションスコープ）が、
+  リソースグループ `rg-<環境名>` を作り、上記の `infra/main.bicep` を呼びます。実行した本人に
+  Speech・OpenAI の利用者ロールを付与します。azd が無ければ winget で導入します。
+- 作成後のエンドポイントとデプロイ名は `tools/setup-env.cmd` の `VideoCreator__Llm__*`
+  環境変数に書き出され、`appsettings.json` は変更しません。続く接続テストで HTTP 200 を確認します。
+- 再実行しても安全です。作成済みの azd 環境があれば、`run.cmd --setup` / `--check` はその値を使います。
+- 作成したリソースは従量課金です。不要になったら `azd down -e <環境名>` で削除します。
+
 ## 管理者: リソースグループに利用者を追加する
 
 「アカウントを追加する」とは、そのリソースグループの **アクセス制御 (IAM) で

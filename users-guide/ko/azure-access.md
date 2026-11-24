@@ -81,6 +81,23 @@ az deployment group create  -g rg-videocreator-jpe -f infra/main.bicep -p accoun
 출력의 `speechEndpoint`, `foundryEndpoint`, `chatDeployment`, `embeddingDeployment`, `tenantId`를
 설정 화면에 입력합니다. 모델 이름·버전·용량·지역은 해당 지역에서 사용 가능한 값을 매개 변수로 지정합니다.
 
+### 설정 스크립트에서 azd로 만들기
+
+Azure CLI로 로그인할 수 있으면 설정 스크립트가 Azure Developer CLI(azd)로 같은 리소스를 만들 수 있습니다.
+기본적으로는 아무것도 만들지 않으며, 명시했을 때만 실행합니다.
+
+```cmd
+run.cmd --provision-azure [--azure-location southeastasia] [--azure-env videocreator]
+```
+
+- [azure.yaml](../../azure.yaml)과 [infra/azd/main.bicep](../../infra/azd/main.bicep)(구독 범위)이
+  리소스 그룹 `rg-<환경 이름>`을 만들고 위의 `infra/main.bicep`을 호출합니다. 실행한 본인에게
+  Speech·OpenAI 사용자 역할을 부여합니다. azd가 없으면 winget으로 설치합니다.
+- 생성된 엔드포인트와 배포 이름은 `tools/setup-env.cmd`의 `VideoCreator__Llm__*` 환경 변수로 기록되며
+  `appsettings.json`은 변경하지 않습니다. 이어지는 연결 테스트에서 HTTP 200을 확인합니다.
+- 다시 실행해도 안전합니다. azd 환경이 이미 있으면 `run.cmd --setup` / `--check`가 그 값을 사용합니다.
+- 리소스는 종량제입니다. 필요 없으면 `azd down -e <환경 이름>`으로 삭제합니다.
+
 ## 관리자: 리소스 그룹에 사용자 추가
 
 "계정을 추가한다"는 것은 리소스 그룹의 **액세스 제어(IAM)에서 역할을 할당**하는 것입니다.

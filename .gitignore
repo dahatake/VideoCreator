@@ -15,3 +15,6 @@ ui/node_modules/
 # generated test media and spike outputs (recreate with spikes/make-media.ps1, spikes/04a-make-speech.cs, spikes/07-make-long.cs)
 spikes/media/
 spikes/out/
+
+# azd environments (scripts/setup.ps1 -ProvisionAzure)
+.azure/
