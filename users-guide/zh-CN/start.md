@@ -4,7 +4,7 @@
 [日本語](../../README.md) | [English](../en/start.md) | [한국어](../ko/start.md) | [简体中文](start.md)
 <!-- /language-nav -->
 
-[开始使用](start.md) / [指南目录](README.md) / [详细概览](overview.md) / [工程师参考](technical-reference.md)
+[开始使用](start.md) / [指南目录](README.md) / [详细概览](overview.md) / [工程师参考](technical-reference.md) / [网站](https://dahatake.github.io/VideoCreator/zh-CN/)
 
 **即使没有视频编辑经验，也能将内部视频制作成带字幕的短视频。**
 在自己的电脑上选择素材和编辑模式，检查并修改候选视频后保存。应用不会自动发布到社交媒体或内部网站。

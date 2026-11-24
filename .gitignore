@@ -8,9 +8,14 @@ artifacts/
 
 # third-party tools downloaded by scripts/get-tools.ps1
 tools/
+!/site/tools/
 
 # node
 ui/node_modules/
+site/node_modules/
+
+# generated documentation site (site/build.mjs)
+site/dist/
 
 # generated test media and spike outputs (recreate with spikes/make-media.ps1, spikes/04a-make-speech.cs, spikes/07-make-long.cs)
 spikes/media/

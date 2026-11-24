@@ -1,0 +1,19 @@
+{
+  "name": "videocreator-site",
+  "private": true,
+  "type": "module",
+  "description": "GitHub Pages site generated from the repository documentation",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node check.mjs",
+    "verify": "node verify-browser.mjs"
+  },
+  "dependencies": {
+    "marked": "^18.2.1",
+    "mermaid": "^12.3.0"
+  },
+  "devDependencies": {
+    "axe-core": "^4.14.1",
+    "playwright-core": "^1.65.1"
+  }
+}

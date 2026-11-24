@@ -4,7 +4,7 @@
 [日本語](../../README.md) | [English](../en/start.md) | [한국어](start.md) | [简体中文](../zh-CN/start.md)
 <!-- /language-nav -->
 
-[처음 시작](start.md) / [가이드 목차](README.md) / [상세 개요](overview.md) / [엔지니어용](technical-reference.md)
+[처음 시작](start.md) / [가이드 목차](README.md) / [상세 개요](overview.md) / [엔지니어용](technical-reference.md) / [웹사이트](https://dahatake.github.io/VideoCreator/ko/)
 
 **영상 편집이 처음이어도 사내 영상으로 자막이 있는 짧은 영상을 만들 수 있습니다.**
 PC에서 영상을 선택하고 편집 패턴을 지정한 뒤 후보를 확인·수정하여 저장합니다. SNS나 사내 사이트에 자동 게시하지 않습니다.
