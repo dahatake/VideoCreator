@@ -20,6 +20,8 @@ public sealed class FolderPickerTests : IDisposable
     public async Task Real_dialog_is_modern_topmost_and_returns_selection_cancel_or_abort()
     {
         if (!OperatingSystem.IsWindows() || !Environment.UserInteractive) Assert.Skip("Needs an interactive Windows desktop");
+        // no window can come in front of the lock screen, so nothing about the dialog can be measured while it is shown
+        if (IsLockScreen(GetForegroundWindow())) Assert.Skip("The desktop is locked (lock screen in front)");
         var picker = new FolderPicker();
 
         // OK returns the folder that was pre-selected from the typed path.
@@ -30,7 +32,7 @@ public sealed class FolderPickerTests : IDisposable
         Assert.Contains("DirectUIHWND", classes);           // Explorer-style IFileOpenDialog
         Assert.Contains("Breadcrumb Parent", classes);      // address bar
         Assert.Equal(FolderPicker.Title, TextOf(dialog));
-        Assert.True(await EventuallyAsync(() => IsInFront(dialog)), "dialog should be the foreground window with no normal window above it");
+        Assert.True(await EventuallyAsync(() => IsInFront(dialog)), $"dialog should be the foreground window with no normal window above it; in front: {Describe(GetForegroundWindow())}, above: {Describe(FirstNormalWindowAbove(dialog))}");
         Assert.Equal(0, GetWindowLongPtr(dialog, -20) & 0x8); // not pinned above other apps once it is in front
         await Assert.ThrowsAsync<InvalidOperationException>(() => picker.PickAsync(null, Ct));
         SendMessage(GetDlgItem(dialog, 1), 0x00F5, 0, 0); // BM_CLICK on the select button
@@ -88,17 +90,36 @@ public sealed class FolderPickerTests : IDisposable
     }
 
     // Foreground, and every visible window enumerated before it (z-order, top first) is a topmost one such as the taskbar.
-    static bool IsInFront(nint dialog)
+    static bool IsInFront(nint dialog) => GetForegroundWindow() == dialog && FirstNormalWindowAbove(dialog) == 0;
+
+    static nint FirstNormalWindowAbove(nint dialog)
     {
-        if (GetForegroundWindow() != dialog) return false;
-        var above = true;
+        nint above = 0;
         EnumWindows((hwnd, _) =>
         {
             if (hwnd == dialog) return false;
-            if (IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20) & 0x8) == 0) above = false;
-            return above;
+            if (IsWindowVisible(hwnd) && (GetWindowLongPtr(hwnd, -20) & 0x8) == 0) above = hwnd;
+            return above == 0;
         }, 0);
         return above;
+    }
+
+    static bool IsLockScreen(nint hwnd)
+    {
+        if (hwnd == 0) return false;
+        GetWindowThreadProcessId(hwnd, out var pid);
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return p.ProcessName.Equals("LockApp", StringComparison.OrdinalIgnoreCase); }
+        catch (ArgumentException) { return false; }
+    }
+
+    // Another program taking the focus during the test (an interactive desktop in use) reads differently from a dialog that never rose.
+    static string Describe(nint hwnd)
+    {
+        if (hwnd == 0) return "none";
+        GetWindowThreadProcessId(hwnd, out var pid);
+        string name;
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); name = p.ProcessName; } catch (ArgumentException) { name = "?"; }
+        return $"{name} (pid {pid}{(pid == Environment.ProcessId ? ", this test" : "")}) \"{TextOf(hwnd)}\" [{ClassOf(hwnd)}]";
     }
 
     static HashSet<string> Descendants(nint hwnd)

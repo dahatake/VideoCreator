@@ -23,6 +23,9 @@ const api = (p, init = {}) => page.evaluate(async ([p, init]) => { const r = awa
 
 try {
   await page.goto(base + '/');
+  // quickstart step 3 must be done first: without a saved connection the job fails at once with E-ASR-PROVIDER
+  const settings = (await api('/api/settings')).body;
+  if (!settings?.asr_configured) throw new Error('Speech is not configured on this app: save Settings > AI の接続 (Test and save) before running the E2E');
   // a fresh data folder starts the first-run tour, which covers the page until it is skipped
   const skipTour = page.locator('.vc-tour').getByText('スキップ');
   if (await skipTour.isVisible({ timeout: 3000 }).catch(() => false)) await skipTour.click();
@@ -47,7 +50,14 @@ try {
   await page.waitForTimeout(4000);
   await page.screenshot({ path: join(shots, '03-progress.png') });
   const tGen = Date.now();
-  await page.waitForSelector('article.card', { timeout: 15 * 60 * 1000 });
+  const genJob = page.url().split('/').pop();
+  // stop at the first failed job state instead of waiting the full timeout for candidates that will never appear
+  for (const deadline = Date.now() + 15 * 60 * 1000; !(await page.locator('article.card').count());) {
+    const job = (await api(`/api/jobs/${genJob}`)).body;
+    if (job?.status === 'failed' || job?.status === 'cancelled') throw new Error(`generation ${job.status}: ${job.error_code} ${job.message}`);
+    if (Date.now() > deadline) throw new Error('candidates did not appear within 15 min');
+    await page.waitForTimeout(2000);
+  }
   const genSecs = (Date.now() - tGen) / 1000;
   check(true, `candidates ready in ${genSecs.toFixed(0)} s after clicking generate`);
   const cards = await page.locator('article.card').count();
