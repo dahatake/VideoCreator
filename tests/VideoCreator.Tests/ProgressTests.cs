@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net.Sockets;
 using VideoCreator.App;
 using VideoCreator.Asr;
 using VideoCreator.Media;
@@ -41,6 +42,60 @@ public sealed class ProgressTests : IDisposable
     {
         public string Name => "fixture";
         public Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct) => Task.FromResult(Fixtures.Talk);
+    }
+
+    sealed class UnreachableSpeechHandler : HttpMessageHandler
+    {
+        public int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            throw new HttpRequestException("raw network error", new SocketException((int)SocketError.HostNotFound));
+        }
+    }
+
+    [Fact]
+    public async Task Speech_connection_failure_after_retries_surfaces_as_provider_error_in_the_job()
+    {
+        Directory.CreateDirectory(_dir);
+        using var store = new Store(Path.Combine(Data, "db.sqlite"));
+        var project = new Project { Id = "p_asr", Name = "asr", Directory = Path.Combine(_dir, "project") };
+        var asset = new SourceAsset { Id = "a_asr", ProjectId = project.Id, Path = Path.Combine(_dir, "source.mp4"), Sha256 = new string('a', 64), Media = Fixtures.Landscape(30) };
+        store.Put(Kinds.Project, project.Id, null, project);
+        store.Put(Kinds.Asset, asset.Id, project.Id, asset);
+        store.Put(Kinds.Rights, "rights", project.Id, new RightsConfirmation { Id = "rights", ProjectId = project.Id, AssetId = asset.Id });
+        var cache = Path.Combine(Data, "cache", asset.Sha256[..16]);
+        Directory.CreateDirectory(cache);
+        await File.WriteAllBytesAsync(Path.Combine(cache, "proxy.mp4"), [0], Ct);
+        await File.WriteAllBytesAsync(Path.Combine(cache, "audio16k.flac"), [0], Ct);
+        using var handler = new UnreachableSpeechHandler();
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://speech.invalid/"), "secret", http);
+        var events = new JobEvents();
+        var q = new JobQueue(store, () => new PipelineRunner(new PipelineServices { Ff = Ff, Store = store, Presets = Fixtures.Presets, DataDir = Data, Asr = asr }), events, NullLogger<JobQueue>.Instance);
+        var job = new Job { Id = "job_asr", ProjectId = project.Id, PresetIds = ["P4"] };
+        var (subscriber, updates) = events.Subscribe(job.Id);
+        await q.StartAsync(Ct);
+        try
+        {
+            q.EnqueueJob(job);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            JobUpdate update;
+            do { update = await updates.ReadAsync(timeout.Token); } while (update.Stage is not (JobStatus.Failed or JobStatus.Cancelled or JobStatus.Ready));
+            var result = store.Get<Job>(Kinds.Job, job.Id)!;
+            Assert.Equal(JobStatus.Failed, result.Status);
+            Assert.Equal("E-ASR-PROVIDER", result.ErrorCode);
+            Assert.Contains("ネットワーク", result.Message);
+            Assert.DoesNotContain("raw network error", result.Message);
+            Assert.Equal(result.Message, update.Message);
+            Assert.Equal(4, handler.Calls);
+        }
+        finally
+        {
+            events.Unsubscribe(job.Id, subscriber);
+            await q.StopAsync(CancellationToken.None);
+        }
     }
 
     async Task<(Store Store, Project Project, SourceAsset Asset)> SetupAsync()

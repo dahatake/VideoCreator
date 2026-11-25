@@ -33,7 +33,7 @@
 | `E-RIGHTS-REQUIRED` | Confirm every source's rights; separately confirm BGM/registered clips/images |
 | `E-ING-UNSUPPORTED` | Check path, real format, video track, 10-second–3-hour duration; renaming an extension does not fix encoding |
 | Receive/copy failure | Check temporary/project free space; consider full-path reference for large sources |
-| `E-ASR-PROVIDER`, 401 | Check own endpoint, Internet, `az login` into resource tenant |
+| `E-ASR-PROVIDER`, transcription connection failure or timeout | Check the endpoint under **Settings → AI connections** and run the connection test. Check the Internet, proxy and firewall, then create the candidates again after service is restored. For 401, also check `az login` to the resource's tenant |
 | Speech/OpenAI 403 | Ask administrator about user roles/network restrictions; management-plane access is not data-processing access |
 | Connection-test details include `SSL connection could not be established` | Update and restart the app. Azure traffic uses TLS 1.2 for environments that drop TLS 1.3 handshakes. If it persists, ask your administrator to check proxies, certificates and firewalls; do not disable certificate validation |
 | Signed into Azure but authentication fails | Set `AZURE_TOKEN_CREDENTIALS=AzureCliCredential` in launch environment if another account takes precedence |

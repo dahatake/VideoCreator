@@ -51,7 +51,7 @@ public sealed class PipelineServices
     public QaEngine Qa => new(Ff) { Faces = Faces };
 }
 
-public sealed class PipelineException(string code, string message) : Exception(message)
+public sealed class PipelineException(string code, string message, Exception? innerException = null) : Exception(message, innerException)
 {
     public string Code { get; } = code;
 }
@@ -397,7 +397,7 @@ public sealed class PipelineRunner(PipelineServices s)
             : s.Asr.Name == AzureFastTranscriber.MaiName ? "書き起こしています（MAI-Transcribe-2）" : "書き起こしています（Azure AI Speech）");
         Transcript tr;
         try { tr = await TranscriptAsync(main, audio, ct); }
-        catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message); }
+        catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message, ex); }
         if (tr.Words.Count == 0 && main.Media.AudioChannels > 0 && s.Asr != null) warnings.Add("発話が検出されませんでした");
         if (s.Asr?.Name == AzureFastTranscriber.MaiName && tr.Provider == AzureFastTranscriber.StandardName)
             warnings.Add("Speech の接続先が MAI-Transcribe-2 に対応していない（リージョン外か、録音が 2 時間・250 MB 以上）ため、標準モデルで書き起こしました");
