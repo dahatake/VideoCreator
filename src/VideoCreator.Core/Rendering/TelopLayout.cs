@@ -32,7 +32,8 @@ public static class TelopLayout
             var band = AssWriter.Band(t.Type, p, plan.Canvas);
             double height = fit * 1.5 + 2 * outline + 12;
             double top = band?.Top ?? (t.Type == TelopType.Sfx ? geo.SfxY - height / 2 : geo.HeadlineMarginV);
-            var original = new Rect(geo.MarginL, top, w - geo.MarginR, band?.Bottom ?? top + height);
+            double LeftEdge(int px) => p.Telop.IsVariety && t.Type == TelopType.Tsukkomi ? NarrowLeft(t, px, outline, scaleX, w, geo, plan.Language) : geo.MarginL;
+            var original = new Rect(LeftEdge(fit), top, w - geo.MarginR, band?.Bottom ?? top + height);
             if (t.Type == TelopType.Caption && p.Telop.Caption.AvoidFaces && plan.TelopFaces != null)
             {
                 result[t.Id] = CaptionSlot(plan, p, t, original, fit);
@@ -81,8 +82,8 @@ public static class TelopLayout
                 var candidates = new[] { Math.Clamp(top, min, Math.Max(min, max)), min, max }
                     .Concat(blocked.SelectMany(b => new[] { b.Bottom + 8, b.Top - height - 8 }))
                     .Where(y => y >= min && y <= max).Distinct().OrderBy(y => Math.Abs(y - top));
-                double hgt = height;
-                bounds = candidates.Select(y => new Rect(geo.MarginL, y, w - geo.MarginR, y + hgt))
+                double hgt = height, left = LeftEdge(fit);
+                bounds = candidates.Select(y => new Rect(left, y, w - geo.MarginR, y + hgt))
                     .FirstOrDefault(b => blocked.All(o => !b.Intersects(o)));
                 if (bounds != null) break;
             }
@@ -95,6 +96,18 @@ public static class TelopLayout
     /// <summary>Shorts look: sizes tried in turn when a telop has no free place at full size; never below <see cref="MinShrunkPx"/>.</summary>
     static readonly double[] ShrinkSteps = [1.0, 0.8, 0.65, 0.5];
     public const int MinShrunkPx = 48;
+
+    /// <summary>
+    /// Variety narration (tsukkomi) sits at the right edge of the safe zone (§25: 84–97 % in the right third of the frame), only as wide as its
+    /// box: the left edge of that box, with the pop overshoot reserved like the full-width telops.
+    /// </summary>
+    static double NarrowLeft(Telop t, int fontPx, int outline, int scaleX, int w, AssWriter.Geometry geo, string language)
+    {
+        double width = Planning.JapaneseText.DisplayWidth(t.Text);
+        if (language != "ja-JP") width = Math.Max(width, t.Text.Length * 0.6);
+        double box = width * fontPx * AssWriter.GlyphRatio * scaleX / 100.0 * PopScale + 2 * outline;
+        return Math.Max(geo.MarginL, w - geo.MarginR - box);
+    }
 
     /// <summary>
     /// Shorts title bar: it stays at its fixed place at the top (an editor never moves it), and is left out only in the cuts where a face —

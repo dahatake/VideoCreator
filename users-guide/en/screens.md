@@ -120,7 +120,7 @@ Series supports speech-based P1–P4/P6/P7/P9/P10, not P5/P8. Specify one split 
 | BGM | Pattern default / none / automatic per scene (own registered tracks, else three built-ins) / whole-video track. All duck during speech; pattern target, normally ≥14 LU below voice |
 | SFX | Pop/boom effects on/off |
 | Let AI suggest reactions | P3 only; read/approve before export |
-| Reaction presentation | Appears when enabled: Auto default (cards only at speech boundaries, overlays elsewhere; reasons in notes) / overlay / card (freeze 2–3 s, image/text/BGM) |
+| Reaction presentation | Appears when enabled: Auto default (cards only at speech boundaries, overlays elsewhere; reasons in notes) / overlay / card (freeze 2–3 s, image/text/BGM). In P3 a card is a silent pause (off-white, dark text, no BGM or effect) and an overlay is a red box at the lower right from 0.6 s after the line for 2.4 s |
 | Mask words | Japanese/ordinary comma separated; `●` text, beep audio. Does not anonymize source/transcript |
 | Own BGM | Batch audio selection, rights registration scoped to project; enables scene auto. Shows loudness/tempo/energy (calm/normal/lively)/usable region excluding leading/trailing silence. Remove unregisters unless plan references it |
 | Use app-shared BGM in this project | On by default; includes shared tracks in automatic scene selection and whole-video choices. Off excludes them from future generation, without changing existing plans |

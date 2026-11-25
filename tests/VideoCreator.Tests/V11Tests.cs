@@ -335,13 +335,93 @@ public class V11Tests : IAsyncLifetime
         Assert.NotNull(TsukkomiService.Validate("ディズニーかよ！", "t2", caps, src));   // invented name (rejected by the grounding check or the katakana rule)
     }
 
+    [Fact] // §25: the editor's narration — deadpan ending, onset on the reaction cut, density from the measured references
+    public void Tsukkomi_follows_the_measured_narration_timing_and_register()
+    {
+        Assert.Equal("いや多すぎ。", TsukkomiService.Deadpan("いや多すぎ！！"));
+        Assert.Equal("全員迷子。", TsukkomiService.Deadpan("全員迷子。!"));
+        Assert.Equal("どの立場？", TsukkomiService.Deadpan("どの立場？！"));
+        Assert.Equal("マジで!?", TsukkomiService.Deadpan("マジで!?"));
+        Assert.Equal("Wow!", TsukkomiService.Deadpan("Wow!", "en-US"));
+        // the first cut 0.2–1.5 s after the line wins; otherwise 0.6 s after it; near the end it falls back so it can still be read
+        Assert.Equal(11.1, TsukkomiService.Onset(10, [10.1, 11.1, 11.4], 30), 3);
+        Assert.Equal(10.6, TsukkomiService.Onset(10, [10.1, 12.0], 30), 3);
+        Assert.Equal(29.0, TsukkomiService.Onset(29.5, [], 30), 3);
+        Assert.Equal((1, 3, 4, 6, 6), (TsukkomiService.MaxItems(5), TsukkomiService.MaxItems(25), TsukkomiService.MaxItems(30), TsukkomiService.MaxItems(60), TsukkomiService.MaxItems(180)));
+    }
+
+    [Fact] // §25: the editor's comment never pushes the speaker's own emphasis off the screen
+    public async Task Tsukkomi_waits_for_the_speakers_emphasis_instead_of_dropping_it()
+    {
+        var p = Fixtures.Presets["P3"];
+        var assets = new List<SourceAsset> { Asset("a1", "x.mp4", 125, AssetRole.Main) };
+        var cand = new Candidate { Id = "c1", Segments = [new Interval(8.8, 40)], HookText = "1万円で帰れない", Headline = "100円だけ", EmphasisWords = ["1万円", "100円のものだけ"] };
+        async Task<EditPlan> Build(bool on, int index)
+        {
+            var job = new Job { Id = "j", ProjectId = "p", PresetIds = ["P3"], Options = new JobOptions { Tsukkomi = on, TsukkomiStyle = "telop" } };
+            var llm = new JsonLlm("""{"items":[{"caption_id":"CAP","text":"全員迷子。"}]}""") { CaptionFromPrompt = true, CaptionIndex = index };
+            return (await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, llm), Ct)).Plan;
+        }
+        static List<string> Emph(EditPlan plan) => plan.Telops.Where(t => t.Type == TelopType.Emphasis).Select(t => $"{t.Text}@{t.Start:0.00}-{t.End:0.00}").ToList();
+        var without = await Build(false, 0);
+        // every caption as the reacted-to line: wherever the comment lands (or is left out with a note), the emphasis telops stay as they were
+        int shown = 0;
+        for (int i = 0; i < 12; i++)
+        {
+            var with = await Build(true, i);
+            shown += with.Telops.Count(t => t.Type == TelopType.Tsukkomi);
+            Assert.Equal(Emph(without), Emph(with));
+        }
+        Assert.True(shown >= 6, $"only {shown} of 12 comments placed");
+    }
+
+    [Fact] // §25: P3's cards are the silent pause (no music, no hit, deadpan text, one scene card per short); other templates keep the pop card
+    public async Task P3_cards_are_silent_pauses_and_other_presets_keep_the_pop_card()
+    {
+        var assets = new List<SourceAsset> { Asset("a1", "x.mp4", 125, AssetRole.Main) };
+        var cand = new Candidate { Id = "c1", Segments = [new Interval(8.8, 22), new Interval(40, 52), new Interval(74, 90)], HookText = "1万円で帰れない", Headline = "100円だけ" };
+        async Task<EditPlan> Build(string id)
+        {
+            var p = Fixtures.Presets[id];
+            var job = new Job { Id = "j", ProjectId = "p", PresetIds = [id], Options = new JobOptions { SceneCards = true } };
+            return (await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, null), Ct)).Plan;
+        }
+        var p3 = await Build("P3");
+        var card = Assert.Single(p3.Inserts, i => i.Kind == "card");                                  // scene_cards.max = 1
+        Assert.True(card.IsPause);
+        Assert.Null(card.Bgm); Assert.Null(card.Sfx);
+        Assert.DoesNotContain("！", card.Text);
+        Assert.EndsWith("。", card.Text);
+        var p4 = await Build("P4");
+        Assert.True(p4.Inserts.Count(i => i.Kind == "card") >= 2);
+        Assert.All(p4.Inserts.Where(i => i.Kind == "card"), i => { Assert.False(i.IsPause); Assert.Equal("upbeat", i.Bgm); Assert.Equal(InsertPlanner.CardSfx, i.Sfx); });
+    }
+
+    [Fact]
+    public async Task Tsukkomi_closer_than_the_minimum_gap_is_dropped_with_a_note()
+    {
+        var p = Fixtures.Presets["P3"];
+        var assets = new List<SourceAsset> { Asset("a1", "x.mp4", 125, AssetRole.Main) };
+        var cand = new Candidate { Id = "c1", Segments = [new Interval(8.8, 40)], HookText = "1万円で帰れない", Headline = "100円だけ" };
+        var job = new Job { Id = "j", ProjectId = "p", PresetIds = ["P3"], Options = new JobOptions { Tsukkomi = true, TsukkomiStyle = "telop" } };
+        // two neighbouring captions (the stub names them c_a/c_b from the prompt): the second narration would come < 5 s after the first
+        var tsu = new JsonLlm("""{"items":[{"caption_id":"CAP","text":"全員迷子。"},{"caption_id":"CAP2","text":"話が進まない。"}]}""") { CaptionFromPrompt = true };
+        var (plan, notes) = await PlanBuilder.BuildAsync(new PlanRequest(cand, Tr, Fixtures.Signals(Tr), p, assets, assets[0], "p", job, new Dictionary<string, List<FaceSample>>(), null, tsu), Ct);
+        var shown = plan.Telops.Where(x => x.Type == TelopType.Tsukkomi).OrderBy(x => x.Start).ToList();
+        int dropped = notes.Count(n => n.Contains("秒以内のため表示しません", StringComparison.Ordinal));
+        var caps = plan.Telops.Where(x => x.Type == TelopType.Caption).OrderBy(x => x.Start).ToList();
+        Assert.True(caps[4].End - caps[3].End < TsukkomiService.MinGapSec, "fixture: the two captions must be close");
+        Assert.Equal((1, 1), (shown.Count, dropped));
+        Assert.Equal("全員迷子。", shown[0].Text);
+    }
+
     [Fact]
     public async Task Tsukkomi_generation_keeps_only_valid_items_and_marks_them_unapproved()
     {
         var caps = Enumerable.Range(1, 4).Select(i => new Telop { Id = $"t{i}", Text = i == 2 ? "100個買います" : "普通の字幕" + i }).ToList();
         var llm = new JsonLlm("""{"items":[{"caption_id":"t2","text":"いや多すぎ！"},{"caption_id":"t3","text":"バカなの？"},{"caption_id":"t4","text":"長すぎるツッコミですよこれは"}]}""");
         var items = await TsukkomiService.GenerateAsync(llm, caps, string.Concat(caps.Select(c => c.Text)), Ct);
-        Assert.Equal([("t2", "いや多すぎ！")], items);
+        Assert.Equal([("t2", "いや多すぎ。")], items);   // the editor's narration does not shout (§25)
 
         var p = Fixtures.Presets["P3"];
         var assets = new List<SourceAsset> { Asset("a1", "x.mp4", 125, AssetRole.Main) };
@@ -357,8 +437,15 @@ public class V11Tests : IAsyncLifetime
             if (style == "telop") Assert.Empty(cards);
             if (style == "card") Assert.Empty(telops);
             if (style == "auto") Assert.Contains(notes, n => n.StartsWith("ツッコミ「そこ？」は", StringComparison.Ordinal));
-            foreach (var t in cards) { Assert.InRange(t.Duration, 2, 3); Assert.Equal("upbeat", t.Bgm); Assert.False(t.Approved); }
-            foreach (var t in telops) { Assert.Equal("Tsukkomi", t.Style); Assert.False(t.Approved); }
+            foreach (var t in cards) { Assert.InRange(t.Duration, 2, 3); Assert.True(t.IsPause); Assert.Null(t.Bgm); Assert.Null(t.Sfx); Assert.False(t.Approved); }   // P3: the silent pause card (§25)
+            foreach (var t in telops)
+            {
+                Assert.Equal("Tsukkomi", t.Style); Assert.False(t.Approved);
+                // §25: shown 2.4 s, starting 0.2–1.5 s after the end of a caption (on a cut, else 0.6 s later; up to 2.8 s when it waits for an emphasis)
+                Assert.Equal(TsukkomiService.DisplaySec, t.End - t.Start, 3);
+                Assert.Contains(plan.Telops, c => c.Type == TelopType.Caption && t.Start - c.End is >= TsukkomiService.CutSnapMinSec - 1e-6 and <= TsukkomiService.MaxDelaySec + 1e-6);
+                Assert.DoesNotContain(plan.Telops, e => e.Type == TelopType.Emphasis && e.Start >= t.Start && e.Start - t.Start < 0.8);
+            }
             Assert.Contains(QaEngine.PlanChecks(new QaContext(plan, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Fail);   // export blocked until approved
             var approved = PlanEditor.Apply(plan, [new PlanOp("approve_all_tsukkomi")]);
             Assert.Contains(QaEngine.PlanChecks(new QaContext(approved, p, Tr, ["a1"], [])), q => q.CheckId == "H-08" && q.Status == QaStatus.Pass);
@@ -403,14 +490,17 @@ public class V11Tests : IAsyncLifetime
     sealed class JsonLlm(string json) : IHighlightSelector
     {
         public bool CaptionFromPrompt { get; init; }
+        /// <summary>The caption CAP names (CAP2 is the next one).</summary>
+        public int CaptionIndex { get; init; } = 3;
         public string Name => "fake";
         public string Model => "fake";
         public Task<LlmResult> SelectAsync(string system, string user, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct)
         {
             if (!CaptionFromPrompt) return Task.FromResult(json);
-            var id = Regex.Matches(user, @"^(t\d+):", RegexOptions.Multiline).Skip(3).First().Groups[1].Value;   // a caption in the middle of the clip
-            return Task.FromResult(json.Replace("CAP", id));
+            var ids = Regex.Matches(user, @"^(t\d+):", RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
+            // CAP = a caption in the middle of the clip, CAP2 = the one after it
+            return Task.FromResult(json.Replace("CAP2", ids[CaptionIndex + 1]).Replace("CAP", ids[CaptionIndex]));
         }
     }
 }

@@ -230,7 +230,7 @@ public static class InsertPlanner
     static bool IsBody(Clip c) => c.Role is "body" or "reaction" or "wide";
 
     /// <summary>Clip boundaries where the scene changes: series → chapter starts (snapped to the nearest cut); shorts → source jumps.</summary>
-    public static List<Boundary> SceneChanges(IReadOnlyList<Clip> clips, SeriesInfo? series)
+    public static List<Boundary> SceneChanges(IReadOnlyList<Clip> clips, SeriesInfo? series, int maxShort = MaxShortCards)
     {
         var starts = new double[clips.Count + 1];
         for (int i = 0; i < clips.Count; i++) starts[i + 1] = starts[i] + clips[i].Length;
@@ -261,7 +261,7 @@ public static class InsertPlanner
             if (kept.Count > 0 && b.At - kept[^1].At < CardMinGapSec) continue;
             kept.Add(b);
         }
-        return series == null ? kept.Take(MaxShortCards).ToList() : kept;
+        return series == null ? kept.Take(maxShort).ToList() : kept;
     }
 
     /// <summary>
@@ -351,7 +351,7 @@ public static class InsertPlanner
         if (count > 0) notes.Add($"ツッコミを {count} 枚の停止カードとして提案しました（承認するまで書き出せません）");
     }
 
-    public static (List<Clip> Clips, List<Insert> Inserts) Plan(List<Clip> clips, JobOptions o, BrandKit? kit, Canvas canvas, double targetLufs, SeriesInfo? series, List<string> notes, string language = "ja-JP")
+    public static (List<Clip> Clips, List<Insert> Inserts) Plan(List<Clip> clips, JobOptions o, BrandKit? kit, Canvas canvas, double targetLufs, SeriesInfo? series, List<string> notes, string language = "ja-JP", int maxSceneCards = MaxShortCards)
     {
         var inserts = new List<Insert>();
         if (clips.Count == 0) return (clips, inserts);
@@ -382,7 +382,7 @@ public static class InsertPlanner
         }
         if (o.SceneCards)
         {
-            var bounds = SceneChanges(clips, series);
+            var bounds = SceneChanges(clips, series, maxSceneCards);
             var images = kit is { RightsConfirmed: true } ? kit.Files.Where(f => f.Kind == "card").ToList() : [];
             double sec = CardDuration(kit, canvas);
             int k = 0, faded = 0;
@@ -433,10 +433,32 @@ public static class InsertPlanner
 """;
 
     /// <summary>
+    /// The pause card's wording, from the 18 white cards measured in docs/IMPLEMENTATION.md §25: the staff's deadpan line in a silent 2.5 s pause —
+    /// 14 end in 「。」, 4 in 「?」, none in 「！」; 3–13 characters; most react to the scene that just ended, a few ask about the next topic.
+    /// </summary>
+    const string PauseCardSystem = """
+あなたは日本のバラエティ系 YouTube の編集者です。場面の切れ目に、映像も音も止めた無音の白いカードを2.5秒挟みます。その「間」で笑わせます。
+カードの文字は出演者のセリフではなく、編集スタッフが冷静に入れる一言です。叫ばず、少し引いた目線で言い当てます。
+各カードについて直前の場面と次の場面の字幕を読み、次のどれかを1つ書きます。直前の場面への一言を優先します:
+- 直前の場面への短い感想・ツッコミ（例の型:「〜すぎる。」「そりゃそう。」「〜な。」「大丈夫？」）
+- 直前の場面の人物や状況への名付け（例の型:「〜派〇〇。」「〜問題。」「〇〇満点。」）
+- 直前に反応する所がないときだけ、次の場面の話題についての素朴な問い（例の型:「〜ってあるの？」）。次の場面の字幕に出てくる話題だけを使う
+規則:
+- 3〜13字（14字以内）。「！」は使わない。文末は「。」、問いのときだけ「？」
+- card_id は与えられた ID をそのまま使う
+- 字幕の言葉をそのまま繰り返さない（発言への反応を書く）
+- 次の場面の字幕に書かれていない展開や結果を予告しない（「まさかの〜」「落とし穴」などの煽りを書かない）
+- カード同士、また「使用済み」の文と同じ文を書かない
+- 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない
+- 人や集団を傷つける、侮辱する、差別的な内容は書かない。ツッコミの対象は「発言の内容」や「状況」にする
+- 良い一言が思いつかないカードは返さなくてよい
+""";
+
+    /// <summary>
     /// AI viewer-voice text for scene-change cards, with or without an image. Filtered in code like tsukkomi telops (plus no repeats of other cards or
     /// tsukkomi) and created unapproved (H-08). Cards the AI skips keep their fixed phrase. Returns how many cards got AI text.
     /// </summary>
-    public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct, string language = "ja-JP")
+    public static async Task<int> AiTextAsync(IHighlightSelector llm, List<Insert> inserts, IReadOnlyList<Telop> telops, string sourceText, CancellationToken ct, string language = "ja-JP", bool pause = false)
     {
         var cards = inserts.Where(i => i.Kind == "card" && i.TextSource is not ("ai" or "user")).ToList();
         if (cards.Count == 0) return 0;
@@ -453,13 +475,15 @@ public static class InsertPlanner
         }
         if (blocks.Count == 0) return 0;
         if (used.Count > 0) blocks.Add("使用済み: " + string.Join(" / ", used));
-        var json = await llm.CompleteJsonAsync(CardSystem + VideoLanguages.Prompt(language), string.Join("\n", blocks), "scene_cards", CardSchema, ct);
+        var json = await llm.CompleteJsonAsync((pause ? PauseCardSystem : CardSystem) + VideoLanguages.Prompt(language), string.Join("\n", blocks), "scene_cards", CardSchema, ct);
         using var doc = JsonDocument.Parse(json);
         var seen = used.Select(TsukkomiService.Bare).ToHashSet();
         int n = 0;
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
         {
-            var id = it.GetProperty("card_id").GetString() ?? ""; var text = CaptionText.Normalize((it.GetProperty("text").GetString() ?? "").Trim(), language);
+            var id = it.GetProperty("card_id").GetString() ?? ""; var raw = (it.GetProperty("text").GetString() ?? "").Trim(); var text = CaptionText.Normalize(raw, language);
+            // the pause card's line ends in 「。」 (15 of 18 measured); caption normalisation would drop it
+            if (pause) text = TsukkomiService.Deadpan(language == "ja-JP" && raw.EndsWith('。') && !text.EndsWith('。') ? text + "。" : text, language);
             int idx = inserts.FindIndex(i => i.Id == id && cards.Contains(i));
             if (idx < 0 || inserts[idx].TextSource == "ai" || TsukkomiService.ValidateText(text, sourceText) != null || !seen.Add(TsukkomiService.Bare(text))) continue;
             inserts[idx] = inserts[idx] with { Text = text, TextSource = "ai", Approved = false };

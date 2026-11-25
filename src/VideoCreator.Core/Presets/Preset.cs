@@ -101,6 +101,16 @@ public sealed record PresetAudio
 
 public sealed record PresetLoop(bool Enabled = false, bool Required = false);
 
+/// <summary>
+/// Scene-change and tsukkomi pause cards. Look "pop" (default): the original card (frozen scene or panel, big yellow text, card music and a hit).
+/// "pause": the variety editor's silent pause measured in docs/IMPLEMENTATION.md §25 — off-white, dark static text about the caption's size,
+/// silence, deadpan wording. Max: scene-change cards in a short (non-series) edit.
+/// </summary>
+public sealed record PresetSceneCards(string Look = "pop", int Max = 3)
+{
+    public bool IsPause => Look == "pause";
+}
+
 public sealed record PresetCard(string Opening, string Tempo, string Telop, string Sound);
 
 public sealed record PresetExample(string Title, string Url);
@@ -120,6 +130,7 @@ public sealed record Preset
     public required PresetAudio Audio { get; init; }
     public required PresetLoop Loop { get; init; }
     public PresetCard? Card { get; init; }
+    public PresetSceneCards SceneCards { get; init; } = new();
     public List<PresetExample> Examples { get; init; } = [];
     public List<string> IncompatibleWith { get; init; } = [];
     public string SelectionRules { get; init; } = "";
@@ -189,6 +200,8 @@ public static class PresetStore
         Req(!c.AllowOutsideSafe || c.AvoidFaces, "caption.allow_outside_safe needs caption.avoid_faces");
         Req(p.Screen is null || p.Screen.MainMinScale is >= 0.5 and <= 1, "screen.main_min_scale 0.5..1");
         Req(p.Planner is "speech" or "switch" or "speed" or "beat" or "screen" or "pip", "planner must be speech|switch|speed|beat|screen|pip");
+        Req(p.SceneCards.Look is "pop" or "pause", "scene_cards.look must be pop|pause");
+        Req(p.SceneCards.Max is >= 0 and <= 3, "scene_cards.max 0..3");
         Req(p.Reframe is "auto" or "blur", "reframe must be auto|blur");
         Req(p.Audio.Sfx is "none" or "light" or "heavy", "audio.sfx must be none|light|heavy");
         Req(p.Audio.BgmDb is >= -40 and <= -6, "audio.bgm_db -40..-6");

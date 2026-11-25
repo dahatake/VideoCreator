@@ -681,6 +681,13 @@ public sealed record Insert
     public string? Sfx { get; init; }
     /// <summary>Card-only music, independent of the body's BGM choice. Null preserves older plans' audio.</summary>
     public string? Bgm { get; init; }
+    /// <summary>
+    /// Card look. Null = the pop card (frozen scene or panel, big yellow text, card music and a hit). "pause" = the variety editor's silent pause
+    /// (docs/IMPLEMENTATION.md §25): an off-white card with dark static text, no music, no effect, the body's music muted.
+    /// </summary>
+    public string? Look { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPause => Kind == "card" && Look == "pause";
 }
 
 // ---- Brand kit: the channel's opening / closing videos and card images (registered once, used by every project) ----

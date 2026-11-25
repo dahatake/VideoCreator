@@ -116,7 +116,7 @@ public static class PlanBuilder
         var mapped = TelopBuilder.MapWords(clips, telopTr);
         if (p.HasTelop("counter")) telops.AddRange(TelopExtras.Counters(mapped, telops, total, ref n));
         if (p.HasTelop("sfx")) telops.AddRange(TelopExtras.Onomatopoeia(clips, bursts, telops, total, ref n, tr.Language));
-        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes, tr.Language);
+        var (packed, inserts) = InsertPlanner.Plan(clips.ToList(), r.Job.Options, r.Kit, canvas, p.Audio.Loudnorm.I, series, notes, tr.Language, p.SceneCards.Max);
         if (p.HasTelop("tsukkomi") && r.Job.Options.Tsukkomi)
         {
             if (r.Llm == null) notes.Add("ツッコミテロップには AI が必要です（現在は無効）");
@@ -126,20 +126,36 @@ public static class PlanBuilder
                 {
                     var caps = telops.Where(t => t.Type == TelopType.Caption).OrderBy(t => t.Start).ToList();
                     var src = CandidateValidator.TextOf(telopTr, clips.Select(c => new Interval(c.MasterIn, c.MasterOut)));
-                    var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct, tr.Language);
+                    var items = await TsukkomiService.GenerateAsync(r.Llm, caps, src, ct, tr.Language, TsukkomiService.MaxItems(total));
                     var style = r.Job.Options.TsukkomiStyle;
                     var picks = TsukkomiPlacement.Choose(style, items.Select(x =>
                     {
                         int i = caps.FindIndex(c => c.Id == x.CaptionId);
                         return (caps[i], i + 1 < caps.Count ? caps[i + 1] : null, x.Text);
                     }).ToList(), total, inserts, InsertPlanner.CardDuration(r.Kit, canvas));
+                    // the editor's narration comes in on the reaction cut after the line, else 0.6 s after it (§25)
+                    var cuts = new List<double>(); double cutAt = 0;
+                    foreach (var c in clips.SkipLast(1)) cuts.Add(cutAt += c.Length);
                     foreach (var pick in picks)
                     {
                         if (pick.Card) { tsukkomi.Add((pick.At, pick.Text)); }
                         else
                         {
-                            if (telops.Any(t => t.Type == TelopType.Tsukkomi && Math.Abs(t.Start - pick.At) < 1.5)) continue;
-                            telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Tsukkomi, Start = pick.At, End = Math.Round(Math.Min(total, pick.At + 1.4), 3), Text = pick.Text, Style = "Tsukkomi", Animation = "pop", Approved = false });
+                            double at = TsukkomiService.Onset(pick.At, cuts, total);
+                            // the speaker's own emphasis is never pushed off by the comment: the comment waits until it has been read (§25)
+                            Telop? Blocking(double s) => telops.Where(t => t.Type == TelopType.Emphasis && t.Start - 0.8 < s && s < t.End).OrderBy(t => t.End).LastOrDefault();
+                            while (Blocking(at) is { } emph && emph.End - pick.At <= TsukkomiService.MaxDelaySec && emph.End <= total - 1.0) at = Math.Round(emph.End, 3);
+                            if (Blocking(at) is { } still)
+                            {
+                                notes.Add($"ツッコミ「{pick.Text}」は強調「{still.Text}」と重なり、発言から {TsukkomiService.MaxDelaySec:0.0} 秒以内に出せないため表示しません");
+                                continue;
+                            }
+                            if (telops.FirstOrDefault(t => t.Type == TelopType.Tsukkomi && Math.Abs(t.Start - at) < TsukkomiService.MinGapSec) is { } near)
+                            {
+                                notes.Add($"ツッコミ「{pick.Text}」は「{near.Text}」から {TsukkomiService.MinGapSec:0} 秒以内のため表示しません");
+                                continue;
+                            }
+                            telops.Add(new Telop { Id = $"t{++n}", Type = TelopType.Tsukkomi, Start = at, End = Math.Round(Math.Min(total, at + TsukkomiService.DisplaySec), 3), Text = pick.Text, Style = "Tsukkomi", Animation = "pop", Approved = false });
                         }
                         if (style == "auto") notes.Add($"ツッコミ「{pick.Text}」は{(pick.Card ? "停止カード" : "重ねテロップ")}にしました: {pick.Reason}");
                     }
@@ -168,15 +184,21 @@ public static class PlanBuilder
             SfxEnabled = r.Job.Options.Sfx, Sfx = sfx, BgmMutes = hasMusic ? mutes : [], Bleeps = bleeps,
         };
         InsertPlanner.AddTsukkomi(packed, inserts, tsukkomi, r.Kit, canvas, notes);
-        inserts = inserts.Select(i => i.Kind == "card" ? i with { Bgm = "upbeat", GainDb = p.Audio.BgmDb } : i).ToList();
+        bool pause = p.SceneCards.IsPause;
+        // pause look (§25): the measured cards are silent — no card music, no hit, the body's music muted — and never shout
+        inserts = inserts.Select(i => i.Kind != "card" ? i
+            : pause ? i with { Look = "pause", Sfx = null, Bgm = null, Text = i.TextSource == "fixed" ? TsukkomiService.Deadpan(i.Text, tr.Language) : i.Text }
+            : i with { Bgm = "upbeat", GainDb = p.Audio.BgmDb }).ToList();
+        if (pause && inserts.Any(i => i.IsPause)) notes.Add("カードは無音の「間」にしました（白い背景・静止した文字・BGM と効果音なし）");
         if (r.Llm != null && inserts.Any(i => i.Kind == "card" && i.TextSource != "ai"))
         {
             try
             {
                 var src = CandidateValidator.TextOf(telopTr, packed.Select(c => new Interval(c.MasterIn, c.MasterOut)));
-                int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct, tr.Language);
+                int ai = await InsertPlanner.AiTextAsync(r.Llm, inserts, telops, src, ct, tr.Language, pause);
                 int rest = inserts.Count(i => i.Kind == "card" && i.TextSource == "fixed");
-                if (ai > 0) notes.Add($"場面転換カード {ai} 枚の文字を、視聴者の代弁として AI が提案しました（承認するまで書き出せません）");
+                if (ai > 0) notes.Add(pause ? $"場面転換カード {ai} 枚の文字を、編集者のひとこととして AI が提案しました（承認するまで書き出せません）"
+                    : $"場面転換カード {ai} 枚の文字を、視聴者の代弁として AI が提案しました（承認するまで書き出せません）");
                 if (rest > 0) notes.Add($"場面転換カード {rest} 枚は AI の文が使えなかったため、定型の文にしました");
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("場面転換カードのツッコミの生成に失敗しました（定型の文を使います）: " + ex.Message); }

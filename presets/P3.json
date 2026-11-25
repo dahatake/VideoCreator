@@ -1,6 +1,6 @@
 {
   "id": "P3",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "name": "バラエティ・テロップ",
   "genre": "エンタメ（日本）",
   "available": true,
@@ -65,14 +65,18 @@
     "required": false,
     "enabled": false
   },
+  "scene_cards": {
+    "look": "pause",
+    "max": 1
+  },
   "incompatible_with": [
     "P9"
   ],
   "card": {
     "opening": "笑い・リアクションの瞬間から",
-    "tempo": "1〜2.5秒、ツッコミで間を作る",
-    "telop": "ツッコミ・擬音・強調・カウンターをフル活用",
-    "sound": "効果音多め"
+    "tempo": "1〜2.5秒、発言の0.6秒後（リアクションのカット）に編集者のひとことで間を作る",
+    "telop": "右下の赤い箱に編集者のひとこと（「。」で終わる短い感想・名付け、2.4秒）、擬音・強調・カウンター",
+    "sound": "効果音多め。カードは無音の「間」（2.5秒、BGM・効果音なし）"
   },
   "examples": [
     {
@@ -82,6 +86,14 @@
     {
       "title": "東海オンエア: 即帰宅の京都旅",
       "url": "https://www.youtube.com/watch?v=SJdhLwEKDc4"
+    },
+    {
+      "title": "超チューバー: 【雪山編第2弾】撮り直し無し ファーストテイクMV撮影の裏側大公開",
+      "url": "https://www.youtube.com/watch?v=_WbTsHBuX7E"
+    },
+    {
+      "title": "超チューバー: 【リアル回答】彼女からのLINE俺ならこう返す！LINE理解度チェック",
+      "url": "https://www.youtube.com/watch?v=QoK7dnyVsW8"
     }
   ],
   "reframe": "auto"

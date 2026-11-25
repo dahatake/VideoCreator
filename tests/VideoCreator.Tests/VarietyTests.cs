@@ -116,6 +116,29 @@ public class VarietyTests : IAsyncLifetime
         Assert.True(qa.Status == QaStatus.Pass, qa.Measured);
     }
 
+    [Fact] // §25: the editor's narration sits at the lower right (84–97 % in the right third of the references), inside the safe zone
+    public async Task Variety_tsukkomi_is_drawn_at_the_right_edge_of_the_safe_zone()
+    {
+        var right = W - QaEngine.SafeZone.Right;
+        var plain = Plan(P3, [T("k", TelopType.Tsukkomi, 0, 5, "全員迷子。", "Tsukkomi")]);
+        // the face-aware layout (a face on the left) positions it explicitly; it must keep to the right as well
+        var media = Fixtures.Landscape(10) with { Width = 1080, Height = 1920 };
+        var withFaces = plain with
+        {
+            Timeline = [plain.Timeline[0] with { Reframe = new() { Mode = "fit" } }],
+            TelopFaces = new() { ["a1"] = new(media, Enumerable.Range(0, 21).Select(i => new FaceSample(i * 0.5, [new FaceBox(0.05, 0.3, 0.35, 0.2, 1)])).ToList()) },
+        };
+        foreach (var (plan, name) in new[] { (plain, "plain"), (withFaces, "faces") })
+        {
+            var (x1, x2, y1, y2) = await MeasureAsync(plan, P3, 1.0, "narration_" + name);
+            Assert.True(x2 <= right && x2 >= right - 60, $"{name}: right edge {x2}, safe edge {right}");
+            Assert.True(x1 - QaEngine.SafeZone.Left > right - x2 + 150, $"{name}: drawn x{x1}-{x2} — not anchored to the right");
+            var band = AssWriter.Band(TelopType.Tsukkomi, P3, H)!.Value;
+            if (name == "plain") Assert.True(y1 >= band.Top && y2 <= band.Bottom, $"drawn y{y1}-{y2}, band {band.Top:F0}-{band.Bottom:F0}");
+        }
+        Assert.Contains(@"\pos(", AssWriter.Write(withFaces, P3));
+    }
+
     [Fact]
     public void Variety_ass_has_halo_condensed_captions_red_keywords_and_escapes_text()
     {
@@ -126,7 +149,8 @@ public class VarietyTests : IAsyncLifetime
         Assert.Contains(",85,100,0,0,1,10,", ass);                                                      // ScaleX 85 (長体), outline 10
         Assert.Contains($@"Dialogue: 0,0:00:00.00,0:00:02.00,Halo,,0,0,0,,{{\blur10}}芝が言って｛た｝", ass);
         Assert.Contains($@"Dialogue: 1,0:00:00.00,0:00:02.00,Caption,,0,0,0,,{{\c{AssWriter.Variety.KeywordRed}}}芝が{{\c&HFFFFFF&}}言って｛た｝", ass);
-        Assert.Contains($"Style: Tsukkomi,{AssWriter.FontName},180,&H00FFFFFF,&H0000FFFF,{AssWriter.Variety.BoxRed}", ass);   // red zabuton
+        Assert.Contains($"Style: Tsukkomi,{AssWriter.FontName},160,&H00FFFFFF,&H0000FFFF,{AssWriter.Variety.BoxRed}", ass);   // red zabuton, ≈ 1.28 × caption (§25)
+        Assert.Matches(@"Style: Tsukkomi,[^\n]*,3,14,0,3,", ass);                                       // right-aligned (alignment 3)
         // punch telops are layered (§23): the underlay (black outer stroke / white frame) sits on its own lower layer, the main event above it
         Assert.Contains($"Dialogue: {AssWriter.Variety.LayerPunchUnder},0:00:03.00,0:00:04.00,TsukkomiUnder,", ass);
         Assert.Contains($"Dialogue: {AssWriter.Variety.LayerPunch},0:00:03.00,0:00:04.00,Tsukkomi,", ass);

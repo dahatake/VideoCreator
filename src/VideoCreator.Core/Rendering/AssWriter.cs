@@ -109,7 +109,7 @@ public static partial class AssWriter
     public static class Variety
     {
         public const int CaptionScaleX = 85, CaptionOutline = 10, HaloOutline = 24, HaloBlur = 10;
-        public const int EmphPx = 210, EmphOutline = 14, TsukkomiPx = 180, TsukkomiPad = 20, SfxPx = 160, HeadlinePx = 56, HeadlinePad = 14;
+        public const int EmphPx = 210, EmphOutline = 14, TsukkomiPx = 160, TsukkomiPad = 20, SfxPx = 160, HeadlinePx = 56, HeadlinePad = 14;
         /// <summary>Emphasis glow (underlay outline, blurred), white inner strokes inside the black outer stroke of the SFX (SfxOutline is the whole stroke),
         /// the red tsukkomi box inside its white frame (TsukkomiPad).</summary>
         public const int EmphGlow = 24, EmphGlowBlur = 6, SfxOutline = 16, SfxInner = 9, TsukkomiInnerPad = 14, UnderBlur = 2;
@@ -267,14 +267,15 @@ public static partial class AssWriter
         // punch telops: main event = the telop; underlay event on its own layer (else libass would push it aside) = glow / black outer stroke / white frame
         sb.AppendLine($"Style: Emph,{FontName},{Variety.EmphPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{Variety.EmphOutline},4,2,{g.MarginL},{g.MarginR},{punchV},1");
         sb.AppendLine($"Style: EmphUnder,{FontName},{Variety.EmphPx},&HFF000000,&H0000FFFF,&H60000000,&H00000000,0,0,0,0,100,100,0,0,1,{Variety.EmphGlow},0,2,{g.MarginL},{g.MarginR},{punchV},1");
-        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiInnerPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
-        sb.AppendLine($"Style: TsukkomiUnder,{FontName},{Variety.TsukkomiPx},&HFF000000,&H0000FFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,2,{g.MarginL},{g.MarginR},{punchV},1");
+        // the editor's narration (tsukkomi): a red box at the lower right, ≈ 1.28 × the caption (§25), right-aligned to the safe edge
+        sb.AppendLine($"Style: Tsukkomi,{FontName},{Variety.TsukkomiPx},&H00FFFFFF,&H0000FFFF,{Variety.BoxRed},{Variety.BoxRed},0,0,0,0,100,100,0,0,3,{Variety.TsukkomiInnerPad},0,3,{g.MarginL},{g.MarginR + Variety.TsukkomiPad},{punchV},1");
+        sb.AppendLine($"Style: TsukkomiUnder,{FontName},{Variety.TsukkomiPx},&HFF000000,&H0000FFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,{Variety.TsukkomiPad},0,3,{g.MarginL},{g.MarginR + Variety.TsukkomiPad},{punchV},1");
         sb.AppendLine($"Style: Hook,{FontName},84,&H00FFFFFF,&H0000FFFF,&H00D47800,&H00D47800,0,0,0,0,100,100,0,0,3,18,0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
         sb.AppendLine($"Style: Headline,{FontName},{Variety.HeadlinePx},{Variety.BarNavy},&H0000FFFF,{Variety.BarCyan},{Variety.BarCyan},0,0,0,0,100,100,0,0,3,{Variety.HeadlinePad},0,8,{g.MarginL},{g.MarginR},{g.HeadlineMarginV},1");
         sb.AppendLine($"Style: Counter,{FontName},96,&H0000E0FF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,10,3,8,{g.MarginL},{g.MarginR},{g.CounterMarginV},1");
         sb.AppendLine($"Style: Sfx,{FontName},{Variety.SfxPx},&H002020E0,&H0000FFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,{Variety.SfxInner},0,5,{g.MarginL},{g.MarginR},0,1");
         sb.AppendLine($"Style: SfxUnder,{FontName},{Variety.SfxPx},&HFF000000,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,{Variety.SfxOutline},3,5,{g.MarginL},{g.MarginR},0,1");
-        CardStyle(sb, g);
+        CardStyle(sb, g, plan, p);
         EventsHeader(sb);
         var ins = Planning.InsertMap.Active(plan);
         var keywords = plan.Telops.Where(t => t.Enabled && t.Type == TelopType.Emphasis).Select(t => t.Text.Trim()).Distinct().ToList();
@@ -290,7 +291,7 @@ public static partial class AssWriter
             var lines = caption ? CaptionLines(t.Text, p, plan.Canvas.Width, plan.Language) : [t.Text];
             var fit = lines.Min(l => FitFontSize(l, size, outline, plan.Canvas.Width, g.MarginR, scaleX, plan.Language, g.MarginL));
             if (placement.Positioned && t.Type != TelopType.Caption) fit = placement.FontSize;   // a moved caption keeps its per-line size
-            var fx = Fx(t with { Animation = null }, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY);
+            var fx = Fx(t with { Animation = null }, plan, fit < size ? $@"\fs{fit}" : "", placement, g.SfxY, t.Type == TelopType.Tsukkomi ? Variety.TsukkomiPad : -1);
             var text = caption ? string.Join(@"\N", lines.Select(l => Colorize(l, keywords))) : Escape(t.Text);
             string? under = style switch { "Emph" => "EmphUnder", "Sfx" => "SfxUnder", "Tsukkomi" => "TsukkomiUnder", _ => null };
             foreach (var (s, e) in ins.Count == 0 ? [(t.Start, t.End)] : Planning.InsertMap.Span(ins, t.Start, t.End))
@@ -301,7 +302,7 @@ public static partial class AssWriter
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{text}");
             }
         }
-        CardEvents(sb, plan, g, Variety.LayerCard);
+        CardEvents(sb, plan, g, Variety.LayerCard, p);
         return sb.ToString();
     }
 
@@ -345,7 +346,7 @@ public static partial class AssWriter
         S("Counter", 96, "&H0000E0FF", "&H00000000", "&H80000000", 1, 10, 3, 8, g.CounterMarginV);
         S("Sfx", 120, "&H002020E0", "&H00FFFFFF", "&H80000000", 1, 10, 3, 5, 0);
         S("Tsukkomi", 64, "&H00202020", "&H00FFFFFF", "&H00FFFFFF", 3, 12, 0, 2, g.TsukkomiMarginV);
-        CardStyle(sb, g);
+        CardStyle(sb, g, plan, p);
         EventsHeader(sb);
         const int CaptionUnder = 0, CaptionLayer = 1, PunchLayer = 2, TopUnder = 3, TopLayer = 4, CardLayer = 5;
         var ins = Planning.InsertMap.Active(plan);
@@ -379,7 +380,7 @@ public static partial class AssWriter
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{phaseText}");
             }
         }
-        CardEvents(sb, plan, g, CardLayer);
+        CardEvents(sb, plan, g, CardLayer, p);
         return sb.ToString();
     }
 
@@ -417,10 +418,12 @@ public static partial class AssWriter
         return split;
     }
 
-    static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement, int sfxY)
+    static string Fx(Telop t, EditPlan plan, string fs, TelopLayout.Placement placement, int sfxY, int rightPad = -1)
     {
+        // rightPad ≥ 0: anchored by the right edge of its slot (variety narration), the box border kept inside it
         var pos = placement.Positioned && placement.Bounds is { } b
-            ? FormattableString.Invariant($@"\an5\pos({(b.Left + b.Right) / 2:0.###},{(b.Top + b.Bottom) / 2:0.###})")
+            ? rightPad >= 0 ? FormattableString.Invariant($@"\an6\pos({b.Right - rightPad:0.###},{(b.Top + b.Bottom) / 2:0.###})")
+                : FormattableString.Invariant($@"\an5\pos({(b.Left + b.Right) / 2:0.###},{(b.Top + b.Bottom) / 2:0.###})")
             : t.Style == "Sfx" ? $@"\an5\pos({plan.Canvas.Width / 2},{sfxY})\frz-8" : "";
         return t.Animation == "pop" ? $@"{{{pos}\fad(60,0){fs}\fscx70\fscy70\t(0,110,\fscx112\fscy112)\t(110,220,\fscx100\fscy100)}}" : (fs.Length > 0 || pos.Length > 0) ? $"{{{pos}{fs}}}" : "";
     }
@@ -438,9 +441,22 @@ public static partial class AssWriter
         sb.AppendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding");
     }
 
-    static void CardStyle(StringBuilder sb, Geometry g) =>
+    static void CardStyle(StringBuilder sb, Geometry g, EditPlan plan, Preset p)
+    {
         // scene-change card (tsukkomi): big yellow text, thick black outline, drop shadow; positioned explicitly
         sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,{g.MarginL},{g.MarginR},0,1");
+        PauseCardStyle(sb, g, plan, p);
+    }
+
+    /// <summary>Pause card (§25): dark ink, no outline or shadow, the caption's size (measured 1.0 ×). Only written when the plan has one, so other ASS stay as they were.</summary>
+    static void PauseCardStyle(StringBuilder sb, Geometry g, EditPlan plan, Preset p)
+    {
+        if (plan.Inserts.Any(i => i.IsPause))
+            sb.AppendLine($"Style: CardPause,{FontName},{p.Telop.Caption.FontPx},{PauseInk},&H0000FFFF,{PauseInk},&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,{g.MarginL},{g.MarginR},0,1");
+    }
+
+    /// <summary>&amp;HAABBGGRR #1E1E1E on Renderer.PausePaper.</summary>
+    public const string PauseInk = "&H001E1E1E";
 
     static void EventsHeader(StringBuilder sb)
     {
@@ -449,16 +465,27 @@ public static partial class AssWriter
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
     }
 
-    static void CardEvents(StringBuilder sb, EditPlan plan, Geometry g, int layer)
+    static void CardEvents(StringBuilder sb, EditPlan plan, Geometry g, int layer, Preset p)
     {
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(Planning.InsertMap.Active(plan)).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
+            sb.AppendLine(CardLine(card, s, e, plan, g, layer, p));
+    }
+
+    static string CardLine(Insert card, double s, double e, EditPlan plan, Geometry g, int layer, Preset p)
+    {
+        if (card.IsPause)
         {
-            var fit = CardFontSize(card, plan.Canvas, g, plan.Language);
-            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (g.MarginL + plan.Canvas.Width - g.MarginR) / 2;
-            int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
-            var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
-            sb.AppendLine($@"Dialogue: {layer},{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
+            // the measured cards: centred, static (they appear with the cut), no tilt, no pop; over an image, lower as with the pop card
+            int px = p.Telop.Caption.FontPx;
+            int pfit = FitFontSize(card.Text, px, 0, plan.Canvas.Width, g.MarginR, language: plan.Language, marginL: g.MarginL);
+            int px0 = (g.MarginL + plan.Canvas.Width - g.MarginR) / 2, py = (int)(plan.Canvas.Height * (card.Path != null ? 0.62 : 0.5));
+            return $@"Dialogue: {layer},{Time(s)},{Time(e)},CardPause,,0,0,0,,{{\an5\pos({px0},{py}){(pfit < px ? $@"\fs{pfit}" : "")}}}{Escape(card.Text)}";
         }
+        var fit = CardFontSize(card, plan.Canvas, g, plan.Language);
+        int x = card.Bgm != null ? plan.Canvas.Width / 2 : (g.MarginL + plan.Canvas.Width - g.MarginR) / 2;
+        int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
+        var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
+        return $@"Dialogue: {layer},{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}";
     }
 
     static string WriteStandard(EditPlan plan, Preset p, IReadOnlyDictionary<string, TelopLayout.Placement> layout)
@@ -488,6 +515,7 @@ public static partial class AssWriter
             sb.AppendLine($"Style: CapS{i + 1},{FontName},{c.FontPx},&H00FFFFFF,&H0000FFFF,{outlines[i]},&H80000000,0,0,0,0,100,100,0,0,1,9,2,2,{g.MarginL},{g.MarginR},{g.CaptionMarginV},1");
         // scene-change card (tsukkomi): big yellow text, thick black outline, drop shadow; positioned explicitly
         sb.AppendLine($"Style: Card,{FontName},{CardFontPx},&H0000E6FF,&H0000FFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,{CardOutline},6,5,{g.MarginL},{g.MarginR},0,1");
+        PauseCardStyle(sb, g, plan, p);
         sb.AppendLine();
         sb.AppendLine("[Events]");
         sb.AppendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text");
@@ -509,13 +537,7 @@ public static partial class AssWriter
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{string.Join(@"\N", lines.Select(Escape))}");
         }
         foreach (var (card, s, e) in Planning.InsertMap.InsertSpans(ins).Where(x => x.Insert.Kind == "card" && x.Insert.Text.Length > 0))
-        {
-            var fit = CardFontSize(card, plan.Canvas, g, plan.Language);
-            int x = card.Bgm != null ? plan.Canvas.Width / 2 : (g.MarginL + plan.Canvas.Width - g.MarginR) / 2;
-            int y = (int)(plan.Canvas.Height * (card.Path != null && card.Bgm == null ? 0.62 : 0.42));
-            var fs = fit < CardFontPx ? $@"\fs{fit}" : "";
-            sb.AppendLine($@"Dialogue: 3,{Time(s)},{Time(e)},Card,,0,0,0,,{{\an5\pos({x},{y})\frz4{fs}\fscx60\fscy60\t(0,120,\fscx115\fscy115)\t(120,220,\fscx100\fscy100)}}{Escape(card.Text)}");
-        }
+            sb.AppendLine(CardLine(card, s, e, plan, g, 3, p));
         return sb.ToString();
     }
 

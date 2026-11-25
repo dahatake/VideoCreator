@@ -90,7 +90,7 @@ public static partial class AssWriter
         S("Counter", 96, "&H0000E0FF", Short.Black, "&H80000000", 100, 1, 10, 3, 8, g.CounterMarginV);
         S("Sfx", Short.SfxPx, "&H002020E0", Short.White, Short.Black, 100, 1, Short.SfxInner, 0, 5, 0);
         S("SfxUnder", Short.SfxPx, "&HFF000000", Short.Black, "&H80000000", 100, 1, Short.SfxOutline, 3, 5, 0);
-        CardStyle(sb, g);
+        CardStyle(sb, g, plan, p);
         EventsHeader(sb);
         var ins = Planning.InsertMap.Active(plan);
         foreach (var t in plan.Telops.Where(t => t.Enabled).OrderBy(t => t.Start))
@@ -127,7 +127,7 @@ public static partial class AssWriter
                 sb.AppendLine($"Dialogue: {layer},{Time(s)},{Time(e)},{style},,0,0,0,,{fx}{text}");
             }
         }
-        CardEvents(sb, plan, g, Short.LayerCard);
+        CardEvents(sb, plan, g, Short.LayerCard, p);
         return sb.ToString();
     }
 }

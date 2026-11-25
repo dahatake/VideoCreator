@@ -74,6 +74,42 @@ public class RenderingTests : IAsyncLifetime
         Assert.True(sharp > 0.5 && sharp > 3 * blurred, $"left edge looks blurred: {sharp:F2} vs {blurred:F2}");
     }
 
+    [Fact] // §25: the P3 pause card is an off-white, silent 2.5 s pause with dark static text (the references: white card, −30 dB, no music, no hit)
+    public async Task Pause_card_renders_off_white_silent_and_with_dark_text()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var p3 = Fixtures.Presets["P3"];
+        var (plan, assets, ctx) = Build(_vertical, 720, 1280, p3);
+        var clips = plan.Timeline.ToList();
+        InsertPlanner.SplitAt(clips, 4.0);
+        var card = new Insert { Id = "card1", Kind = "card", At = 4.0, Duration = 2.5, Text = "そりゃそう。", TextSource = "fixed", Look = "pause" };
+        plan = plan with { Timeline = clips, Inserts = [card], Telops = [], Audio = plan.Audio with { SfxEnabled = true } };
+        Assert.DoesNotContain(Renderer.FinalAudio(plan).Sfx, s => Math.Abs(s.T - 4.0) < 0.01);                 // no hit on the card
+        Assert.True(BgmPlanner.Mutes(card));                                                                     // the body's music stops under it
+        var ass = AssWriter.Write(plan, p3);
+        Assert.Contains($"Style: CardPause,{AssWriter.FontName},{p3.Telop.Caption.FontPx},{AssWriter.PauseInk},", ass);
+        Assert.DoesNotContain(@"\frz", ass.Split('\n').Single(l => l.Contains(",CardPause,,")));                // static: no tilt, no pop
+
+        var outp = await new Renderer(Ff).RenderAsync(plan, p3, assets, Path.Combine(_dir, "pause.mp4"), preview: false, ct);
+        async Task<byte[]> Rgb(double t, string crop)
+        {
+            using var ms = new MemoryStream();
+            await Ff.RunFfmpegAsync(["-v", "error", "-ss", t.ToString(System.Globalization.CultureInfo.InvariantCulture), "-i", outp.Path, "-frames:v", "1", "-vf", crop, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], ct, stdout: ms);
+            return ms.ToArray();
+        }
+        var corner = await Rgb(5.25, "crop=64:64:40:40");
+        double Avg(byte[] px, int ch) => Enumerable.Range(0, px.Length / 3).Average(i => px[i * 3 + ch]);
+        Assert.True(Math.Abs(Avg(corner, 0) - 0xF2) < 10 && Math.Abs(Avg(corner, 1) - 0xEF) < 10 && Math.Abs(Avg(corner, 2) - 0xE8) < 10,
+            $"paper {Avg(corner, 0):F0},{Avg(corner, 1):F0},{Avg(corner, 2):F0}");
+        var middle = await Rgb(5.25, "crop=760:240:160:840");
+        Assert.True(Enumerable.Range(0, middle.Length / 3).Count(i => middle[i * 3] < 80 && middle[i * 3 + 1] < 80 && middle[i * 3 + 2] < 80) > 2000, "no dark text in the middle");
+        async Task<double> Rms(double t0, double t1) => double.Parse(Regex.Matches((await Ff.RunFfmpegAsync(["-hide_banner", "-ss", t0.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-t", (t1 - t0).ToString(System.Globalization.CultureInfo.InvariantCulture), "-i", outp.Path, "-vn", "-af", "astats=measure_overall=RMS_level:measure_perchannel=none", "-f", "null", "-"], ct)).StdErr,
+            @"RMS level dB: (-?[\d.]+|-inf)").Last().Groups[1].Value.Replace("-inf", "-200"), System.Globalization.CultureInfo.InvariantCulture);
+        double body = await Rms(1, 3.5), pause = await Rms(4.3, 6.2);
+        Assert.True(body > -40 && pause < body - 30, $"body {body:F1} dB, pause {pause:F1} dB");
+    }
+
     [Fact] // AT-02 + AT-03 + AT-12: platform spec and all hard QA on a real final render, and a second render of the same plan decodes to identical frames
     public async Task Final_render_meets_platform_spec_passes_hard_qa_and_is_deterministic()
     {

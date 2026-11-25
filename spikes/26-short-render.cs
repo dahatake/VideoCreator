@@ -2,7 +2,8 @@
 // before and after a change to the look and measured with spikes/25-shorts-style.cs.
 //  talk   : spikes/media/talk.mp4 (two speakers over a colour-bar test pattern: worst case for coloured telops) + the test fixture transcript.
 //  motiv  : a real one-person vertical recording with its cached transcript, faces and signals from the local data folder (optional).
-// Usage: dotnet run spikes/26-short-render.cs <out-dir> [P12]
+// Usage: dotnet run spikes/26-short-render.cs <out-dir> [P12] [tsukkomi]
+//  tsukkomi | cards: turn on AI tsukkomi (as overlay telops | as pause cards) with a fixed stub (the same three lines on the 3rd, 7th and 11th caption) so two checkouts render the same edit.
 #:property PublishAot=false
 #:project ../src/VideoCreator.Core/VideoCreator.Core.csproj
 using VideoCreator;
@@ -19,6 +20,7 @@ var root = Directory.GetCurrentDirectory();
 while (!File.Exists(Path.Combine(root, "run.cmd"))) root = Path.GetDirectoryName(root)!;
 var outDir = Path.GetFullPath(args.Length > 0 ? args[0] : Path.Combine(root, "spikes", "out", "short"));
 var presetId = args.Length > 1 ? args[1] : "P12";
+bool withTsukkomi = args.Contains("tsukkomi") || args.Contains("cards");
 Directory.CreateDirectory(outDir);
 var ff = FFmpeg.Locate(start: root);
 var preset = PresetStore.LoadDirectory(Path.Combine(root, "presets")).Single(p => p.Id == presetId);
@@ -68,11 +70,11 @@ foreach (var c in cases)
 {
     var media = await new MediaProbe(ff).ProbeAsync(c.Video);
     var asset = new SourceAsset { Id = "a1", ProjectId = "p", Path = c.Video, Sha256 = "x", Role = AssetRole.Main, Media = media };
-    var job = new Job { Id = "j_" + c.Name, ProjectId = "p", PresetIds = [preset.Id], Options = new JobOptions { Bgm = "none" } };
+    var job = new Job { Id = "j_" + c.Name, ProjectId = "p", PresetIds = [preset.Id], Options = new JobOptions { Bgm = "none", Tsukkomi = withTsukkomi, TsukkomiStyle = args.Contains("cards") ? "card" : "telop" } };
     var faces = new Dictionary<string, List<FaceSample>>();
     // no detector data for the test pattern: the face analysis of a faceless video (a sample every 0.5 s, no boxes)
     faces["a1"] = c.Faces.Count > 0 ? c.Faces : Enumerable.Range(0, (int)(media.Duration * 2) + 1).Select(i => new FaceSample(i * 0.5, [])).ToList();
-    var (plan, notes) = await PlanBuilder.BuildAsync(new PlanRequest(c.Cand, c.Tr, c.Sig, preset, [asset], asset, "p", job, faces, null, null), CancellationToken.None);
+    var (plan, notes) = await PlanBuilder.BuildAsync(new PlanRequest(c.Cand, c.Tr, c.Sig, preset, [asset], asset, "p", job, faces, null, withTsukkomi ? new FixedTsukkomi() : null), CancellationToken.None);
     foreach (var n in notes) Console.WriteLine($"  [{c.Name}] {n}");
     foreach (var t in plan.Telops.Where(t => t.Type is TelopType.Headline or TelopType.Hook))
     {
@@ -84,4 +86,19 @@ foreach (var c in cases)
     var r = await renderer.RenderAsync(plan, preset, new Dictionary<string, SourceAsset> { ["a1"] = asset }, outFile, preview: false, CancellationToken.None);
     var types = plan.Telops.Where(t => t.Enabled).GroupBy(t => t.Type).Select(g => $"{g.Key}:{g.Count()}");
     Console.WriteLine($"{c.Name}: {plan.Duration:F1}s, {plan.Timeline.Count} clips, telops {string.Join(" ", types)}, sfx {plan.Audio.Sfx.Count}, I {r.LoudnessI:F1} LUFS → {outFile}");
+}
+
+/// <summary>Deterministic "LLM" for the tsukkomi request: the same three lines on the 3rd, 7th and 11th caption of the prompt.</summary>
+sealed class FixedTsukkomi : VideoCreator.Selection.IHighlightSelector
+{
+    public string Name => "fixed";
+    public string Model => "fixed";
+    public Task<VideoCreator.Selection.LlmResult> SelectAsync(string system, string user, CancellationToken ct) => throw new NotSupportedException();
+    public Task<string> CompleteJsonAsync(string system, string user, string schemaName, string wireSchema, CancellationToken ct)
+    {
+        var ids = System.Text.RegularExpressions.Regex.Matches(user, @"^(t\d+):", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
+        string[] lines = ["全員迷子。", "話が進まない。", "準備ゼロ。"];
+        var items = new[] { 2, 6, 10 }.Where(i => i < ids.Count).Select((i, k) => new { caption_id = ids[i], text = lines[k] });
+        return Task.FromResult(System.Text.Json.JsonSerializer.Serialize(new { items }));
+    }
 }

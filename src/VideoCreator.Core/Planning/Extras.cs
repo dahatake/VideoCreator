@@ -84,39 +84,84 @@ public static partial class TelopExtras
     }
 }
 
-/// <summary>④ Tsukkomi telops (opt-in LLM). Output is filtered in code; everything is created unapproved (H-08) because humour is risky (RK-04).</summary>
+/// <summary>
+/// ④ Tsukkomi telops (opt-in LLM). Output is filtered in code; everything is created unapproved (H-08) because humour is risky (RK-04).
+/// The register, timing and density follow the editor's narration telops measured in two variety videos (docs/IMPLEMENTATION.md §25):
+/// a deadpan one-liner of the staff (no 「！」, 78 % end in 「。」), median 6–7 characters, 0.6 s after the line ends, 2.25–2.5 s on screen.
+/// </summary>
 public static class TsukkomiService
 {
     public const string Schema = """{"type":"object","additionalProperties":false,"required":["items"],"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["caption_id","text"],"properties":{"caption_id":{"type":"string"},"text":{"type":"string"}}}}}}""";
+
+    /// <summary>Onset after the end of the line it reacts to (measured median 0.59–0.66 s).</summary>
+    public const double OnsetLagSec = 0.6;
+    /// <summary>A cut this soon after the line is where the narration starts (36–52 % start within 0.3 s of a cut: on the reaction shot).</summary>
+    public const double CutSnapMinSec = 0.2, CutSnapMaxSec = 1.5;
+    /// <summary>Time on screen (measured median 2.25–2.5 s).</summary>
+    public const double DisplaySec = 2.4;
+    /// <summary>Latest onset after the line when the comment waits for the speaker's emphasis (measured 90th percentile 2.65–2.84 s).</summary>
+    public const double MaxDelaySec = 2.8;
+    /// <summary>Minimum spacing between two narrations (measured 10th percentile 5.5 s) and the densest rate (4 per 30 s).</summary>
+    public const double MinGapSec = 5.0, SecondsPerItem = 7.5;
+    public const int MaxItemsCap = 6;
+
+    /// <summary>How many tsukkomi a body of this length may carry: the densest measured stretches (4 per 30 s), at least 1, at most <see cref="MaxItemsCap"/>.</summary>
+    public static int MaxItems(double totalSec) => Math.Clamp((int)Math.Floor(totalSec / SecondsPerItem), 1, MaxItemsCap);
+
+    /// <summary>
+    /// Output-time onset of a narration reacting to a line that ends at <paramref name="lineEnd"/>: on the first cut 0.2–1.5 s later
+    /// (the reaction shot), else <see cref="OnsetLagSec"/> later; never so late that it cannot be shown for a second before the end.
+    /// </summary>
+    public static double Onset(double lineEnd, IReadOnlyList<double> cuts, double total)
+    {
+        var cut = cuts.Where(c => c >= lineEnd + CutSnapMinSec - 1e-6 && c <= lineEnd + CutSnapMaxSec + 1e-6).Order().Cast<double?>().FirstOrDefault();
+        double at = cut ?? lineEnd + OnsetLagSec;
+        return Math.Round(Math.Max(0, at <= total - 1.0 ? at : Math.Min(lineEnd, total - 1.0)), 3);
+    }
+
     const string System = """
-あなたは日本のバラエティ番組のテロップ担当です。字幕の流れを読み、ボケや意外な発言・見せ場の直後に入る「ツッコミテロップ」を最大4個作ります。
-ツッコミテロップは出演者のセリフではなく、見ている人が心の中で言いたくなる一言の代弁です。場面に合う反応を選びます:
-ツッコミ（「なんでやねん！」「そこ？」「いや多すぎ！」）、称賛（「イケてる！」「天才か」）、共感（「わかる〜」）、驚き（「マジで!?」）。
+あなたは日本のバラエティ動画の編集者です。字幕の流れを読み、見どころの直後に画面の右下に出す「編集者のひとことテロップ」を作ります（最大{MAX}個）。
+これは出演者のセリフではなく、編集スタッフが冷静に入れる一言です。出演者のように叫ばず、少し引いた目線で状況や人物を言い当てます。
+人気の動画で実際に使われている型と割合（目安）:
+- 約6割: 状況・行動への短い感想やツッコミ。文末は「。」（例の型:「〜すぎる。」「〜てる。」「〜やん。」「〜な。」）
+- 約3割: 人物や状況に名前を付ける体言止め（例の型:「〜する〇〇。」「全員〇〇。」「〜問題。」）
+- 約1割: とぼけた疑問（「〜？」）
 規則:
-- 各ツッコミは14字以内の短い口語
-- caption_id は与えられた字幕のIDから選び、その字幕の直後に表示される
-- 字幕の言葉をそのまま繰り返さない（発言への反応を書く）。同じ文を2回使わない
-- 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない
+- 1個は5〜10字が目安（14字以内）。「！」は使わない。文末は「。」、疑問のときだけ「？」
+- caption_id は与えられた字幕のIDから選ぶ。その字幕の発言が終わった直後に表示される。笑いや驚きが起きた発言、言い間違い、意外な行動、話のズレの直後を選ぶ
+- 字幕の言葉をそのまま繰り返さない（発言への反応を書く）。同じ文を2回使わない。近い字幕に続けて付けない（5秒以上あける）
+- 字幕に出てこない数字・固有名詞・商品名・人名を新しく書かない（人物を指すときは字幕に出てくる名前か「全員」「本人」などを使う）
 - 人や集団を傷つける、侮辱する、差別的な内容は書かない。ツッコミの対象は「発言の内容」や「状況」にする
 - 面白くなりそうな箇所が少なければ、個数を減らしてよい（0個でもよい）
 """;
     static readonly string[] Blocklist = ["死ね", "殺", "バカ", "馬鹿", "アホ", "ブス", "デブ", "キモ", "障害", "ガイジ", "クズ", "ハゲ"];
 
-    public static async Task<List<(string CaptionId, string Text)>> GenerateAsync(IHighlightSelector llm, IReadOnlyList<Telop> captions, string sourceText, CancellationToken ct, string language = "ja-JP")
+    public static async Task<List<(string CaptionId, string Text)>> GenerateAsync(IHighlightSelector llm, IReadOnlyList<Telop> captions, string sourceText, CancellationToken ct, string language = "ja-JP", int maxItems = 4)
     {
         var res = new List<(string, string)>();
         if (captions.Count < 3) return res;
         var user = "字幕:\n" + string.Join("\n", captions.Select(c => $"{c.Id}: {c.Text}"));
-        var json = await llm.CompleteJsonAsync(System + VideoLanguages.Prompt(language), user, "tsukkomi", Schema, ct);
+        var json = await llm.CompleteJsonAsync(System.Replace("{MAX}", maxItems.ToString(global::System.Globalization.CultureInfo.InvariantCulture)) + VideoLanguages.Prompt(language), user, "tsukkomi", Schema, ct);
         using var doc = JsonDocument.Parse(json);
         var seen = new HashSet<string>();
         foreach (var it in doc.RootElement.GetProperty("items").EnumerateArray())
         {
-            var id = it.GetProperty("caption_id").GetString() ?? ""; var text = (it.GetProperty("text").GetString() ?? "").Trim();
+            var id = it.GetProperty("caption_id").GetString() ?? ""; var text = Deadpan((it.GetProperty("text").GetString() ?? "").Trim(), language);
             if (Validate(text, id, captions, sourceText) == null && seen.Add(Bare(text))) res.Add((id, text));
-            if (res.Count >= 4) break;
+            if (res.Count >= maxItems) break;
         }
         return res;
+    }
+
+    /// <summary>The editor's narration never shouts (0 of 92 measured end in 「！」): a Japanese line ending in 「！」 ends in 「。」 instead (「!?」 stays a question).</summary>
+    public static string Deadpan(string text, string language = "ja-JP")
+    {
+        if (language != "ja-JP") return text;
+        var m = Regex.Match(text, @"[!！]+$");
+        if (!m.Success) return text;
+        var head = text[..m.Index].TrimEnd();
+        if (head.EndsWith('?') || head.EndsWith('？')) return head;
+        return head.Length == 0 ? text : head.TrimEnd('。') + "。";
     }
 
     /// <summary>Null when acceptable, else the reason it is rejected.</summary>

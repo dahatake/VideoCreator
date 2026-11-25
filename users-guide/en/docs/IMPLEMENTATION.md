@@ -978,3 +978,50 @@ What this shows:
 - **Automated tests** ([ShortPresetTests.cs](../../../tests/VideoCreator.Tests/ShortPresetTests.cs)): the bar starts at 0 s (other templates still start at 2.5 s); it is left out only in cuts with a face under it; punch telops shrink to avoid faces; nothing is pushed under the bar (confirmed to fail before the fix); per-speaker fills; what libass draws stays inside the bands and the safe zone. 509 of 510 tests pass (1 skipped as before).
 
 Limitations: the references are 20 videos and include channel habits. The share of coloured captions is higher than the references' (34–64 %) because of the speaker colours. In a selfie with a very large face, punch telops may be left out (the title bar is shown in 56 % of frames). The real test is the "viewed vs. swiped away" share in YouTube Analytics after posting, which the app cannot measure.
+
+## 25. Matching the variety "editor's comment" and scene-change cards to measurements of reference videos (P3)
+
+Captions (the words as spoken) stay as they were. The text the editor adds — tsukkomi telops — and the scene-change / tsukkomi cards now follow measurements of two reference videos. Only P3 (1.4.0) changes.
+
+### Research (raw material and method)
+
+- **Material**: two videos of 超特急's official channel 「超チューバー」: [the snow-mountain first-take MV making-of (40 min)](https://www.youtube.com/watch?v=_WbTsHBuX7E) and [the LINE reply check (21 min)](https://www.youtube.com/watch?v=QoK7dnyVsW8). They were downloaded to a temporary folder for measurement only and are not in the repository; only numbers and short strings were kept.
+- **Method**: [spikes/28-variety-telops.cs](../../../spikes/28-variety-telops.cs) runs Windows OCR (Japanese) on frames at 4 fps and records each line's box, glyph height and colours. [spikes/28-variety-telops.py](../../../spikes/28-variety-telops.py) links lines across frames into telop events and classifies them: text in a red box = the editor's comment, text matching the transcript = a caption. Speech timing comes from Azure AI Speech fast transcription (per word), cuts from ffmpeg `scdet`, and cards are frames that are almost entirely one flat colour.
+- **Third-party signals**: YouTube's "most replayed" data and about 2,200 comments. Among comments about the editing, the most-liked ones mention the editor's red-box comments (205, 150 and 107 likes). One comment asked for the white cards to be softer on the eyes at night.
+
+### Results (medians; all 18 cards)
+
+| Measure | Snow | LINE | P3 before | P3 after |
+|---|---|---|---|---|
+| Comment frequency | 1.52/min (4 in the densest 30 s) | 1.48/min (also 4) | up to 4 per video, 1.5 s apart | at most 1 per 7.5 s (1–6), 5 s apart |
+| Characters | 7 | 6 | — | 8 in AI text |
+| Time on screen | 2.5 s | 2.25 s | 1.4 s | 2.4 s |
+| After the line ends | 0.66 s (36 % on a cut within 0.3 s) | 0.59 s (52 %) | 0 s | on a cut 0.2–1.5 s later, else 0.6 s |
+| Ends in 「。」 / uses 「！」 | 79 % / 0 % | 77 % / 0 % | AI text 0 % / 100 % | AI text 99 % / 0 % |
+| Position | 84 % in the right third, bottom | 97 % in the right third, bottom | centre | right edge of the safe zone |
+| Size relative to captions | 1.28× | — | 1.45× (180 px) | 1.29× (160 px) |
+| Cards | white, 2.50 s, silent (−30 dB vs. before), 10 | same, 8 (4 of the 7 chapter starts have one 3–4 s before) | purple panel, tilted yellow text, music and a hit | off-white, dark static text, silent, at most 1 per video |
+| Card text ends in 「。」 / 「？」 / 「！」 | 83 % / 17 % / 0 % (18 cards in both) | — | AI text 0 % / 18 % / 96 % | AI text 96 % / 4 % / 0 % |
+
+What this shows: the entertainment does not come from making everything bigger and louder, but from **the contrast between the performers' loud lines (coloured captions) and the editor's calm, slightly detached comment (red box, ending in 「。」)**, and from **the pause created by a silent white card**.
+
+### Changes (P3 1.4.0; no other template changes)
+
+| Item | Change |
+|---|---|
+| Comment wording | The AI instruction is now "the editor's calm comment": reactions / tsukkomi (about 60 %), noun-ending labels for a person or situation (about 30 %), deadpan questions (about 10 %), 5–10 characters, no 「！」. Japanese AI text ending in 「！」 ends in 「。」 instead (`TsukkomiService.Deadpan`) |
+| Comment timing | It starts on the cut after the line (0.2–1.5 s later), else 0.6 s later, and stays 2.4 s. If it would start just before or during the speaker's emphasis telop it waits until that ends (up to 2.8 s after the line = the measured 90th percentile), otherwise it is left out (the emphasis is never removed). It is not shown within 5 s of the previous comment (measured 10th percentile 5.5 s) |
+| Comment look | White text in a red box at 160 px (1.29× the 124 px caption), aligned to the right edge of the safe zone; also anchored to the right edge when moved away from faces |
+| Cards | `scene_cards.look = "pause"`: off-white (#F2EFE8, easier on the eyes than the references' white, 14.7:1 contrast with the text) with dark text (caption size, no tilt or bounce), no card music or effect, and the body's BGM stops too. The text is the editor's comment (「。」, 「？」 only for questions). At most one scene-change card in a short edit (`scene_cards.max`). A registered card image is still used |
+| Other templates | `scene_cards` defaults to the previous `pop` (up to 3), so nothing changes |
+
+### Verification
+
+- **Re-measured with the same yardstick**: fixed tsukkomi (`tsukkomi` / `cards`) were added to [spikes/26-short-render.cs](../../../spikes/26-short-render.cs); P3 was rendered from the same input before (git worktree) and after, and measured with spike 28's OCR and a separate Azure transcription. Comment on screen 1.1 → 2.4 s, after the line 1.53 → 0.54 s, horizontal centre 0.48 → 0.74.
+- **AI text (third party = the real editor)**: [spikes/29-tsukkomi-eval.cs](../../../spikes/29-tsukkomi-eval.cs) turns the reference transcripts into the app's captions in 60 s windows (60 windows) and has the real LLM write comments with the old and the new instruction ("AI text" in the table above). [spikes/30-card-eval.cs](../../../spikes/30-card-eval.cs) does the same three times at each of the 18 real card positions.
+- **Problems found and fixed**: delaying the comment made it land just before the speaker's emphasis, and the one-at-a-time rule then removed the emphasis (8 → 7 emphasis telops in the render). A wait-for-the-emphasis rule was added and confirmed with a test that fails without it. Caption normalisation removed the 「。」 from card text, so cards keep a sentence-final 「。」.
+- **Legibility (Windows OCR at 270 px wide)**: the comment's recall stays 1.00 (no loss from 180 → 160 px).
+- **Other templates**: ASS written from the same plan before and after, compared byte by byte. P2 and P4–P13 are identical; for P1 only the unused tsukkomi style lines change.
+- **Automated tests** ([V11Tests.cs](../../../tests/VideoCreator.Tests/V11Tests.cs), [VarietyTests.cs](../../../tests/VideoCreator.Tests/VarietyTests.cs), [RenderingTests.cs](../../../tests/VideoCreator.Tests/RenderingTests.cs)): comment timing, spacing and that emphasis is never removed; the rendered right-edge position; the rendered card's off-white paper, dark text and silence (more than 30 dB below the body); that only P3 gets silent cards. 557 of 558 tests pass (1 skipped as before).
+
+Limits: where the AI places a comment matches the real editor's positions at 0.10 before and 0.09 after (0.08 for random times) — essentially chance. Editors react to faces and actions, which a transcript does not show. Loud non-speech sounds such as laughter are near 43–48 % of the comments (1.2–1.7× chance), too weak a cue to use. A person decides the placement on the review screen (export is blocked until approval, H-08). The references are two videos of one channel; caption speaker colours vary between them (59 % coloured captions in Snow, 16 % in LINE) and diarization merged the eight voices into one speaker, so caption colours are unchanged. The hand-lettered typeface and the mascot are not bundled (register them as a card image to use them).

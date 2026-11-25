@@ -457,7 +457,7 @@ public sealed partial class Renderer(FFmpeg ff)
         // freeze source: the clip just before the card (or the first frame of the next one when the card opens the video)
         int prev = seq.Take(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).Last();
         int ci = prev >= 0 ? prev : seq.Skip(s).Where(x => x.Insert == null).Select(x => x.Clip).DefaultIfEmpty(-1).First();
-        string bg = ins.Path != null || ins.Bgm != null ? $"cb{j}" : $"iv{j}";
+        string bg = ins.Path != null || ins.Bgm != null || ins.IsPause ? $"cb{j}" : $"iv{j}";
         if (ci < 0) g.Append($"color=c=0x202020:s={W}x{H}:r={fps}:d={D},setsar=1{fix}[{bg}];");
         else
         {
@@ -481,6 +481,11 @@ public sealed partial class Renderer(FFmpeg ff)
                           $"[cf{j}]scale={W}:{H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[cff{j}];" +
                           $"[{bg}][cbb{j}]overlay=0:0:eof_action=repeat[cbx{j}];[cbx{j}][cff{j}]overlay=(W-w)/2:(H-h)/2:eof_action=repeat,setsar=1{fix}[iv{j}];");
         }
+        else if (ins.IsPause)
+        {
+            // pause look (§25): a plain card — the references use pure white; a viewer asked for something easier on the eyes at night, so warm off-white
+            g.Append($"[{bg}]drawbox=x=0:y=0:w=iw:h=ih:color=0x{PausePaper}:t=fill[iv{j}];");
+        }
         else if (ins.Bgm != null)
         {
             // no image: a full-screen panel with a yellow frame just inside the edges
@@ -493,6 +498,9 @@ public sealed partial class Renderer(FFmpeg ff)
     /// <summary>A card image close enough to the canvas shape to fill it by cropping at most ~10 % (otherwise it is letterboxed over a blurred copy).</summary>
     public static bool CardCovers(Insert card, int w, int h) =>
         card.Width > 0 && card.Height > 0 && Math.Abs(Math.Log((double)card.Width / card.Height / ((double)w / h))) < 0.1;
+
+    /// <summary>Pause card paper (RRGGBB) and ink (AssWriter.PauseInk): contrast 14.7 : 1 (WCAG 2.x).</summary>
+    public const string PausePaper = "F2EFE8";
 
     static string Silence(long samples, string label) => $"anullsrc=r=48000:cl=stereo,atrim=end_sample={samples},asetpts=PTS-STARTPTS[{label}];";
 

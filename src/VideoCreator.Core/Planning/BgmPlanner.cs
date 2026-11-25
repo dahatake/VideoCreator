@@ -23,8 +23,8 @@ public static class BgmPlanner
     public const double ResearchFloorLd = 10, MinTrimDb = -12, MaxTrimDb = 6, MinGapLu = -30, MaxGapLu = 0, MaxSpeechLd = 30;
     public const double FadeInSec = 0.4, FadeOutSec = 1.0;
 
-    /// <summary>Inserts the body music stops under (bumpers and cards with their own music) — the same rule as Renderer.FinalAudio.</summary>
-    public static bool Mutes(Insert i) => i.Kind != "card" || i.Bgm != null;
+    /// <summary>Inserts the body music stops under (bumpers, cards with their own music, silent pause cards) — the same rule as Renderer.FinalAudio.</summary>
+    public static bool Mutes(Insert i) => i.Kind != "card" || i.Bgm != null || i.IsPause;
 
     static double R(double x, int d = 3) => Math.Round(x, d);
 
