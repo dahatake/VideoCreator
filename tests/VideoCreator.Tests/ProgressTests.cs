@@ -74,14 +74,18 @@ public sealed class ProgressTests : IDisposable
         var events = new JobEvents();
         var q = new JobQueue(store, () => new PipelineRunner(new PipelineServices { Ff = Ff, Store = store, Presets = Fixtures.Presets, DataDir = Data, Asr = asr }), events, NullLogger<JobQueue>.Instance);
         var job = new Job { Id = "job_asr", ProjectId = project.Id, PresetIds = ["P4"] };
+        var recovery = new Job { Id = "job_recovery", ProjectId = "missing", PresetIds = ["P4"] };
+        store.Put(Kinds.Job, recovery.Id, recovery.ProjectId, recovery);
+        var (recoverySubscriber, recoveryUpdates) = events.Subscribe(recovery.Id);
         var (subscriber, updates) = events.Subscribe(job.Id);
         await q.StartAsync(Ct);
         try
         {
-            q.EnqueueJob(job);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             JobUpdate update;
+            do { update = await recoveryUpdates.ReadAsync(timeout.Token); } while (update.Stage != JobStatus.Failed);
+            q.EnqueueJob(job);
             do { update = await updates.ReadAsync(timeout.Token); } while (update.Stage is not (JobStatus.Failed or JobStatus.Cancelled or JobStatus.Ready));
             var result = store.Get<Job>(Kinds.Job, job.Id)!;
             Assert.Equal(JobStatus.Failed, result.Status);
@@ -93,6 +97,7 @@ public sealed class ProgressTests : IDisposable
         }
         finally
         {
+            events.Unsubscribe(recovery.Id, recoverySubscriber);
             events.Unsubscribe(job.Id, subscriber);
             await q.StopAsync(CancellationToken.None);
         }
