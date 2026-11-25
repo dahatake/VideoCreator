@@ -167,6 +167,35 @@ public static class TelopLayout
             double end = off + c.Length + fade;
             if (off < telop.End && end > telop.Start)
             {
+                if (c.Panels is { Count: > 0 } panels)
+                {
+                    // split screen: the background is a blurred copy, so only the faces inside the boxes count; a box without face data is protected whole
+                    double lo = Math.Max(0, telop.Start - off), hi = Math.Min(c.Length + fade, telop.End - off);
+                    foreach (var pn in panels)
+                    {
+                        var box = new Rect(pn.X - pn.Border, pn.Y - pn.Border, pn.X + pn.Width + pn.Border, pn.Y + pn.Height + pn.Border);
+                        double s0 = pn.SrcIn + lo * c.Speed, s1 = pn.SrcIn + hi * c.Speed;
+                        var samples = plan.TelopFaces != null && plan.TelopFaces.TryGetValue(pn.AssetId, out var ps)
+                            ? ps.Samples.Where(s => s.T >= s0 - 0.5 && s.T <= s1 + 0.5).OrderBy(s => s.T).ToList() : null;
+                        if (samples == null || samples.Count == 0 || samples[0].T > s0 + 0.5 || samples[^1].T < s1 - 0.5
+                            || samples.Zip(samples.Skip(1)).Any(pair => pair.Second.T - pair.First.T > 0.75) || pn.CropW <= 0 || pn.CropH <= 0)
+                        {
+                            result.Add(box);
+                            continue;
+                        }
+                        var media = plan.TelopFaces![pn.AssetId].Media;
+                        double kx = pn.Width / (double)pn.CropW, ky = pn.Height / (double)pn.CropH;
+                        var faces = samples.SelectMany(s => s.Boxes).Select(f => new Rect(
+                            Math.Clamp(pn.X + (f.X * media.Width - pn.CropX) * kx - FacePadding, box.Left, box.Right),
+                            Math.Clamp(pn.Y + (f.Y * media.Height - pn.CropY) * ky - FacePadding, box.Top, box.Bottom),
+                            Math.Clamp(pn.X + ((f.X + f.W) * media.Width - pn.CropX) * kx + FacePadding, box.Left, box.Right),
+                            Math.Clamp(pn.Y + ((f.Y + f.H) * media.Height - pn.CropY) * ky + FacePadding, box.Top, box.Bottom)))
+                            .Where(r => r.Right > r.Left && r.Bottom > r.Top).ToList();
+                        if (faces.Count > 0) result.Add(new(faces.Min(b => b.Left), faces.Min(b => b.Top), faces.Max(b => b.Right), faces.Max(b => b.Bottom)));
+                    }
+                    off += c.Length;
+                    continue;
+                }
                 if (plan.TelopFaces == null || !plan.TelopFaces.TryGetValue(c.AssetId, out var source))
                     known = false;
                 else
@@ -196,8 +225,8 @@ public static class TelopLayout
                 }
                 // Protect the entire inset, including faces between samples and the surrounding ring.
                 if (c.Pip is { } pip) result.Add(new(pip.X - FacePadding, pip.Y - FacePadding,
-                    pip.X + (pip.Shape == "rectangle" ? pip.Width : pip.D + 2 * pip.Border) + FacePadding,
-                    pip.Y + (pip.Shape == "rectangle" ? pip.Height : pip.D + 2 * pip.Border) + FacePadding));
+                    pip.X + (pip.Shape is "rectangle" or "panel" ? pip.Width : pip.D + 2 * pip.Border) + FacePadding,
+                    pip.Y + (pip.Shape is "rectangle" or "panel" ? pip.Height : pip.D + 2 * pip.Border) + FacePadding));
             }
             off += c.Length;
         }

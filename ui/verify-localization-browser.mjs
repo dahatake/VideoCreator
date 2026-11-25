@@ -9,9 +9,10 @@ import { catalogs } from '../src/VideoCreator.App/wwwroot/js/i18n.js';
 import { presetDisplays } from '../src/VideoCreator.App/wwwroot/js/server-resources.js';
 
 const root = fileURLToPath(new URL('../src/VideoCreator.App/wwwroot/', import.meta.url));
-const output = fileURLToPath(new URL('./localization-artifacts/', import.meta.url));
+const output = process.argv[2] ? path.resolve(process.argv[2]) : fileURLToPath(new URL('./localization-artifacts/', import.meta.url));
 await fs.mkdir(output, { recursive: true });
-const presets = await Promise.all(Array.from({ length: 11 }, (_, i) => fs.readFile(new URL(`../presets/P${i + 1}.json`, import.meta.url), 'utf8').then(text => ({ examples: [], ...JSON.parse(text) }))));
+const presetFiles = (await fs.readdir(new URL('../presets/', import.meta.url))).filter(name => /^P\d+\.json$/.test(name)).sort((a, b) => Number(a.slice(1, -5)) - Number(b.slice(1, -5)));
+const presets = await Promise.all(presetFiles.map(name => fs.readFile(new URL(`../presets/${name}`, import.meta.url), 'utf8').then(text => ({ examples: [], ...JSON.parse(text) }))));
 const writes = [];
 let busyLanguageChange = false;
 let delayProjectRead = false;
@@ -119,6 +120,7 @@ const switchLocale = async locale => {
 };
 try {
   await route('#/', '#new');
+  await page.locator('#vc-tour-skip').click();
   assert.equal(await page.locator('html').getAttribute('lang'), 'ja');
   await page.locator('#name').evaluate(el => { el.value = 'UNSAVED 日本語'; });
   await switchLocale('en');
@@ -146,10 +148,12 @@ try {
     await screenshot(`${locale}-project`);
     assert.ok((await page.locator('.asset').textContent()).includes('USER 日本語.mp4'), 'uploaded filename preserved');
     if (locale !== 'ja') assert.ok(!(await page.locator('.asset').textContent()).includes('肖像権'), 'rights statement translated');
-    for (const preset of presets) {
+    for (const preset of presets.filter(preset => !preset.short)) {
       const expected = locale === 'ja' ? preset.name : presetDisplays[preset.id][locale][0];
       assert.equal(await page.locator(`[data-id="${preset.id}"] b`).textContent(), expected, `${locale}: ${preset.id} display name`);
     }
+    await page.locator('#presets [role=radio][data-id="P13"]').click();
+    assert.equal(await page.locator('#presets [role=radio][data-id="P13"]').getAttribute('aria-checked'), 'true', `${locale}: P13 selected`);
     await page.reload(); await page.locator('#gen').waitFor();
     assert.equal(await page.locator('html').getAttribute('lang'), locale, 'persisted UI language');
     await page.locator('#settings-btn').click();
@@ -211,7 +215,9 @@ try {
   const restricted = await context.newPage();
   restricted.on('pageerror', error => errors.push(error.message));
   await restricted.addInitScript(() => Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage denied', 'SecurityError'); } }));
-  await restricted.goto(`${base}/#/p/p1/settings`);
+  await restricted.goto(`${base}/#/`);
+  await restricted.locator('#vc-tour-skip').click();
+  await restricted.evaluate(() => { location.hash = '#/p/p1/settings'; });
   await restricted.locator('#gen').waitFor();
   assert.equal(await restricted.locator('html').getAttribute('lang'), 'ja');
   await restricted.locator('#ui-language').selectOption('en');
@@ -261,7 +267,7 @@ try {
   }
   assert.equal(writes.filter(w => w.path === '/api/projects/p1' && w.body.language).length, languageWriteCount, 'UI switching never writes video language');
   assert.deepEqual(errors, [], 'browser JS errors');
-  console.log(`PASS: 4 languages × home, project, settings, progress, candidates, review, exports, artifacts, delete, P11 scenes and shared BGM; all 11 presets, language contract/rollback, persistence, draft/media preservation, in-flight saves, stale routes and blocked storage. Screenshots: ${output}`);
+  console.log(`PASS: 4 languages × home, project, settings, progress, candidates, review, exports, artifacts, delete, P11 scenes and shared BGM; ${presets.filter(preset => !preset.short).length} main presets, language contract/rollback, persistence, draft/media preservation, in-flight saves, stale routes and blocked storage. Screenshots: ${output}`);
 } catch (error) {
   console.error('Browser errors:', errors, '\nPage:', await page.locator('body').innerText());
   await screenshot('failure');

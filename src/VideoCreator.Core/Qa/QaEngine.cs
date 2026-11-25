@@ -33,6 +33,14 @@ public sealed class QaEngine(FFmpeg ff)
             (null, null) => true,
             ({ } p, { } q) => p.Shape == q.Shape && p.X == q.X && p.Y == q.Y && p.Width == q.Width && p.Height == q.Height,
             _ => false,
+        }
+        && (a.Panels, b.Panels) switch
+        {
+            (null, null) => true,
+            ({ } p, { } q) => p.Count == q.Count && p.Zip(q).All(x => x.First.AssetId == x.Second.AssetId && x.First.X == x.Second.X && x.First.Y == x.Second.Y
+                && x.First.Width == x.Second.Width && x.First.Height == x.Second.Height && x.First.Border == x.Second.Border
+                && x.First.CropX == x.Second.CropX && x.First.CropY == x.Second.CropY),
+            _ => false,
         };
 
     /// <summary>Checks that need no rendered file (also used for instant re-evaluation after edits, AT-09).</summary>
@@ -107,13 +115,15 @@ public sealed class QaEngine(FFmpeg ff)
             { Items = lostNegation.Select(t => TelopItem(t, "根拠発話の否定（〜ない など）がテロップから抜けています")).ToList() });
 
         var unapprovedItems = plan.Telops.Where(t => t.Enabled && !t.Approved).Select(t => TelopItem(t, "未承認"))
-            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved).Select(i => InsertItem(i, "未承認のカード"))).ToList();
+            .Concat(plan.Inserts.Where(i => i.Enabled && i.Kind == "card" && i.Text.Length > 0 && !i.Approved).Select(i => InsertItem(i, "未承認のカード")))
+            .Concat(p.HasTelop("ticker") ? (plan.Ticker?.Items ?? []).Where(i => i.Enabled && !i.Approved).Select(i => new QaItem(i.Id, "ticker", "未承認の速報項目（出典を確認して承認してください）")) : []).ToList();
         var unapproved = unapprovedItems.Count;
         bool staleApproval = ctx.Approval != null && ctx.Approval.PlanHash != EditPlanFingerprint.Of(plan);
         res.Add(new("H-08", unapproved == 0 && !staleApproval ? QaStatus.Pass : QaStatus.Fail,
             staleApproval ? "候補の承認は編集後に失効しています" : unapproved.ToString(IC), "0・承認ハッシュが一致", "未承認テロップ・失効した承認") { Items = unapprovedItems });
 
-        var missing = plan.Timeline.Select(c => c.AssetId).Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId)).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
+        var missing = plan.Timeline.Select(c => c.AssetId).Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => c.Pip!.AssetId))
+            .Concat(plan.Timeline.SelectMany(c => c.Panels ?? []).Select(x => x.AssetId)).Distinct().Where(a => !ctx.RightsAssetIds.Contains(a))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.ImageAssetId != null && !ctx.RightsAssetIds.Contains(i.ImageAssetId)).Select(i => i.ImageAssetId!))
             .Concat(plan.Inserts.Where(i => i.Enabled && i.Path != null && !i.RightsConfirmed).Select(i => Path.GetFileName(i.Path!))).ToList();
         res.Add(new("H-09", missing.Count == 0 ? QaStatus.Pass : QaStatus.Fail, missing.Count == 0 ? "all confirmed" : string.Join(",", missing), "all assets confirmed", "権利確認")

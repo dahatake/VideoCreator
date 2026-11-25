@@ -33,7 +33,7 @@
 | `E-RIGHTS-REQUIRED` | 勾选所有素材权利确认，BGM、注册视频及图像需另行确认 |
 | `E-ING-UNSUPPORTED` | 检查路径、真实格式、视频轨及 10 秒～3 小时条件。仅改扩展名无效 |
 | 接收或复制失败 | 检查 OS 临时区域及项目保存位置空间，大素材可考虑完整路径引用 |
-| `E-ASR-PROVIDER`、401 | 检查自己的端点、网络及是否通过 `az login` 登录资源租户 |
+| `E-ASR-PROVIDER`、转写连接失败或超时 | 在**设置 → AI 连接**中检查端点并运行连接测试。检查网络、代理和防火墙，恢复后重新生成候选。若为 401，还需检查是否通过 `az login` 登录资源租户 |
 | Speech/OpenAI 403 | 向管理员确认用户角色和网络限制。可打开管理界面的权限不同于处理数据权限 |
 | 连接测试详情包含 `SSL connection could not be established` | 更新至最新版并重启应用。Azure 通信使用 TLS 1.2，以兼容会中断 TLS 1.3 握手的环境。若仍失败，请管理员检查代理、证书与防火墙，不要禁用证书验证 |
 | 已登录 Azure 仍无法认证 | 若其他账户被优先使用，在启动环境配置 `AZURE_TOKEN_CREDENTIALS=AzureCliCredential` |

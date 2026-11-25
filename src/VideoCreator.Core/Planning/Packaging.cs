@@ -308,6 +308,7 @@ public static class InsertPlanner
                     AudioIn = c.AudioIn is double a ? a + rel * c.Speed : null,
                     Reframe = c.Reframe with { Track = Shift(c.Reframe.Track), TrackY = Shift(c.Reframe.TrackY) },
                     Pip = c.Pip is { } pip ? pip with { SrcIn = pip.SrcIn + rel * c.Speed } : null,
+                    Panels = c.Panels?.Select(x => x with { SrcIn = x.SrcIn + rel * c.Speed }).ToList(),
                 });
                 return;
             }

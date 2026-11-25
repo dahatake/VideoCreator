@@ -85,6 +85,17 @@ public static class AssetRoles
         assets.FirstOrDefault(a => a.Role == AssetRole.Main) ?? assets.FirstOrDefault(a => a.Role == AssetRole.CamA) ?? assets.FirstOrDefault(a => a.Role == AssetRole.CamB);
 
     public static List<SourceAsset> Screens(IReadOnlyList<SourceAsset> assets) => assets.Where(a => a.Role == AssetRole.Screen).ToList();
+
+    /// <summary>
+    /// News anchors: every recording with a picture whose role shows a person (Main, camera A, camera B), Main first. Each one is a box of the split screen
+    /// when no material is shown; with one anchor the pattern stays a single camera.
+    /// </summary>
+    public static List<SourceAsset> Anchors(IReadOnlyList<SourceAsset> assets) =>
+        assets.Where(a => (a.Role is AssetRole.Main or AssetRole.CamA or AssetRole.CamB) && a.Media.Width > 0 && a.Media.Height > 0)
+            .OrderBy(a => a.Role).ToList();
+
+    /// <summary>Which transcript speaker (1-based) an anchor shows: its assigned speaker, else its place in <see cref="Anchors"/>.</summary>
+    public static int AnchorSpeaker(IReadOnlyList<SourceAsset> anchors, SourceAsset a) => a.Speaker ?? anchors.ToList().FindIndex(x => x.Id == a.Id) + 1;
 }
 
 public sealed record MediaInfo
@@ -447,6 +458,12 @@ public sealed record Clip
     public ReframeSpec Reframe { get; init; } = new();
     /// <summary>Optional inset of a second asset (screen layout: the presenter over the screen recording).</summary>
     public PipSpec? Pip { get; init; }
+    /// <summary>
+    /// Split screen (news pattern with several anchors): every camera in its own box (Shape "panel", cover-cropped by CropX/CropY/CropW/CropH),
+    /// over a dimmed copy of this clip's own camera (the current speaker); the speaker's box has <see cref="PipSpec.Border"/> &gt; 0. Null = no split.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<PipSpec>? Panels { get; init; }
     public double Zoom { get; init; } = 1.0;
     public string TransitionIn { get; init; } = "cut";
     public string Role { get; init; } = "body";      // body | teaser | reaction | wide | recap | next (series)
@@ -591,10 +608,42 @@ public sealed record EditPlan
     public List<Insert> Inserts { get; init; } = [];
     /// <summary>Review acknowledgements, excluded from the rendered-content fingerprint.</summary>
     public List<QaCheckApproval>? QaApprovals { get; init; }
+    /// <summary>News pattern: the fixed lower ticker with related items found by web search (each with its source and retrieval time). Null = no ticker.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NewsTicker? Ticker { get; init; }
     /// <summary>Length of the edited body (the timeline) — what the preset's duration range applies to.</summary>
     public double Duration => Timeline.Sum(c => c.Length);
     /// <summary>Length of the rendered file: body + enabled inserts.</summary>
     public double TotalDuration => Duration + Inserts.Where(i => i.Enabled).Sum(i => i.Duration);
+}
+
+/// <summary>
+/// The fixed news ticker (lower band) of one edit. Items come from a web search on the topics of the selected speech: an item is kept only with a
+/// source URL the search actually returned, and it is shown with that source and the time of retrieval. AI-found items start unapproved (H-08).
+/// </summary>
+public sealed record NewsTicker
+{
+    /// <summary>Label on the left of the band (速報 / BREAKING …), in the plan's language.</summary>
+    public string Label { get; init; } = "";
+    public List<NewsTickerItem> Items { get; init; } = [];
+    /// <summary>azure-openai | copilot — the AI connection whose web search found the items.</summary>
+    public string? Provider { get; init; }
+    /// <summary>The search queries sent (derived from the speech), for review.</summary>
+    public List<string> Queries { get; init; } = [];
+    public DateTimeOffset? RetrievedAt { get; init; }
+}
+
+public sealed record NewsTickerItem
+{
+    public required string Id { get; init; }
+    public required string Text { get; init; }
+    public required string SourceUrl { get; init; }
+    public string SourceTitle { get; init; } = "";
+    /// <summary>Publication date the source states (yyyy-MM-dd), when known.</summary>
+    public string? Published { get; init; }
+    public DateTimeOffset RetrievedAt { get; init; }
+    public bool Approved { get; init; }
+    public bool Enabled { get; init; } = true;
 }
 
 /// <summary>Something played between timeline clips: an opening / closing video (bumper) or a 2–3 s tsukkomi card.</summary>

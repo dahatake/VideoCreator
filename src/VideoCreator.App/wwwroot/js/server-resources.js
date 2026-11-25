@@ -1,6 +1,11 @@
 // Preset display metadata is keyed by the API's stable preset IDs, never by media text.
 // Each row: name, genre, opening, pace, text, sound, optional localized example title(s).
 export const presetDisplays = {
+  P13: {
+    en: ['News (anchor + visuals)', 'News / business', 'Start with the anchor', 'Edit one story at sentence boundaries; place visuals beside the presenter', 'Verbatim captions, a headline and a visual inset clear of faces and captions', 'Clear main audio (no BGM or effects by default)', 'Satya Nadella’s Ignite Keynote in under 5 minutes', 'Microsoft Ignite highlights | VEN001', 'This Morning’s Top Headlines | Morning News NOW'],
+    'zh-CN': ['新闻（主播＋资料）', '新闻／商务', '从主播画面开始', '按句子边界整理一个话题，在讲话者旁叠加资料', '逐字字幕、话题标题和避开人脸、字幕的资料小窗', '清晰的主音频（默认无背景音乐和音效）', 'Satya Nadella 的 Ignite 主题演讲五分钟精华', 'Microsoft Ignite 精彩回顾 | VEN001', '今日早间头条 | Morning News NOW'],
+    ko: ['뉴스(앵커＋자료)', '뉴스·비즈니스', '앵커 영상으로 시작', '한 주제를 문장 경계에서 편집하고 화자 옆에 자료 배치', '축어 자막, 주제 제목과 얼굴·자막을 피한 자료 창', '명료한 주 음성(기본 BGM·효과음 없음)', 'Satya Nadella의 Ignite 기조연설 5분 요약', 'Microsoft Ignite 하이라이트 | VEN001', '오늘 아침 주요 뉴스 | Morning News NOW'],
+  },
   P11: {
     en: ['Presenter background + slides PiP', 'Presentation', 'Start with the main camera', 'Avoid faces automatically; switch to slides when no safe inset fits', 'Verbatim captions; slides avoid faces and text', 'Main audio only; screen audio used for sync'],
     'zh-CN': ['人物背景＋资料画中画', '演示', '从主视频开始', '自动避开人脸，无法安全放置时切换至资料', '逐字字幕，资料避开人脸和文字', '仅主音轨；屏幕音频用于同步'],
@@ -187,6 +192,15 @@ export const serverMessages = [
   ['AI による章分けに失敗したため、書き起こしの語彙の変化と間から話題の切れ目を探しました', 'AI chaptering failed; topic boundaries use transcript vocabulary changes and pauses.', 'AI 分章失败，已按转写词汇变化及停顿寻找话题边界。', 'AI 챕터 분할 실패로 어휘 변화·간격에서 주제 경계를 찾았습니다.'],
   ['話の意味の変化の解析に失敗したため、語彙の変化と間から話題の切れ目を探しました', 'Semantic analysis failed; boundaries use vocabulary changes and pauses.', '语义变化分析失败，已按词汇变化及停顿寻找话题边界。', '의미 변화 분석 실패로 어휘 변화·간격에서 경계를 찾았습니다.'],
   ['話し手のカメラがないため、ワイプなしで画面だけを使います', 'No presenter camera; using screen only, without an inset.', '没有讲解者机位，仅使用屏幕，不显示画中画。', '화자 카메라가 없어 작은 창 없이 화면만 사용합니다.'],
+  ['話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材、またはキャスター 2 人以上のカメラ（「メイン」「カメラA」「カメラB」）を指定してください', 'Specify a presenter camera (role Main or Camera A) and a media item with the Screen role, or cameras for two or more anchors (Main, Camera A, Camera B).', '请指定讲解者机位（角色“主”或“摄像机 A”）和角色为“屏幕”的素材，或两位及以上主播的机位（“主”“摄像机 A”“摄像机 B”）。', '화자 카메라(역할 “메인” 또는 “카메라 A”)와 역할이 “화면”인 미디어, 또는 앵커 2명 이상의 카메라(“메인”“카메라 A”“카메라 B”)를 지정하세요.'],
+  ['複数のキャスター素材がありますが、同じ時刻を撮っている区間がないため分割画面にはしませんでした', 'There are several anchor cameras, but none overlaps in time, so no split screen was used.', '有多个主播素材，但没有同时拍摄的区间，因此未使用分屏。', '앵커 영상이 여러 개 있지만 같은 시간을 촬영한 구간이 없어 분할 화면을 쓰지 않았습니다.'],
+  ['未承認の速報項目（出典を確認して承認してください）', 'Unapproved ticker item (check the source and approve it)', '未批准的快讯条目（请核对来源后批准）', '승인되지 않은 속보 항목(출처를 확인하고 승인하세요)'],
+  ['速報帯: Web 検索の結果を読み取れなかったため、速報帯は付けません', 'Ticker: the web search result could not be read, so no ticker is added.', '快讯条：无法读取网络搜索结果，因此不添加快讯条。', '속보 띠: 웹 검색 결과를 읽지 못해 속보 띠를 넣지 않습니다.'],
+  ['速報帯: 出典を確認できる最新情報が見つからなかったため、速報帯は付けません', 'Ticker: no recent news with a verifiable source was found, so no ticker is added.', '快讯条：未找到来源可核实的最新信息，因此不添加快讯条。', '속보 띠: 출처를 확인할 수 있는 최신 정보가 없어 속보 띠를 넣지 않습니다.'],
+  ['速報帯: 設定中の AI 接続は Web 検索に対応していないため、速報帯は付けません', 'Ticker: the configured AI connection cannot search the web, so no ticker is added.', '快讯条：当前 AI 连接不支持网络搜索，因此不添加快讯条。', '속보 띠: 설정된 AI 연결이 웹 검색을 지원하지 않아 속보 띠를 넣지 않습니다.'],
+  ['速報帯: AI 接続が未設定のため、Web 検索による速報帯は付けません', 'Ticker: no AI connection is set up, so no web-searched ticker is added.', '快讯条：未设置 AI 连接，因此不添加基于网络搜索的快讯条。', '속보 띠: AI 연결이 설정되지 않아 웹 검색 속보 띠를 넣지 않습니다.'],
+  ['速報帯がありません', 'This video has no ticker', '此视频没有快讯条', '이 동영상에는 속보 띠가 없습니다'],
+  ['速報の文が空です', 'The ticker text is empty', '快讯文本为空', '속보 문장이 비어 있습니다'],
   ['カメラと話者を自動では判定できませんでした（マイクが共通の可能性）。素材の「話者」欄で指定できます。いまは基準=話者1、カメラB=話者2として扱います', 'Could not identify speakers/cameras (possibly shared microphones). Set speaker numbers in media. Currently reference=1, camera B=2.', '无法自动识别机位和说话人（可能共用麦克风）。可在素材中指定说话人编号。目前基准=1，摄像机 B=2。', '카메라·화자를 자동 판단하지 못했습니다(공용 마이크 가능). 미디어 화자 번호를 지정하세요. 현재 기준=1, 카메라 B=2입니다.'],
   ['候補の承認は編集後に失効しています', 'Candidate approval invalidated by edits', '编辑后候选批准已失效', '편집 후 후보 승인 무효'],
   ['未承認', 'Not approved', '未批准', '미승인'],
@@ -237,6 +251,15 @@ export const serverMessages = [
 export const serverPatterns = [
   [/^文字が安全領域からはみ出しています（x([\d.-]+)–([\d.-]+), y([\d.-]+)–([\d.-]+)）$/, ['文字が安全領域からはみ出しています（x{0}–{1}, y{2}–{3}）', 'Text exceeds safe area (x{0}–{1}, y{2}–{3})', '文字超出安全区（x{0}～{1}，y{2}～{3}）', '글자가 안전 영역을 벗어남(x{0}~{1}, y{2}~{3})']],
   [/^行頭「(.+)」$/, ['行頭「{0}」', 'Invalid line-start character “{0}”', '行首禁则字符“{0}”', '줄 시작 금칙 문자 “{0}”']],
+  [/^速報帯の最新情報を Web 検索しています（(.+)）$/, ['速報帯の最新情報を Web 検索しています（{0}）', 'Searching the web for the latest news for the ticker ({0})', '正在通过网络搜索快讯条的最新信息（{0}）', '속보 띠용 최신 정보를 웹에서 검색하는 중({0})']],
+  [/^速報帯: Web 検索に失敗したため、速報帯は付けません（(.+)）$/, ['速報帯: Web 検索に失敗したため、速報帯は付けません（{0}）', 'Ticker: the web search failed, so no ticker is added ({0}).', '快讯条：网络搜索失败，因此不添加快讯条（{0}）。', '속보 띠: 웹 검색에 실패해 속보 띠를 넣지 않습니다({0}).']],
+  [/^速報帯: 検索結果に無い出典を挙げた (\d+) 件を除きました$/, ['速報帯: 検索結果に無い出典を挙げた {0} 件を除きました', 'Ticker: removed {0} item(s) citing a source the search did not return.', '快讯条：已移除 {0} 条引用了搜索结果中不存在来源的条目。', '속보 띠: 검색 결과에 없는 출처를 든 {0}건을 제외했습니다.']],
+  [/^速報帯: 公開日が未来の (\d+) 件を除きました$/, ['速報帯: 公開日が未来の {0} 件を除きました', 'Ticker: removed {0} item(s) dated in the future.', '快讯条：已移除 {0} 条发布日期在未来的条目。', '속보 띠: 게시일이 미래인 {0}건을 제외했습니다.']],
+  [/^速報帯: (\d+) 文字を超える (\d+) 件を除きました$/, ['速報帯: {0} 文字を超える {1} 件を除きました', 'Ticker: removed {1} item(s) longer than {0} characters.', '快讯条：已移除 {1} 条超过 {0} 个字符的条目。', '속보 띠: {0}자를 넘는 {1}건을 제외했습니다.']],
+  [/^速報帯: Web 検索（(.+)）で (\d+) 件を取得しました。出典を確認して承認してください（未承認のままでは書き出せません）$/, ['速報帯: Web 検索（{0}）で {1} 件を取得しました。出典を確認して承認してください（未承認のままでは書き出せません）', 'Ticker: {1} item(s) found by web search ({0}). Check the sources and approve them (unapproved items block export).', '快讯条：通过网络搜索（{0}）获取了 {1} 条。请核对来源并批准（未批准则无法导出）。', '속보 띠: 웹 검색({0})으로 {1}건을 가져왔습니다. 출처를 확인하고 승인하세요(미승인 상태로는 내보낼 수 없음).']],
+  [/^速報の文は (\d+) 文字以内にしてください$/, ['速報の文は {0} 文字以内にしてください', 'Keep the ticker text within {0} characters', '快讯文本请控制在 {0} 个字符以内', '속보 문장은 {0}자 이내로 하세요']],
+  [/^速報の項目 (.+) がありません$/, ['速報の項目 {0} がありません', 'Ticker item {0} not found', '找不到快讯条目 {0}', '속보 항목 {0}이(가) 없습니다']],
+  [/^キャスター (\d+) 人の映像を、資料を出さない ([\d.]+) 秒は分割画面（(.+)）で並べ、話している人の枠を黄色で示しました。資料の表示中は話している人のカメラに資料を重ねます。話者の対応はプレビューで確認してください$/, ['キャスター {0} 人の映像を、資料を出さない {1} 秒は分割画面（{2}）で並べ、話している人の枠を黄色で示しました。資料の表示中は話している人のカメラに資料を重ねます。話者の対応はプレビューで確認してください', 'For the {1} s without visuals, the {0} anchors are shown side by side ({2}) with the current speaker outlined in yellow; while visuals are shown they appear over the speaker\'s camera. Check the speaker assignment in the preview.', '在不显示资料的 {1} 秒内，将 {0} 位主播以分屏（{2}）并排显示，并以黄色边框标出正在说话的人；显示资料时叠加在说话人的机位上。请在预览中确认说话人对应关系。', '자료를 보이지 않는 {1}초 동안 앵커 {0}명을 분할 화면({2})으로 나란히 보여 주고 말하는 사람을 노란 테두리로 표시했습니다. 자료 표시 중에는 말하는 사람의 카메라에 자료를 겹칩니다. 화자 대응은 미리보기에서 확인하세요.']],
   [/^行末「(.+)」$/, ['行末「{0}」', 'Invalid line-end character “{0}”', '行尾禁则字符“{0}”', '줄 끝 금칙 문자 “{0}”']],
   [/^(\d+)字$/, ['{0}字', '{0} characters', '{0} 字', '{0}자']],
   [/^・計画 ([\d.]+)s と不一致$/, ['・計画 {0}s と不一致', '; does not match planned {0} s', '；与计划 {0} 秒不一致', '·계획한 {0}초와 불일치']],

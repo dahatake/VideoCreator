@@ -54,10 +54,40 @@ public static class PlanEditor
                     Inserts = plan.Inserts.Select(i => i.Kind == "card" ? i with { Approved = true } : i).ToList(),
                     Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "approve_all_cards", "cards", null, "true")] },
                 },
+                "approve_ticker" => UpdateTicker(plan, op.Target ?? throw new ArgumentException("target required"), i => i with { Approved = true }, "approve_ticker", "true"),
+                "set_ticker_enabled" => UpdateTicker(plan, op.Target ?? throw new ArgumentException("target required"), i => i with { Enabled = op.Enabled ?? true }, "set_ticker_enabled", (op.Enabled ?? true).ToString()),
+                // a hand-written line is the user's own claim: approved, but the source stays as retrieved so the viewer can still check it
+                "replace_ticker_text" => UpdateTicker(plan, op.Target ?? throw new ArgumentException("target required"), i => i with { Text = TickerText(op.Text), Approved = true }, "replace_ticker_text", TickerText(op.Text)),
+                "approve_all_ticker" => plan.Ticker is not { } tk ? plan : plan with
+                {
+                    Ticker = tk with { Items = tk.Items.Select(i => i with { Approved = true }).ToList() },
+                    Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, "approve_all_ticker", "ticker", null, "true")] },
+                },
                 _ => throw new ArgumentException($"unknown op {op.Op}"),
             };
         }
         return plan;
+    }
+
+    public const int MaxTickerLength = 60;
+
+    static string TickerText(string? text)
+    {
+        var t = (text ?? "").Trim().ReplaceLineEndings(" ");
+        if (t.Length == 0) throw new ArgumentException("速報の文が空です");
+        if (t.Length > MaxTickerLength) throw new ArgumentException($"速報の文は {MaxTickerLength} 文字以内にしてください");
+        return t;
+    }
+
+    static EditPlan UpdateTicker(EditPlan plan, string id, Func<NewsTickerItem, NewsTickerItem> f, string op, string to)
+    {
+        var tk = plan.Ticker ?? throw new KeyNotFoundException("速報帯がありません");
+        var item = tk.Items.FirstOrDefault(i => i.Id == id) ?? throw new KeyNotFoundException($"速報の項目 {id} がありません");
+        return plan with
+        {
+            Ticker = tk with { Items = tk.Items.Select(i => i.Id == id ? f(i) : i).ToList() },
+            Provenance = plan.Provenance with { Edits = [.. plan.Provenance.Edits, new EditRecord(DateTimeOffset.Now, op, id, item.Text, to)] },
+        };
     }
 
     // ---------------- scene-matched BGM ----------------
@@ -232,6 +262,8 @@ public static class PlanEditor
         {
             Telops = telops,
             Inserts = inserts,
+            // the headlines were retrieved (and checked) for the topic, not for the cut: keep them and their approvals
+            Ticker = previous.Ticker ?? rebuilt.Ticker,
             Audio = BgmPlanner.Carry(rebuilt.Audio with { Bgm = previous.Audio.BgmCues.Count > 0 ? rebuilt.Audio.Bgm : previous.Audio.Bgm, SfxEnabled = previous.Audio.SfxEnabled, BgmMutes = previous.Audio.Bgm == null && previous.Audio.BgmCues.Count == 0 ? [] : rebuilt.Audio.BgmMutes }, previous.Audio),
             Provenance = previous.Provenance with { Edits = [.. previous.Provenance.Edits] },
         };

@@ -222,8 +222,10 @@ public static class PlanBuilder
         {
             var screens = AssetRoles.Screens(r.Assets);
             var presenter = AssetRoles.Presenter(r.Assets);
-            if (screens.Count == 0 || presenter == null) throw new PlanException("E-PIP-ASSETS", "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材を指定してください");
-            return PipPlanner.Plan(clips, r.Transcript, r.Master, presenter, screens, r.Preset, canvas, notes, r.Faces.GetValueOrDefault(presenter.Id));
+            var anchors = r.Preset.Screen?.SplitAnchors == true ? AssetRoles.Anchors(r.Assets) : [];
+            if (presenter == null || screens.Count == 0 && anchors.Count < 2)
+                throw new PlanException("E-PIP-ASSETS", "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材、またはキャスター 2 人以上のカメラ（「メイン」「カメラA」「カメラB」）を指定してください");
+            return PipPlanner.Plan(clips, r.Transcript, r.Master, presenter, screens, r.Preset, canvas, notes, r.Faces.GetValueOrDefault(presenter.Id), anchors, r.Faces);
         }
         if (r.Preset.Planner != "screen") return clips;
         if (r.Screen == null) { notes.Add("画面収録の解析結果がないため、基準映像だけで編集しました"); return clips; }
@@ -241,7 +243,7 @@ public static class PlanBuilder
         var res = new List<Clip>();
         foreach (var c in clips)
         {
-            double ppm = Math.Max(Ppm(c.AssetId), Ppm(c.Pip?.AssetId));
+            double ppm = Math.Max(Math.Max(Ppm(c.AssetId), Ppm(c.Pip?.AssetId)), c.Panels?.Max(x => Ppm(x.AssetId)) ?? 0);
             double maxLen = ppm > 0 ? 0.5 / fps / (ppm * 1e-6) : double.MaxValue, span = c.MasterOut - c.MasterIn;
             if (span <= maxLen) { res.Add(c); continue; }
             int n = (int)Math.Ceiling(span / maxLen);
@@ -259,6 +261,7 @@ public static class PlanBuilder
                     TransitionSec = k == 0 ? c.TransitionSec : 0,
                     Reframe = c.Reframe with { Track = Shift(c.Reframe.Track), TrackY = Shift(c.Reframe.TrackY) },
                     Pip = c.Pip is { } pip && byId.TryGetValue(pip.AssetId, out var pa) ? pip with { SrcIn = Math.Round(pa.CameraTime(m0, masterId), 3) } : c.Pip,
+                    Panels = c.Panels?.Select(x => byId.TryGetValue(x.AssetId, out var xa) ? x with { SrcIn = Math.Round(xa.CameraTime(m0, masterId), 3) } : x).ToList(),
                 });
             }
         }

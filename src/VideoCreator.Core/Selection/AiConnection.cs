@@ -78,9 +78,11 @@ public static class AiDiagnostics
             return new("entra_signin", "Microsoft Entra ID のトークンを取得できませんでした。このPCで az login（テナントが複数あるときは az login --tenant <テナント ID>）を実行してから、もう一度テストしてください", detail);
         if (ex is LlmSchemaException)
             return new("bad_reply", "応答は返りましたが、決められた JSON 形式ではありませんでした。別のモデルを選ぶか、もう一度テストしてください", detail);
-        if (ex is TimeoutException || ex is TaskCanceledException { InnerException: TimeoutException } || ex is OperationCanceledException)
+        if (ex is TimeoutException || ex is TaskCanceledException { InnerException: TimeoutException } || ex is OperationCanceledException
+            || ex is Asr.AsrException { InnerException: OperationCanceledException })
             return new("timeout", "応答が時間内に返りませんでした。ネットワークとプロキシを確認し、もう一度テストしてください", detail);
-        if (ex is HttpRequestException { InnerException: SocketException } || ex.InnerException is HttpRequestException { InnerException: SocketException } || ex is HttpRequestException { StatusCode: null })
+        if (ex is HttpRequestException { InnerException: SocketException } || ex.InnerException is HttpRequestException { InnerException: SocketException }
+            || ex is HttpRequestException { StatusCode: null } || ex is Asr.AsrException { InnerException: HttpRequestException { StatusCode: null } })
             return new("unreachable", "エンドポイントに接続できません。リソース名（ホスト名）のつづりと、ネットワーク・プロキシ・ファイアウォールを確認してください", detail);
         if (provider == "speech" && ex is Asr.AsrException speech)
             return speech.StatusCode switch

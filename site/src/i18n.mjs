@@ -30,7 +30,7 @@ export const t = {
     },
     home: {
       title: 'VideoCreator — 社内動画から字幕付きの短い動画を作るアプリ',
-      description: '動画編集が初めてでも、社内動画から字幕付きの短い動画を作れるオープンソースのアプリ。12の編集パターン、話した言葉どおりの字幕、自動QAで、確認してから書き出せます。',
+      description: '動画編集が初めてでも、社内動画から字幕付きの短い動画を作れるオープンソースのアプリ。13の編集パターン、話した言葉どおりの字幕、自動QAで、確認してから書き出せます。',
       eyebrow: 'オープンソース · MIT License',
       h1a: '長い動画から、', h1b: '伝わる短い1本へ。',
       lead: '動画を選び、編集パターンを指定するだけ。AI が場面の候補を提案し、字幕・テロップ・音量を整えます。書き出す前に人が確認して承認し、投稿は自動では行いません。',
@@ -60,7 +60,7 @@ export const t = {
         { t: '前編・後編', d: '本数（2〜20本）か1本あたりの長さを指定すると、話題の切れ目で分けたシリーズにします。' },
         { t: '複数素材の同期', d: '同じ場面を撮った複数のカメラや画面収録を、音声から自動で同期します。' },
       ],
-      patternsTitle: '12 の編集パターン', patternsLead: '尺・テンポ・テロップ・音の方針をプリセットとして持っています。グラフは各パターンの目標尺です。', patternsCta: 'すべてのパターンを見る',
+      patternsTitle: '13 の編集パターン', patternsLead: '尺・テンポ・テロップ・音の方針をプリセットとして持っています。グラフは各パターンの目標尺です。', patternsCta: 'すべてのパターンを見る',
       audiencesTitle: 'あなたに合った入口から',
       users: { t: '使う人へ', d: '準備から最初の1本の保存まで。画面とボタンの意味、困ったときの切り分け方。' },
       engineers: { t: 'カスタマイズする人へ', d: '構成とデータ、壊してはいけない契約、変更箇所と対応テスト、設定と API。' },
@@ -81,7 +81,7 @@ export const t = {
         { t: '始める', items: [
           { t: 'はじめる前のチェックリスト', d: '管理者と分担すること、動画の権利、送信先と費用。', page: 'quickstart', heading: '始める前に：管理者と分担する' },
           { t: '最初の1本（6ステップ）', d: '起動確認から書き出しまで、最短経路で進めます。', page: 'quickstart' },
-          { t: '編集パターンを選ぶ', d: '12 パターンの目的・尺・テンポを比較します。', page: 'patterns' },
+          { t: '編集パターンを選ぶ', d: '13 パターンの目的・尺・テンポを比較します。', page: 'patterns' },
           { t: 'Azure の接続を設定する', d: '設定画面で Entra ID または API キーを選びます。', page: 'azure-access', heading: '利用者: 設定画面で選ぶ' },
         ] },
         { t: '使いこなす', items: [
@@ -128,7 +128,7 @@ export const t = {
       filter: '表を絞り込む（例: テロップ、ASR、UI）', filterCount: '件を表示',
     },
     patterns: {
-      title: '編集パターン P1〜P12 — 目的・尺・テンポで選ぶ', description: 'VideoCreator の12の編集パターン（プリセット）を、ジャンル・目標尺・縦横比・冒頭・テンポ・テロップ・音で比較します。値はリポジトリーの presets から自動生成しています。',
+      title: '編集パターン P1〜P13 — 目的・尺・テンポで選ぶ', description: 'VideoCreator の13の編集パターン（プリセット）を、ジャンル・目標尺・縦横比・冒頭・テンポ・テロップ・音で比較します。値はリポジトリーの presets から自動生成しています。',
       lead: '値はリポジトリーの presets/*.json から自動生成しています。迷ったら P4 から始めてください。',
       chartTitle: '目標尺（秒）', chartDesc: '各パターンが目指す完成動画の長さの範囲です。バーにフォーカスすると値を表示します。',
       sortId: 'ID 順', sortLen: '尺の短い順', all: 'すべて', filterLabel: 'ジャンルで絞り込む',
@@ -158,7 +158,7 @@ export const t = {
     },
     home: {
       title: 'VideoCreator — Turn internal videos into short subtitled clips',
-      description: 'An open-source app that turns internal videos into short subtitled clips, even if you have never edited video. 12 editing patterns, verbatim captions and automatic QA, with human review before export.',
+      description: 'An open-source app that turns internal videos into short subtitled clips, even if you have never edited video. 13 editing patterns, verbatim captions and automatic QA, with human review before export.',
       eyebrow: 'Open source · MIT License',
       h1a: 'From a long recording', h1b: 'to one clip that lands.',
       lead: 'Pick a video and an editing pattern. AI proposes candidate scenes and the app tidies captions, on-screen text and loudness. A person reviews and approves before export, and nothing is posted automatically.',
@@ -188,7 +188,7 @@ export const t = {
         { t: 'Series', d: 'Give a count (2–20) or a length per part and the video is split at topic boundaries.' },
         { t: 'Multi-source sync', d: 'Multiple cameras and screen recordings of one scene are synchronized from audio.' },
       ],
-      patternsTitle: '12 editing patterns', patternsLead: 'Presets hold the duration, tempo, caption and sound policy. The chart shows each target duration.', patternsCta: 'See all patterns',
+      patternsTitle: '13 editing patterns', patternsLead: 'Presets hold the duration, tempo, caption and sound policy. The chart shows each target duration.', patternsCta: 'See all patterns',
       audiencesTitle: 'Choose your way in',
       users: { t: 'For users', d: 'From preparation to saving your first video. What each control means and how to troubleshoot.' },
       engineers: { t: 'For customizers', d: 'Architecture and data, contracts you must not break, change points with matching tests, configuration and API.' },
@@ -209,7 +209,7 @@ export const t = {
         { t: 'Get started', items: [
           { t: 'Pre-flight checklist', d: 'What your administrator handles, video rights, destinations and costs.', page: 'quickstart', heading: '始める前に：管理者と分担する' },
           { t: 'Your first video', d: 'From launch check to export by the shortest path.', page: 'quickstart' },
-          { t: 'Choose an editing pattern', d: 'Compare purpose, length and tempo of the 12 patterns.', page: 'patterns' },
+          { t: 'Choose an editing pattern', d: 'Compare purpose, length and tempo of the 13 patterns.', page: 'patterns' },
           { t: 'Connect to Azure', d: 'Choose Entra ID or an API key on the settings screen.', page: 'azure-access', heading: '利用者: 設定画面で選ぶ' },
         ] },
         { t: 'Work with it', items: [
@@ -256,7 +256,7 @@ export const t = {
       filter: 'Filter the table (e.g. captions, ASR, UI)', filterCount: 'rows shown',
     },
     patterns: {
-      title: 'Editing patterns P1–P12 — choose by purpose, length and tempo', description: 'Compare the 12 VideoCreator editing patterns (presets) by genre, target length, aspect ratio, opening, tempo, captions and sound. Values are generated from the repository presets.',
+      title: 'Editing patterns P1–P13 — choose by purpose, length and tempo', description: 'Compare the 13 VideoCreator editing patterns (presets) by genre, target length, aspect ratio, opening, tempo, captions and sound. Values are generated from the repository presets.',
       lead: 'Values are generated from presets/*.json in the repository. When in doubt, start with P4.',
       chartTitle: 'Target duration (seconds)', chartDesc: 'The length range each pattern aims for. Focus a bar to read its values.',
       sortId: 'By ID', sortLen: 'Shortest first', all: 'All', filterLabel: 'Filter by genre',
@@ -286,7 +286,7 @@ export const t = {
     },
     home: {
       title: 'VideoCreator — 사내 영상을 자막이 있는 짧은 영상으로',
-      description: '영상 편집이 처음이어도 사내 영상을 자막이 있는 짧은 영상으로 만드는 오픈 소스 앱. 12가지 편집 패턴, 말한 그대로의 자막, 자동 QA로 확인 후 내보냅니다.',
+      description: '영상 편집이 처음이어도 사내 영상을 자막이 있는 짧은 영상으로 만드는 오픈 소스 앱. 13가지 편집 패턴, 말한 그대로의 자막, 자동 QA로 확인 후 내보냅니다.',
       eyebrow: '오픈 소스 · MIT License',
       h1a: '긴 영상에서,', h1b: '전달되는 짧은 한 편으로.',
       lead: '영상을 고르고 편집 패턴을 지정하기만 하면 됩니다. AI가 장면 후보를 제안하고 자막·텍스트·음량을 다듬습니다. 내보내기 전에 사람이 확인하고 승인하며, 게시는 자동으로 하지 않습니다.',
@@ -316,7 +316,7 @@ export const t = {
         { t: '전편·후편', d: '개수(2~20편) 또는 한 편의 길이를 지정하면 화제의 경계에서 나눈 시리즈로 만듭니다.' },
         { t: '여러 소재 동기화', d: '같은 장면을 찍은 여러 카메라와 화면 녹화를 음성으로 자동 동기화합니다.' },
       ],
-      patternsTitle: '12가지 편집 패턴', patternsLead: '길이·템포·자막·소리의 방침을 프리셋으로 가지고 있습니다. 그래프는 각 패턴의 목표 길이입니다.', patternsCta: '모든 패턴 보기',
+      patternsTitle: '13가지 편집 패턴', patternsLead: '길이·템포·자막·소리의 방침을 프리셋으로 가지고 있습니다. 그래프는 각 패턴의 목표 길이입니다.', patternsCta: '모든 패턴 보기',
       audiencesTitle: '나에게 맞는 입구에서',
       users: { t: '사용하는 분께', d: '준비부터 첫 영상 저장까지. 화면과 버튼의 의미, 문제가 생겼을 때의 분리 방법.' },
       engineers: { t: '커스터마이즈하는 분께', d: '구성과 데이터, 깨뜨리면 안 되는 계약, 변경 위치와 대응 테스트, 설정과 API.' },
@@ -337,7 +337,7 @@ export const t = {
         { t: '시작하기', items: [
           { t: '시작 전 체크리스트', d: '관리자와 나눌 일, 영상 권리, 전송 대상과 비용.', page: 'quickstart', heading: '始める前に：管理者と分担する' },
           { t: '첫 영상 만들기', d: '실행 확인부터 내보내기까지 가장 빠른 길로.', page: 'quickstart' },
-          { t: '편집 패턴 고르기', d: '12개 패턴의 목적·길이·템포를 비교합니다.', page: 'patterns' },
+          { t: '편집 패턴 고르기', d: '13개 패턴의 목적·길이·템포를 비교합니다.', page: 'patterns' },
           { t: 'Azure 연결 설정', d: '설정 화면에서 Entra ID 또는 API 키를 고릅니다.', page: 'azure-access', heading: '利用者: 設定画面で選ぶ' },
         ] },
         { t: '활용하기', items: [
@@ -384,7 +384,7 @@ export const t = {
       filter: '표 필터(예: 자막, ASR, UI)', filterCount: '개 표시',
     },
     patterns: {
-      title: '편집 패턴 P1~P12 — 목적·길이·템포로 고르기', description: 'VideoCreator의 12가지 편집 패턴(프리셋)을 장르·목표 길이·화면비·도입·템포·자막·소리로 비교합니다. 값은 저장소의 presets에서 자동 생성합니다.',
+      title: '편집 패턴 P1~P13 — 목적·길이·템포로 고르기', description: 'VideoCreator의 13가지 편집 패턴(프리셋)을 장르·목표 길이·화면비·도입·템포·자막·소리로 비교합니다. 값은 저장소의 presets에서 자동 생성합니다.',
       lead: '값은 저장소의 presets/*.json에서 자동 생성합니다. 망설여지면 P4부터 시작하세요.',
       chartTitle: '목표 길이(초)', chartDesc: '각 패턴이 목표로 하는 완성 영상 길이의 범위입니다. 막대에 포커스하면 값을 표시합니다.',
       sortId: 'ID 순', sortLen: '짧은 순', all: '전체', filterLabel: '장르로 필터',
@@ -414,7 +414,7 @@ export const t = {
     },
     home: {
       title: 'VideoCreator — 将内部视频制作成带字幕的短视频',
-      description: '即使从未剪辑过视频，也能把内部视频制作成带字幕短视频的开源应用。12 种编辑模式、逐字字幕和自动 QA，确认后再导出。',
+      description: '即使从未剪辑过视频，也能把内部视频制作成带字幕短视频的开源应用。13 种编辑模式、逐字字幕和自动 QA，确认后再导出。',
       eyebrow: '开源 · MIT License',
       h1a: '从冗长的录像，', h1b: '到一段能打动人的短片。',
       lead: '只需选择视频并指定编辑模式。AI 提出候选场景，并整理字幕、画面文字和音量。导出前由人工确认并批准，且不会自动发布。',
@@ -444,7 +444,7 @@ export const t = {
         { t: '上篇·下篇', d: '指定数量（2～20 个）或每段长度后，按话题分界拆分为系列。' },
         { t: '多素材同步', d: '同一场景的多个机位和屏幕录制根据音频自动同步。' },
       ],
-      patternsTitle: '12 种编辑模式', patternsLead: '预设包含时长、节奏、字幕和声音的方针。图表显示各模式的目标时长。', patternsCta: '查看全部模式',
+      patternsTitle: '13 种编辑模式', patternsLead: '预设包含时长、节奏、字幕和声音的方针。图表显示各模式的目标时长。', patternsCta: '查看全部模式',
       audiencesTitle: '从适合你的入口开始',
       users: { t: '面向使用者', d: '从准备到保存第一个视频。界面和按钮的含义，以及出问题时如何排查。' },
       engineers: { t: '面向定制者', d: '结构与数据、不可破坏的约定、修改位置与对应测试、配置与 API。' },
@@ -465,7 +465,7 @@ export const t = {
         { t: '开始', items: [
           { t: '开始前的检查清单', d: '与管理员分工、视频权利、发送目标与费用。', page: 'quickstart', heading: '始める前に：管理者と分担する' },
           { t: '第一个视频', d: '从启动检查到导出的最短路径。', page: 'quickstart' },
-          { t: '选择编辑模式', d: '比较 12 种模式的目的、时长和节奏。', page: 'patterns' },
+          { t: '选择编辑模式', d: '比较 13 种模式的目的、时长和节奏。', page: 'patterns' },
           { t: '设置 Azure 连接', d: '在设置界面选择 Entra ID 或 API 密钥。', page: 'azure-access', heading: '利用者: 設定画面で選ぶ' },
         ] },
         { t: '熟练使用', items: [
@@ -512,7 +512,7 @@ export const t = {
       filter: '筛选表格（例如：字幕、ASR、UI）', filterCount: '行已显示',
     },
     patterns: {
-      title: '编辑模式 P1～P12 — 按目的、时长和节奏选择', description: '按类型、目标时长、画面比例、开头、节奏、字幕和声音比较 VideoCreator 的 12 种编辑模式（预设）。数值根据仓库中的 presets 自动生成。',
+      title: '编辑模式 P1～P13 — 按目的、时长和节奏选择', description: '按类型、目标时长、画面比例、开头、节奏、字幕和声音比较 VideoCreator 的 13 种编辑模式（预设）。数值根据仓库中的 presets 自动生成。',
       lead: '数值根据仓库中的 presets/*.json 自动生成。犹豫时请从 P4 开始。',
       chartTitle: '目标时长（秒）', chartDesc: '各模式所追求的成品视频时长范围。聚焦到条形上即可查看数值。',
       sortId: '按 ID', sortLen: '按时长从短到长', all: '全部', filterLabel: '按类型筛选',

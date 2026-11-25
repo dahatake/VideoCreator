@@ -144,14 +144,26 @@ public class SelectionTests
     public void All_presets_load_and_mvp_presets_are_available()
     {
         var ps = Fixtures.Presets;
-        Assert.Equal(12, ps.Count);
+        Assert.Equal(13, ps.Count);
         Assert.True(ps.Values.All(p => p.Available));
         Assert.Equal(["P12"], ps.Values.Where(p => p.Short).Select(p => p.Id));
         Assert.Equal("switch", ps["P7"].Planner);
         Assert.Equal("speed", ps["P8"].Planner);
         Assert.Equal("beat", ps["P5"].Planner);
         Assert.Equal("screen", ps["P10"].Planner);
+        Assert.Equal("pip", ps["P13"].Planner);
         Assert.Contains("P3", ps["P9"].IncompatibleWith);
+    }
+
+    [Fact]
+    public void News_selection_prompt_prioritizes_the_story_without_vertical_shorts_framing()
+    {
+        var news = SelectionPrompt.System(Fixtures.Presets["P13"], 3);
+        Assert.Contains("横長動画向け", news);
+        Assert.Contains("伝えるべき出来事や要点", news);
+        Assert.Contains(Fixtures.Presets["P13"].SelectionRules, news);
+        Assert.DoesNotContain("縦型ショート候補", news);
+        Assert.Contains("縦型ショート候補", SelectionPrompt.System(Fixtures.Presets["P4"], 3));
     }
 
     [Fact]

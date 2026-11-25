@@ -159,6 +159,7 @@ public class RenderingTests : IAsyncLifetime
     public async Task Caption_lengths_fit_the_safe_zone_as_rendered()
     {
         var (plan, _, _) = Build(_landscape, 1280, 720);
+        Assert.Contains(Fixtures.Presets.Values, p => p.Id == "P13" && p.HasTelop("caption") && p.Telop.Caption.MaxLines == 2);   // a preset whose default caption already wraps is covered as shipped
         foreach (var p in Fixtures.Presets.Values.Where(p => p.HasTelop("caption")))
         {
             int n = AssWriter.CaptionLineChars(p);
@@ -169,7 +170,12 @@ public class RenderingTests : IAsyncLifetime
                 var tp = plan with { Preset = pp.Ref, Telops = [new Telop { Id = "c", Type = TelopType.Caption, Start = 1, End = 3, Text = text, Style = "Caption" }] };
                 var ass = AssWriter.Write(tp, pp);
                 Assert.DoesNotContain(@"\fs", ass);
-                Assert.Equal(pp.Telop.Caption.MaxLines > 1, ass.Contains(@"\N"));
+                int perLine = AssWriter.CaptionLineChars(pp, tp.Canvas.Width);
+                if (pp.Telop.Caption.MaxLines > 1) Assert.True(twoText.Length > perLine, $"{pp.Id}: two-line sample must exceed one line ({perLine} chars)");
+                int expectedLines = Math.Min(pp.Telop.Caption.MaxLines, (text.Length + perLine - 1) / perLine);
+                var dialogues = ass.Split('\n').Where(l => l.StartsWith("Dialogue:") && l.Contains(text[..2])).ToList();
+                Assert.NotEmpty(dialogues);
+                Assert.All(dialogues, d => Assert.Equal(expectedLines, d.Split(@"\N").Length));   // wraps exactly when the text is longer than one rendered line and the preset allows more lines
                 var res = await new QaEngine(Ff).SafeZoneAsync(new QaContext(tp, pp, Tr, ["a1"], []), Path.Combine(_dir, $"qa_cap_{pp.Id}_{pp.Telop.Caption.MaxLines}"), TestContext.Current.CancellationToken);
                 Assert.True(res.Status == QaStatus.Pass, $"{pp.Id} lines={pp.Telop.Caption.MaxLines}: {res.Measured}");
             }

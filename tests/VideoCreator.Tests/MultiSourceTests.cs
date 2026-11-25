@@ -280,6 +280,78 @@ public class MultiSourceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task News_preset_renders_the_anchor_with_a_timed_landscape_inset()
+    {
+        await Run("-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=8", "-f", "lavfi", "-i", "sine=f=440:r=48000:d=8",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", P("anchor.mp4"));
+        await Run("-f", "lavfi", "-i", "color=c=blue:s=640x360:r=30:d=8", "-c:v", "libx264", "-preset", "ultrafast", P("visual.mp4"));
+        var main = Asset("m", P("anchor.mp4"), 8, 640, 360, AssetRole.Main);
+        var screen = Asset("s", P("visual.mp4"), 8, 640, 360, AssetRole.Screen) with { PipScenes = [new(2, 6)] };
+        var speech = new List<Clip> { new() { ClipId = "c", AssetId = "m", SrcIn = 0, SrcOut = 8 } };
+        var tr = new Transcript
+        {
+            Provider = "test", Sentences = [new(0, 0, 8, "新しいニュース", 1, 0, 1)],
+            Words = [new("w1", 0.5, 1.3, "新しい", 1), new("w2", 1.3, 1.9, "ニュース", 1)],
+        };
+        var faces = Enumerable.Range(0, 17).Select(i => new FaceSample(i * 0.5, [new(0.72, 0.2, 0.15, 0.2, 1)])).ToList();
+        var preset = Fixtures.Presets["P13"];
+        var canvas = Canvas.Landscape();
+        var timeline = PipPlanner.Plan(speech, tr, main, screen, preset, canvas, [], faces);
+        var inset = Assert.Single(timeline, c => c.Pip != null).Pip!;
+        Assert.Equal("rectangle", inset.Shape);
+        Assert.True(inset.X + inset.Width < canvas.Width * 0.72 && inset.Y < canvas.Height / 2);
+
+        var plan = new EditPlan
+        {
+            EditplanId = "news", ProjectId = "p", Preset = preset.Ref, Canvas = canvas, Timeline = timeline,
+            Telops = TelopBuilder.Build(timeline, tr, preset, "", "新しいニュース", [], []),
+            TelopFaces = new() { ["m"] = new(main.Media, faces) },
+            Audio = new AudioSpec { Master = "m", SfxEnabled = false },
+        };
+        var headline = Assert.Single(plan.Telops, t => t.Type == TelopType.Headline);
+        Assert.Null(TelopLayout.Resolve(plan, preset)[headline.Id].Bounds);
+        Assert.DoesNotContain(",Headline,,0,0,0,,", AssWriter.Write(plan, preset));
+        var clearPlan = plan with
+        {
+            Timeline = speech,
+            Telops = TelopBuilder.Build(speech, tr, preset, "", "新しいニュース", [], []),
+        };
+        var clearHeadline = Assert.Single(clearPlan.Telops, t => t.Type == TelopType.Headline);
+        var titleBounds = Assert.IsType<TelopLayout.Rect>(TelopLayout.Resolve(clearPlan, preset)[clearHeadline.Id].Bounds);
+        Assert.Contains(",Headline,,0,0,0,,", AssWriter.Write(clearPlan, preset));
+        var output = await new Renderer(Ff).RenderAsync(plan, preset, new[] { main, screen }.ToDictionary(a => a.Id), P("news.mp4"), preview: true, Ct);
+        var clearOutput = await new Renderer(Ff).RenderAsync(clearPlan, preset, new[] { main, screen }.ToDictionary(a => a.Id), P("news-title.mp4"), preview: true, Ct);
+        var media = await new MediaProbe(Ff).ProbeAsync(output.Path, Ct);
+        Assert.True(media.Width > media.Height);
+        async Task<byte[]> Frame(string path, string time)
+        {
+            using var buffer = new MemoryStream();
+            await Ff.RunFfmpegAsync(["-v", "error", "-ss", time, "-i", path, "-frames:v", "1",
+                "-vf", "scale=192:108:flags=area", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], Ct, stdout: buffer);
+            return buffer.ToArray();
+        }
+        var before = await Frame(output.Path, "1");
+        var during = await Frame(output.Path, "3");
+        var after = await Frame(output.Path, "7");
+        var withTitle = await Frame(clearOutput.Path, "1");
+        int changed = 0;
+        for (int row = Math.Max(0, (int)titleBounds.Top / 10); row < Math.Min(108, (int)Math.Ceiling(titleBounds.Bottom / 10)); row++)
+        for (int col = 0; col < 192; col++)
+        {
+            int i = (row * 192 + col) * 3;
+            if (Math.Abs(withTitle[i] - before[i]) + Math.Abs(withTitle[i + 1] - before[i + 1]) + Math.Abs(withTitle[i + 2] - before[i + 2]) > 50) changed++;
+        }
+        Assert.True(changed > 20, $"headline must be visible in the rendered frame: {changed} pixels changed");
+        int x = (inset.X + inset.Width / 2) / 10, y = (inset.Y + inset.Height / 2) / 10;
+        int pixel = (y * 192 + x) * 3;
+        Assert.True(before[pixel] > 180 && before[pixel + 2] < 70);
+        Assert.True(during[pixel + 2] > 180 && during[pixel] < 70);
+        Assert.True(after[pixel] > 180 && after[pixel + 2] < 70);
+        int anchor = (30 * 192 + 170) * 3;
+        Assert.True(during[anchor] > 180 && during[anchor + 2] < 70);
+    }
+
+    [Fact]
     public async Task Background_first_pip_keeps_the_rotated_main_and_shows_only_eligible_speech()
     {
         await Run("-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=12", "-f", "lavfi", "-i", "sine=f=440:r=48000:d=12",

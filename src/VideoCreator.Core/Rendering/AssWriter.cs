@@ -18,7 +18,24 @@ public static partial class AssWriter
     public const int HeadlineMarginV = 300, EmphLift = 115, MarginL = 60, CounterMarginV = 520, TsukkomiMarginV = 930, SfxY = 820;
 
     /// <summary>Vertical telop positions and the C-4 safe zone on one canvas (all canvas px; margins from the bottom except Headline/Counter from the top).</summary>
-    public sealed record Geometry(int CaptionMarginV, int HeadlineMarginV, int CounterMarginV, int TsukkomiMarginV, int SfxY, (int Top, int Bottom, int Left, int Right) Safe, int MarginL, int MarginR);
+    public sealed record Geometry(int CaptionMarginV, int HeadlineMarginV, int CounterMarginV, int TsukkomiMarginV, int SfxY, (int Top, int Bottom, int Left, int Right) Safe, int MarginL, int MarginR)
+    {
+        /// <summary>Height of the fixed news ticker at the bottom of the safe zone (0 = no ticker); captions and bottom telops sit above it.</summary>
+        public int TickerHeight { get; init; }
+    }
+
+    /// <summary>Gap kept between the ticker and the captions above it.</summary>
+    public const int TickerGap = 12;
+
+    /// <summary>Ticker height for a canvas: 6.5 % of the height (≈ 70 px at 1080), even.</summary>
+    public static int TickerHeightFor(int canvasHeight) => (int)Math.Round(canvasHeight * 0.065) & ~1;
+
+    /// <summary>The ticker strip [top, bottom] in canvas px, when the preset has one.</summary>
+    public static (double Top, double Bottom)? TickerBand(Preset p, Canvas canvas)
+    {
+        var g = Geo(p, canvas);
+        return g.TickerHeight > 0 ? (canvas.Height - g.Safe.Bottom - g.TickerHeight, canvas.Height - g.Safe.Bottom) : null;
+    }
 
     /// <summary>
     /// Portrait canvases keep the 1080×1920 values tuned around phone-app UI (the preset's caption.margin_v, safe zone 250/580).
@@ -26,6 +43,14 @@ public static partial class AssWriter
     /// so a preset's extra caption margin (margin_v − 580) carries over and the layout scales with the canvas height.
     /// </summary>
     public static Geometry Geo(Preset p, int canvasWidth, int canvasHeight)
+    {
+        var g = BaseGeo(p, canvasWidth, canvasHeight);
+        if (!p.HasTelop("ticker") || p.Telop.IsShort) return g;
+        int th = TickerHeightFor(canvasHeight);
+        return g with { CaptionMarginV = g.CaptionMarginV + th + TickerGap, TsukkomiMarginV = g.TsukkomiMarginV + th + TickerGap, TickerHeight = th };
+    }
+
+    static Geometry BaseGeo(Preset p, int canvasWidth, int canvasHeight)
     {
         var portraitSafe = Qa.QaEngine.SafeZone;
         int mv = p.Telop.Caption.MarginV;
@@ -221,6 +246,7 @@ public static partial class AssWriter
             Inserts = plan.Inserts.Select(i => i with { Text = i.Text.Length == 0 ? i.Text : Planning.JapaneseText.KinsokuSafe(i.Text) }).ToList(),
         };
         var ass = p.Telop.IsShort ? WriteShort(plan, p, layout) : p.Telop.IsVariety ? WriteVariety(plan, p, layout) : p.Telop.IsStudy || p.Telop.IsCorporate ? WriteLayered(plan, p, layout) : WriteStandard(plan, p, layout);
+        ass = AddTicker(ass, plan, p);
         var font = FontFor(plan.Language);
         return string.Join("\n", ass.Split('\n').Select(line => line.StartsWith("Style:", StringComparison.Ordinal)
             ? line.Replace("," + FontName + ",", "," + font + ",", StringComparison.Ordinal) : line));
@@ -494,6 +520,88 @@ public static partial class AssWriter
     }
 
     public const int CardFontPx = 120, CardOutline = 12;
+
+    /// <summary>Ticker colours (&amp;HBBGGRR): navy strip, red label, white text, light-grey source line.</summary>
+    public const string TickerStrip = "&H402010&", TickerLabel = "&H2020D0&", TickerText = "&HFFFFFF&", TickerSource = "&HD0D0D0&";
+    /// <summary>Seconds each ticker item stays before the next one (the items repeat in order over the whole body).</summary>
+    public const double TickerItemSec = 8;
+
+    /// <summary>
+    /// The fixed news ticker (preset telop type "ticker"): a strip at the bottom of the safe zone with a label, one enabled item at a time and the item's
+    /// source and date at the right. Shown over the body only (not over inserted cards); nothing is drawn without enabled items.
+    /// </summary>
+    static string AddTicker(string ass, EditPlan plan, Preset p)
+    {
+        var g = Geo(p, plan.Canvas);
+        var items = plan.Ticker?.Items.Where(i => i.Enabled && i.Text.Trim().Length > 0).ToList() ?? [];
+        if (g.TickerHeight == 0 || items.Count == 0) return ass;
+        int w = plan.Canvas.Width, th = g.TickerHeight;
+        int top = plan.Canvas.Height - g.Safe.Bottom - th, mid = top + th / 2;
+        int textPx = (int)Math.Round(th * 0.5), sourcePx = Math.Max(16, (int)Math.Round(th * 0.3));
+        string label = Escape(plan.Ticker!.Label.Trim().Length > 0 ? plan.Ticker.Label.Trim() : TickerDefaultLabel(plan.Language));
+        int labelW = (int)Math.Round(Math.Max(th * 1.8, Planning.JapaneseText.DisplayWidth(label) * textPx * GlyphRatio + th * 0.8)) & ~1;
+        int labelX = g.Safe.Left, textX = labelX + labelW + th / 3, right = w - g.Safe.Right;
+        var styles = new StringBuilder();
+        styles.AppendLine($"Style: Ticker,{FontName},{textPx},&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,0,0,0,1");
+        var events = new StringBuilder();
+        double body = plan.Timeline.Sum(c => c.Length);
+        var ins = Planning.InsertMap.Active(plan);
+        string Rect(int x0, int y0, int x1, int y1) => $"m {x0} {y0} l {x1} {y0} {x1} {y1} {x0} {y1}";
+        foreach (var (s, e) in ins.Count == 0 ? [(0.0, body)] : Planning.InsertMap.Span(ins, 0, body))
+        {
+            events.AppendLine($@"Dialogue: 6,{Time(s)},{Time(e)},Ticker,,0,0,0,,{{\an7\pos(0,0)\p1\bord0\shad0\c{TickerStrip}\1a&H18&}}{Rect(0, top, w, top + th)}{{\p0}}");
+            events.AppendLine($@"Dialogue: 7,{Time(s)},{Time(e)},Ticker,,0,0,0,,{{\an7\pos(0,0)\p1\bord0\shad0\c{TickerLabel}}}{Rect(labelX, top, labelX + labelW, top + th)}{{\p0}}");
+            events.AppendLine($@"Dialogue: 8,{Time(s)},{Time(e)},Ticker,,0,0,0,,{{\an5\pos({labelX + labelW / 2},{mid})\c{TickerText}}}{label}");
+        }
+        int k = 0;
+        for (double t = 0; t < body - 0.05; t += TickerItemSec, k++)
+        {
+            var item = items[k % items.Count];
+            double end = items.Count == 1 ? body : Math.Min(body, t + TickerItemSec);
+            var source = TickerSourceLine(item, plan.Language);
+            double sourceW = Planning.JapaneseText.DisplayWidth(source) * sourcePx * GlyphRatio;
+            int avail = (int)(right - textX - sourceW - th / 2.0);
+            string text = TickerFit(item.Text.Trim(), textPx, avail, plan.Language, out int px);
+            foreach (var (s, e) in ins.Count == 0 ? [(t, end)] : Planning.InsertMap.Span(ins, t, end))
+            {
+                events.AppendLine($@"Dialogue: 8,{Time(s)},{Time(e)},Ticker,,0,0,0,,{{\an4\pos({textX},{mid})\c{TickerText}\fad(150,150){(px < textPx ? $@"\fs{px}" : "")}}}{Escape(text)}");
+                events.AppendLine($@"Dialogue: 8,{Time(s)},{Time(e)},Ticker,,0,0,0,,{{\an6\pos({right},{mid})\c{TickerSource}\fs{sourcePx}\fad(150,150)}}{Escape(source)}");
+            }
+            if (items.Count == 1) break;
+        }
+        int at = ass.IndexOf("\n[Events]", StringComparison.Ordinal);
+        if (at < 0) return ass;
+        var head = ass[..at].TrimEnd('\r', '\n');
+        return head + "\n" + styles.ToString().TrimEnd('\r', '\n') + "\n" + ass[at..].TrimEnd('\r', '\n') + "\n" + events;
+    }
+
+    static string TickerDefaultLabel(string language) => language switch { "en-US" => "NEWS", "ko-KR" => "속보", "zh-CN" => "快讯", _ => "速報" };
+
+    /// <summary>"Source host · date": the publication date when the search returned one, else the date it was retrieved.</summary>
+    public static string TickerSourceLine(NewsTickerItem item, string language)
+    {
+        string host = Uri.TryCreate(item.SourceUrl, UriKind.Absolute, out var u) ? u.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? u.Host[4..] : u.Host : item.SourceTitle;
+        var when = item.Published ?? item.RetrievedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        string word = language switch { "en-US" => "Source", "ko-KR" => "출처", "zh-CN" => "来源", _ => "出典" };
+        string asOf = item.Published != null ? "" : language switch { "en-US" => " (retrieved)", "ko-KR" => " 확인", "zh-CN" => " 获取", _ => " 取得" };
+        return $"{word} {host} {when}{asOf}";
+    }
+
+    /// <summary>The item at the ticker size, shrunk down to 70 % if needed; beyond that it is shortened with an ellipsis (never wrapped).</summary>
+    static string TickerFit(string text, int px, int width, string language, out int size)
+    {
+        size = FitFontSize(text, px, 0, Math.Max(1, width), 0, 100, language, 0);
+        int min = (int)Math.Round(px * 0.7);
+        if (size >= min) return text;
+        size = min;
+        var chars = StringInfo.ParseCombiningCharacters(text);
+        for (int n = chars.Length - 1; n > 0; n--)
+        {
+            var cut = text[..chars[n]].TrimEnd() + "…";
+            if (FitFontSize(cut, min, 0, Math.Max(1, width), 0, 100, language, 0) >= min) return cut;
+        }
+        return "…";
+    }
 
     static int CardFontSize(Insert card, Canvas canvas, Geometry g, string language)
     {

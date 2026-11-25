@@ -47,6 +47,8 @@ public sealed partial class Renderer(FFmpeg ff)
         public List<(int Index, double Offset)> Audio { get; init; } = [];
         /// <summary>Per timeline clip: the PiP asset's input (Index −1 = no PiP).</summary>
         public List<(int Index, double Offset)> Pip { get; init; } = [];
+        /// <summary>Per timeline clip: one input per split-screen box (empty = no split screen).</summary>
+        public List<List<(int Index, double Offset)>> Panels { get; init; } = [];
         /// <summary>Files written for this render (the music gain envelope); the caller deletes them.</summary>
         public List<string> Scratch { get; init; } = [];
     }
@@ -83,7 +85,7 @@ public sealed partial class Renderer(FFmpeg ff)
     public Inputs ResolveInputs(EditPlan plan, IReadOnlyDictionary<string, SourceAsset> assets, string? envelopeFile = null)
     {
         var args = new List<string[]>(); var idx = new Dictionary<string, int>(); var media = new Dictionary<string, MediaInfo>();
-        var video = new List<(int, double)>(); var audio = new List<(int, double)>(); var pip = new List<(int, double)>();
+        var video = new List<(int, double)>(); var audio = new List<(int, double)>(); var pip = new List<(int, double)>(); var panels = new List<List<(int, double)>>();
         SourceAsset Asset(string id) => assets.TryGetValue(id, out var a) ? a : throw new FFmpegException($"asset {id} not found");
         void AddAsset(string id)
         {
@@ -117,11 +119,13 @@ public sealed partial class Renderer(FFmpeg ff)
             foreach (var id in plan.Timeline.Where(c => !OwnFile(c)).Select(c => c.AssetId).Distinct()) AddAsset(id);
             AddAsset(plan.Audio.Master);
             foreach (var id in plan.Timeline.Where(c => c.Pip != null && !InsetFile(c)).Select(c => c.Pip!.AssetId).Distinct()) AddAsset(id);
+            foreach (var id in plan.Timeline.SelectMany(c => c.Panels ?? []).Select(x => x.AssetId).Distinct()) AddAsset(id);
             foreach (var c in plan.Timeline)
             {
                 video.Add(Own(c) ?? (idx[c.AssetId], 0));
                 audio.Add((idx[plan.Audio.Master], 0));
                 pip.Add(c.Pip is not { } p ? (-1, 0) : Inset(p, c) ?? (idx[p.AssetId], 0));
+                panels.Add((c.Panels ?? []).Select(x => (idx[x.AssetId], 0.0)).ToList());
             }
         }
         else
@@ -146,6 +150,7 @@ public sealed partial class Renderer(FFmpeg ff)
                 // single-source clips read their audio from the same input; other cameras take it from the master's own blocks
                 audio.Add(c.AssetId == plan.Audio.Master && c.AudioIn == null && still == null ? v : Block("audio:" + plan.Audio.Master, c.MasterIn, c.MasterOut));
                 pip.Add(c.Pip is { } p ? Inset(p, c) ?? Block("pip:" + p.AssetId, p.SrcIn, p.SrcIn + (c.SrcOut - c.SrcIn)) : (-1, 0));
+                panels.Add((c.Panels ?? []).Select(x => Block("panel:" + x.AssetId, x.SrcIn, x.SrcIn + (c.SrcOut - c.SrcIn))).ToList());
             }
             media[plan.Audio.Master] = Asset(plan.Audio.Master).Media;
         }
@@ -190,7 +195,7 @@ public sealed partial class Renderer(FFmpeg ff)
             // a card image becomes a still stream of the card's length
             args.Add(ins.Kind == "card" ? ["-loop", "1", "-framerate", plan.Canvas.Fps.ToString(IC), "-t", F(ins.Duration), "-i", path] : ["-i", path]);
         }
-        return new Inputs(args, idx, media) { Video = video, Audio = audio, Pip = pip, Scratch = scratch };
+        return new Inputs(args, idx, media) { Video = video, Audio = audio, Pip = pip, Panels = panels, Scratch = scratch };
     }
 
     static string KindName(Insert i) => i.Kind switch { "opening" => "オープニング", "closing" => "クロージング", _ => "場面転換カード" };
@@ -343,9 +348,30 @@ public sealed partial class Renderer(FFmpeg ff)
     }
 
     /// <summary>One clip (or a one-frame freeze of it) reframed to the canvas: face crop, punch-in, fit, blurred background or the screen layout. <paramref name="post"/> runs before the output label.
-    /// <paramref name="pipHead"/>: the PiP asset's trimmed stream for <see cref="Clip.Pip"/> (null = no inset, e.g. a freeze frame).</summary>
-    static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "", string? pipHead = null)
+    /// <paramref name="pipHead"/>: the PiP asset's trimmed stream for <see cref="Clip.Pip"/> (null = no inset, e.g. a freeze frame).
+    /// <paramref name="panelHeads"/>: one trimmed stream per split-screen box of <see cref="Clip.Panels"/> (null = the clip's own picture only).</summary>
+    static void AppendVideo(StringBuilder g, string head, Clip c, int W, int H, bool half, string id, string label, string post = "", string? pipHead = null, string[]? panelHeads = null)
     {
+        if (c.Panels is { Count: > 0 } panels && panelHeads?.Length == panels.Count)
+        {
+            // split screen: a blurred, dimmed copy of the main camera behind the anchors' boxes; the talking anchor's box has a yellow frame
+            int S(int v) => half ? (v / 2) & ~1 : v;
+            g.Append(head).Append($",scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=20:2,eq=brightness=-0.12,setsar=1[pg{id}_0];");
+            for (int n = 0; n < panels.Count; n++)
+            {
+                var pn = panels[n]; int w = S(pn.Width), h = S(pn.Height), x = S(pn.X), y = S(pn.Y);
+                string crop = pn.CropW > 0 && pn.CropH > 0 ? $",crop={pn.CropW}:{pn.CropH}:{pn.CropX}:{pn.CropY}" : $",scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}";
+                g.Append($"{panelHeads[n]}{crop},scale={w}:{h}:flags=lanczos,setsar=1[pp{id}_{n}];");
+                g.Append($"[pg{id}_{n}][pp{id}_{n}]overlay={x}:{y}:shortest=1");
+                if (pn.Border > 0)
+                {
+                    int b = Math.Max(2, S(pn.Border));
+                    g.Append($",drawbox=x={x - b}:y={y - b}:w={w + 2 * b}:h={h + 2 * b}:color=0xFFC800@1:t={b}");
+                }
+                g.Append(n + 1 < panels.Count ? $"[pg{id}_{n + 1}];" : $",setsar=1{post}[{label}];");
+            }
+            return;
+        }
         if (c.Pip is { Shape: "rectangle" } inset && pipHead != null)
         {
             int S(int v) => half ? (v / 2) & ~1 : v;
@@ -597,8 +623,11 @@ public sealed partial class Renderer(FFmpeg ff)
                 var (pk, poff) = inp.Pip[i];
                 pipHead = $"[{pk}:v]trim=start={F(pp.SrcIn - poff)}:end={F(pp.SrcIn + (c.SrcOut - c.SrcIn) + ext * c.Speed - poff)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}";
             }
+            string[]? panelHeads = null;
+            if (c.Panels is { Count: > 0 } pns && inp.Panels.Count > i && inp.Panels[i].Count == pns.Count)
+                panelHeads = pns.Select((pn, n) => $"[{inp.Panels[i][n].Index}:v]trim=start={F(pn.SrcIn - inp.Panels[i][n].Offset)}:end={F(pn.SrcIn + (c.SrcOut - c.SrcIn) + ext * c.Speed - inp.Panels[i][n].Offset)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}").ToArray();
             AppendVideo(g, $"[{k}:v]trim=start={F(c.SrcIn - off)}:end={F(c.SrcOut + ext * c.Speed - off)},setpts=(PTS-STARTPTS)/{F(c.Speed)},fps={fps}", c, W, H, half, i.ToString(IC), $"v{i}",
-                Frames(frames[s] + extFrames), pipHead);
+                Frames(frames[s] + extFrames), pipHead, panelHeads);
             vlabel.Add($"v{i}"); fadeFrames.Add(s > 0 && seq[s - 1].Insert == null ? (int)Math.Round(c.TransitionSec * fps) : 0);
             labels.Append($"[v{i}][a{i}]");
         }
@@ -673,7 +702,8 @@ public sealed partial class Renderer(FFmpeg ff)
     public async Task<RenderOutput> RenderAsync(EditPlan plan, Preset preset, IReadOnlyDictionary<string, SourceAsset> assets, string outFile, bool preview, CancellationToken ct, IProgress<double>? progress = null)
     {
         var fontFile = plan.Language switch { "zh-CN" => "NotoSansCJKsc-Bold.otf", "ko-KR" => "NotoSansCJKkr-Bold.otf", _ => null };
-        bool hasText = plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0);
+        bool hasText = plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0)
+            || (preset.HasTelop("ticker") && plan.Ticker?.Items.Any(i => i.Enabled && i.Text.Trim().Length > 0) == true);
         if (hasText && fontFile != null && !File.Exists(Path.Combine(ff.FontsDir, fontFile)))
             throw new FFmpegException($"Missing font {fontFile}. Run scripts/get-tools.ps1 before rendering {plan.Language}.");
         var dir = Path.GetDirectoryName(outFile)!; Directory.CreateDirectory(dir);
@@ -686,7 +716,7 @@ public sealed partial class Renderer(FFmpeg ff)
         var measureEnd = preview ? bumperEnd : bumperEnd + 0.2;
         var encodeEnd = preview ? (cues ? 0.95 : 1) : 0.9;
         string? ass = null;
-        if (plan.Telops.Any(t => t.Enabled) || InsertMap.Active(plan).Any(i => i.Kind == "card" && i.Text.Length > 0))
+        if (hasText)
         {
             ass = Path.ChangeExtension(outFile, ".ass");
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, preset), new UTF8Encoding(false), ct);

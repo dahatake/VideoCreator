@@ -49,17 +49,17 @@ public static class SelectionPrompt
 """;
 
     public static string System(Preset p, int maxCandidates, bool mustReturn = false) => $"""
-あなたはYouTube Shorts / TikTok のショート動画編集者です。秒付きの書き起こしと音声の信号サマリから、縦型ショート候補を最大{maxCandidates}件選びます。
+{(p.Target.Aspect == "16:9" ? $"あなたは動画編集者です。秒付きの書き起こしと音声の信号サマリから、横長動画向けの候補を最大{maxCandidates}件選びます。" : $"あなたはYouTube Shorts / TikTok のショート動画編集者です。秒付きの書き起こしと音声の信号サマリから、縦型ショート候補を最大{maxCandidates}件選びます。")}
 編集パターン: {p.Id} {p.Name}
 パターンの方針: {(string.IsNullOrWhiteSpace(p.SelectionRules) ? "単体で意味が通り、冒頭に結果・驚き・強い主張・問いがあり、最後にオチがある場面を選ぶ。" : p.SelectionRules)}
 規則:
 - 合計の尺は{p.Target.Min:0}〜{p.Target.Max:0}秒。segments は1〜4個、時系列順。start/end は書き起こしの行の境界の秒を使う（発話の途中で切らない）
-- 冒頭{p.Hook.MaxSec:0.#}秒以内に「結果・驚き・強い主張・問い」のいずれかが来ること
+{(p.Target.Aspect == "16:9" ? $"- 冒頭{p.Hook.MaxSec:0.#}秒以内に伝えるべき出来事や要点が分かること" : $"- 冒頭{p.Hook.MaxSec:0.#}秒以内に「結果・驚き・強い主張・問い」のいずれかが来ること")}
 - 文脈なしで意味が通ること。「それ」「あれ」「これ」など指示語で始まる区間は避ける
 - 切り出しによって発言の意図が変わる区間（皮肉・前置きの省略など）は選ばない
 - 書き起こしにない事実・数字をテロップ（hook_text / headline / emphasis_words）に書かない。emphasis_words は書き起こしから原文どおり抜き出す
 - hook_text は14字以内、headline は16字以内、reason は1文（120字以内）
-- scores は0〜10の整数（hook=冒頭の引き, standalone=単体で通じるか, payoff=オチ, emotion=感情の動き）
+{(p.Target.Aspect == "16:9" ? "- scores は0〜10の整数（hook=冒頭の分かりやすさ, standalone=単体で通じるか, payoff=要点が伝わるか, emotion=感情の動き）" : "- scores は0〜10の整数（hook=冒頭の引き, standalone=単体で通じるか, payoff=オチ, emotion=感情の動き）")}
 - 互いに大きく重なる候補は出さない
 {(mustReturn ? MustReturnRule : "")}
 """;

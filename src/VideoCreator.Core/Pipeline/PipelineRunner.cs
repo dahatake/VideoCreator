@@ -51,7 +51,7 @@ public sealed class PipelineServices
     public QaEngine Qa => new(Ff) { Faces = Faces };
 }
 
-public sealed class PipelineException(string code, string message) : Exception(message)
+public sealed class PipelineException(string code, string message, Exception? innerException = null) : Exception(message, innerException)
 {
     public string Code { get; } = code;
 }
@@ -281,9 +281,13 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             var screens = AssetRoles.Screens(assets);
             var presenter = AssetRoles.Presenter(assets);
-            if (screens.Count == 0 || presenter == null)
-                throw new PipelineException("E-PIP-ASSETS", "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材を指定してください");
-            used = assets.Where(a => a.Id == main.Id || a.Id == presenter.Id || screens.Any(x => x.Id == a.Id)).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
+            var anchors = preset.Screen?.SplitAnchors == true ? AssetRoles.Anchors(assets) : [];
+            if (presenter == null || screens.Count == 0 && anchors.Count < 2)
+                throw new PipelineException("E-PIP-ASSETS", anchors.Count > 0
+                    ? "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材、またはキャスター 2 人以上のカメラ（「メイン」「カメラA」「カメラB」）を指定してください"
+                    : "話し手のカメラ（役割「メイン」または「カメラA」）と、役割を「画面」にした素材を指定してください");
+            used = assets.Where(a => a.Id == main.Id || a.Id == presenter.Id || screens.Any(x => x.Id == a.Id) || anchors.Any(x => x.Id == a.Id))
+                .OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         }
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
         if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
@@ -358,7 +362,7 @@ public sealed class PipelineRunner(PipelineServices s)
         {
             if (used.Any(a => a.Id != main.Id && a.SyncMethod is not ("audio" or "audio-map" or "manual")))
                 throw new PipelineException("E-PIP-SYNC", "映像を音声で同期できませんでした。同期結果を確認し、必要なら「ずれ(秒)」を指定してください");
-            if (AssetRoles.Presenter(used) == null || AssetRoles.Screens(used).Count == 0)
+            if (AssetRoles.Presenter(used) == null || AssetRoles.Screens(used).Count == 0 && (preset.Screen?.SplitAnchors != true || AssetRoles.Anchors(used).Count < 2))
                 throw new PipelineException("E-PIP-SYNC", "話し手のカメラまたは画面の音声を同期できず、使えませんでした。同じ場面を録画した素材を選んでください");
         }
         if (preset.Planner == "pip")
@@ -397,7 +401,7 @@ public sealed class PipelineRunner(PipelineServices s)
             : s.Asr.Name == AzureFastTranscriber.MaiName ? "書き起こしています（MAI-Transcribe-2）" : "書き起こしています（Azure AI Speech）");
         Transcript tr;
         try { tr = await TranscriptAsync(main, audio, ct); }
-        catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message); }
+        catch (AsrException ex) { throw new PipelineException("E-ASR-PROVIDER", "書き起こしに失敗しました: " + ex.Message, ex); }
         if (tr.Words.Count == 0 && main.Media.AudioChannels > 0 && s.Asr != null) warnings.Add("発話が検出されませんでした");
         if (s.Asr?.Name == AzureFastTranscriber.MaiName && tr.Provider == AzureFastTranscriber.StandardName)
             warnings.Add("Speech の接続先が MAI-Transcribe-2 に対応していない（リージョン外か、録音が 2 時間・250 MB 以上）ため、標準モデルで書き起こしました");
@@ -411,6 +415,12 @@ public sealed class PipelineRunner(PipelineServices s)
         // laughter is only needed when planning; an external detector (minutes) runs while the AI selects
         var laughsTask = LaughsAsync(main, tr, sig, audio, ct);
         if (preset.Planner == "switch") await AutoAssignSpeakersAsync(used, main, tr, warnings, ct);
+        else if (preset.Planner == "pip" && preset.Screen?.SplitAnchors == true && AssetRoles.Anchors(used) is { Count: >= 2 } anchorCams)
+        {
+            // split screen: the box of the anchor who is talking is highlighted, so each camera needs its speaker (mic levels)
+            await AutoAssignSpeakersAsync(anchorCams, main, tr, warnings, ct);
+            foreach (var u in anchorCams) used[used.FindIndex(x => x.Id == u.Id)] = u;
+        }
         ScreenContext? screen = null;
         if (preset.Planner == "screen")
         {
@@ -466,7 +476,7 @@ public sealed class PipelineRunner(PipelineServices s)
                     + $"副画面（資料）が映るのは次の時間帯だけです。この時間帯の会話を含む候補にしてください: {string.Join(", ", pipWindows.Select(w => $"{w.T0:F1}-{w.T1:F1}"))}";
             int want = preset.Short ? job.Options.ShortCount : SelectionService.PresentCount;
             outcome = await selector.SelectAsync(tr, sig, preset, main.Media.Duration, instruction, exclude, ct, job.Options.Scope, want);
-            if (preset.Planner == "pip")
+            if (preset.Planner == "pip" && pipWindows.Count > 0)
             {
                 var (pref, built) = PipPlanner.PreferScenes(outcome.Candidates, pipWindows, tr, sig, preset, main.Media.Duration);
                 if (built) warnings.Add("選ばれた区間が副画面の選択シーンと重ならないため、選択シーンの前後の会話で候補を作りました");
@@ -508,6 +518,18 @@ public sealed class PipelineRunner(PipelineServices s)
                 warnings.Add($"{c0.Id}: 編集後の区間が他の候補と重なるため除外しました");
                 continue;
             }
+            if (preset.HasTelop("ticker") && s.Llm is IWebSearch search && tr.Sentences.Count > 0)
+            {
+                Stage(JobStatus.Planning, 0.6, $"速報帯の最新情報を Web 検索しています（{search.Name}）");
+                var (ticker, tickerNotes) = await NewsTickerService.FetchAsync(search, tr, segments, plan.Language, DateTimeOffset.Now, ct);
+                plan = plan with { Ticker = ticker };
+                notes = [.. notes, .. tickerNotes];
+                s.Log($"[{job.Id}] ticker {c0.Id}: {ticker?.Items.Count ?? 0} items via {search.Name}");
+            }
+            else if (preset.HasTelop("ticker") && s.Llm != null && candidates.Count == 0)
+                warnings.Add("速報帯: 設定中の AI 接続は Web 検索に対応していないため、速報帯は付けません");
+            else if (preset.HasTelop("ticker") && s.Llm == null && candidates.Count == 0)
+                warnings.Add("速報帯: AI 接続が未設定のため、Web 検索による速報帯は付けません");
             s.Store.Put(Kinds.EditPlan, plan.EditplanId, project.Id, plan);
             var cand = c0 with { Id = cid, Rank = candidates.Count + 1, Segments = segments, EditPlanId = plan.EditplanId, Notes = [.. c0.Notes, .. notes], Series = plan.Series };
             candidates.Add(cand);
@@ -710,7 +732,8 @@ public sealed class PipelineRunner(PipelineServices s)
         if (p.Planner == "pip" && AssetRoles.Master(assets)?.Id != main.Id)
             throw new PipelineException("E-PIP-SYNC", "音声の元が変更されています。現在の設定で新しく生成して、音声を再同期してください");
         var used = p.Planner == "pip"
-            ? assets.Where(a => a.Id == main.Id || a.Role == AssetRole.Screen || AssetRoles.Presenter(assets)?.Id == a.Id).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList()
+            ? assets.Where(a => a.Id == main.Id || a.Role == AssetRole.Screen || AssetRoles.Presenter(assets)?.Id == a.Id
+                || p.Screen?.SplitAnchors == true && AssetRoles.Anchors(assets).Any(x => x.Id == a.Id)).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList()
             : p.Planner is "switch" or "screen"
             ? assets.Where(a => a.Id == main.Id || old.Timeline.Any(t => t.AssetId == a.Id || t.Pip?.AssetId == a.Id)).ToList() : [main];
         var faces = new Dictionary<string, List<FaceSample>>();
@@ -843,6 +866,7 @@ public sealed class PipelineRunner(PipelineServices s)
             outputs["ass"] = ass;
             var sourcePaths = plan.Timeline.Select(c => assets[c.AssetId].Path)
                 .Concat(plan.Timeline.Where(c => c.Pip != null).Select(c => assets[c.Pip!.AssetId].Path))
+                .Concat(plan.Timeline.SelectMany(c => c.Panels ?? []).Select(x => assets[x.AssetId].Path))
                 .Append(assets[plan.Audio.Master].Path)
                 .Concat(InsertMap.Active(plan).Where(i => i.Path != null).Select(i => i.Path!)).ToList();
             if (plan.Audio.Bgm is { } bgm)

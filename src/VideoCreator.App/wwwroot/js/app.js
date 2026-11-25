@@ -2271,6 +2271,23 @@ async function review(epId) {
   const isTsukkomiCard = (i) => i.kind === 'card' && i.id.startsWith('tsukkomi');
   const groupOf = (i) => isTsukkomiCard(i) ? 'tsukkomi' : i.kind;
   const filterTypes = ['caption', 'emphasis', 'headline', 'counter', 'sfx', 'tsukkomi', 'opening', 'card', 'closing'];
+  // Web-searched news items: each shows the page the search returned and when, and stays unapproved (H-08) until a person checks it.
+  const tickerPanel = () => {
+    const tk = plan.ticker;
+    if (!tk?.items?.length) return '';
+    const safeUrl = (u) => /^https?:\/\//i.test(u ?? '') ? u : '';
+    return `<section class="stack ticker-panel" aria-labelledby="ticker-title">
+      <h3 id="ticker-title">${trUi('ticker.title')}</h3>
+      <p class="caption">${trUi('ticker.help', [esc(tk.provider ?? ''), tk.retrieved_at ? formatDate(tk.retrieved_at) : '—'])}</p>
+      ${tk.queries?.length ? `<p class="caption">${trUi('ticker.queries', [esc(tk.queries.join(' / '))])}</p>` : ''}
+      ${tk.items.some(x => x.enabled && !x.approved) ? `<div class="row"><fluent-button size="small" id="approveTicker">${trUi('ticker.approveAll')}</fluent-button></div>` : ''}
+      <table class="list"><thead><tr><th class="telop-action-col">${trUi('m524')} / ${trUi('m646')}</th><th>${trUi('ticker.text')}</th><th>${trUi('ticker.source')}</th></tr></thead><tbody>
+      ${tk.items.map(x => `<tr class="${x.enabled ? '' : 'off'}" data-ticker="${esc(x.id)}">
+        <td><div class="row telop-actions">${x.approved ? `<span class="caption">${trUi('ticker.approved')}</span>` : `<fluent-button size="small" data-approve-ticker="${esc(x.id)}">${trUi('m524')}</fluent-button>`}<fluent-switch data-id="${esc(x.id)}" class="tk-en" ${x.enabled ? 'checked' : ''} aria-label="${trUi('m646')}"></fluent-switch></div></td>
+        <td><input class="ticker-text" data-id="${esc(x.id)}" value="${esc(x.text)}" maxlength="60" aria-label="${trUi('ticker.textAria', [esc(x.id)])}"></td>
+        <td class="caption">${safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener noreferrer">${esc(x.source_title || x.source_url)}</a>` : esc(x.source_url)}<br>${trUi('ticker.dates', [x.published ? esc(x.published) : '—', x.retrieved_at ? formatDate(x.retrieved_at) : '—'])}</td></tr>`).join('')}
+      </tbody></table></section>`;
+  };
   const itemsOf = (type) => [...plan.telops.filter(t => t.type === type), ...(plan.inserts ?? []).filter(i => groupOf(i) === type)];
   const insertRow = (i) => {
     const start = insertStart(i), end = start + Number(i.duration), name = isTsukkomiCard(i) ? trUi('m512') : insertName[i.kind] ?? i.kind;
@@ -2579,6 +2596,7 @@ async function review(epId) {
                 <td class="${t.type === 'caption' && cps > maxCps ? 'warn' : 'caption'}">${t.type === 'caption' ? cps.toFixed(1) : ''}</td></tr>`;
             })()).join('')}
           </tbody></table></div>
+          ${tickerPanel()}
         </section>
       </div>`;
     wireSafeToggle();
@@ -2607,6 +2625,10 @@ async function review(epId) {
     $$('fluent-switch.ins-en').forEach(sw => sw.addEventListener('change', () => { stale = true; patch([{ op: 'set_insert_enabled', target: sw.dataset.id, enabled: sw.checked }]); }));
     $$('[data-approve-card]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve_card', target: b.dataset.approveCard }])));
     $('#approveCards')?.addEventListener('click', () => patch([{ op: 'approve_all_cards' }]));
+    $('#approveTicker')?.addEventListener('click', () => patch([{ op: 'approve_all_ticker' }]));
+    $$('[data-approve-ticker]').forEach(b => b.addEventListener('click', () => patch([{ op: 'approve_ticker', target: b.dataset.approveTicker }])));
+    $$('fluent-switch.tk-en').forEach(sw => sw.addEventListener('change', () => { stale = true; patch([{ op: 'set_ticker_enabled', target: sw.dataset.id, enabled: sw.checked }]); }));
+    $$('input.ticker-text').forEach(inp => inp.addEventListener('change', () => { stale = true; patch([{ op: 'replace_ticker_text', target: inp.dataset.id, text: inp.value }]); }));
     $('#bgmSel')?.addEventListener('change', (e) => { patch([{ op: 'set_bgm', target: e.target.value }]); stale = true; });
     $$('select.bgm-cue-track').forEach(s => s.addEventListener('change', () => patch([{ op: 'set_bgm_cue', target: s.dataset.id, text: s.value }])));
     $$('select.bgm-trim').forEach(s => s.addEventListener('change', () => patch([{ op: 'set_bgm_trim', target: s.dataset.id, value: Number(s.value) }])));

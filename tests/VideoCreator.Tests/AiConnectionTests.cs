@@ -539,6 +539,87 @@ public sealed class AiConnectionTests : IDisposable
         }
     }
 
+    sealed class FailingSpeechHandler(bool timeout) : HttpMessageHandler
+    {
+        public int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            if (timeout) throw new TaskCanceledException("raw timeout", new TimeoutException());
+            throw new HttpRequestException("raw network error", new SocketException((int)SocketError.HostNotFound));
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "timeout", "タイムアウト", "raw timeout")]
+    [InlineData(false, "unreachable", "ネットワーク", "raw network error")]
+    public async Task Speech_failure_after_all_retries_is_reported_as_an_asr_failure_and_diagnosed(bool timeout, string diagnosis, string guidance, string raw)
+    {
+        using var handler = new FailingSpeechHandler(timeout);
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://speech.invalid/"), "secret", http, model: AzureFastTranscriber.MaiModel);
+        var ex = await Assert.ThrowsAsync<AsrException>(() => asr.ProbeAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(4, handler.Calls);
+        Assert.True(ex.Transient);
+        Assert.Contains(guidance, ex.Message);
+        Assert.DoesNotContain(raw, ex.Message);
+        Assert.Equal(diagnosis, AiDiagnostics.Classify(ex, "speech", "key").Code);
+    }
+
+    sealed class CancelSpeechHandler(CancellationTokenSource cts) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            cts.Cancel();
+            throw new TaskCanceledException("cancelled");
+        }
+    }
+
+    [Fact]
+    public async Task Speech_caller_cancellation_is_not_reported_as_a_timeout()
+    {
+        using var cts = new CancellationTokenSource();
+        using var handler = new CancelSpeechHandler(cts);
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://speech.invalid/"), "secret", http);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => asr.ProbeAsync(cts.Token));
+    }
+
+    sealed class RecoveringSpeechHandler : HttpMessageHandler
+    {
+        public int Calls;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (++Calls == 1) throw new HttpRequestException("temporary");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"durationMilliseconds":1000,"phrases":[]}""") });
+        }
+    }
+
+    [Fact]
+    public async Task Speech_retry_can_recover_after_a_connection_failure()
+    {
+        using var handler = new RecoveringSpeechHandler();
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://speech.invalid/"), "secret", http);
+        var result = await asr.ProbeAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(AzureFastTranscriber.StandardName, result.Provider);
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Speech_http_auth_failure_keeps_its_status_and_key_redaction()
+    {
+        using var handler = new SpeechHandler { Status = HttpStatusCode.Unauthorized, Response = "rejected secret" };
+        using var http = new HttpClient(handler);
+        var asr = new AzureFastTranscriber(new Uri("https://speech.invalid/"), "secret", http);
+        var ex = await Assert.ThrowsAsync<AsrException>(() => asr.ProbeAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode);
+        Assert.False(ex.Transient);
+        Assert.DoesNotContain("secret", ex.Message);
+        Assert.Equal("key_rejected", AiDiagnostics.Classify(ex, "speech", "key").Code);
+        Assert.Single(handler.Requests);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("http://speech.cognitiveservices.azure.com/")]

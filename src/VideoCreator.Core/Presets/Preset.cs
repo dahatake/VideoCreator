@@ -60,7 +60,7 @@ public sealed record PresetSwitching(double MinHoldSec = 2.0, double ReactionSec
 /// <param name="MaxZoom">Largest magnification of screen pixels onto the canvas (beyond it text gets soft).</param>
 /// <param name="MainMinScale">P11: the main picture may shrink to this share of the canvas width (top-anchored over its blurred copy) so the face clears the captions and the inset gets room; 1 = never.</param>
 public sealed record PresetScreen(double MinHoldSec = 2.0, double PresenterAfterStaticSec = 4.0, double LeadSec = 0.6, double TailSec = 1.0,
-    double HookPresenterSec = 2.0, double MaxZoom = 1.5, int PipDiameter = 360, double MainMinScale = 1.0);
+    double HookPresenterSec = 2.0, double MaxZoom = 1.5, int PipDiameter = 360, double MainMinScale = 1.0, bool SplitAnchors = false);
 
 public sealed record PresetTelop
 {
@@ -199,7 +199,7 @@ public static class PresetStore
         Req(p.Cut.SpeedUp is null || p.Cut.SpeedUp.MaxFactor is >= 1 and <= 64, "speed_up.max_factor 1..64");
         Req(p.Audio.Loudnorm.I == -14, "loudnorm.I must be -14 (C-5)");
         Req(p.Audio.Loudnorm.TP <= -1.0, "loudnorm.TP <= -1.0 (C-5)");
-        var known = new HashSet<string> { "caption", "emphasis", "tsukkomi", "headline", "sfx", "counter" };
+        var known = new HashSet<string> { "caption", "emphasis", "tsukkomi", "headline", "sfx", "counter", "ticker" };
         Req(p.Telop.Types.All(known.Contains), "unknown telop type");
     }
 }

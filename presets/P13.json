@@ -1,0 +1,39 @@
+{
+  "id": "P13",
+  "version": "1.0.0",
+  "name": "ニュース（キャスター＋資料）",
+  "genre": "ニュース/ビジネス",
+  "available": true,
+  "target": { "duration_sec": [30, 120], "aspect": "16:9" },
+  "hook": { "prefer": ["strong_claim"], "max_sec": 3 },
+  "cut": {
+    "snap_to": ["sentence_end"],
+    "min_shot_sec": 2,
+    "target_asl_sec": [3, 8],
+    "remove_silence_over_sec": 0.8,
+    "punch_in_scale": 1,
+    "cold_open": "none"
+  },
+  "telop": {
+    "types": ["caption", "headline", "ticker"],
+    "look": "corporate",
+    "caption": { "max_lines": 2, "margin_v": 620, "margin_r": 160, "font_px": 64, "max_cps": 6, "max_chars_per_line": 14, "avoid_faces": true }
+  },
+  "audio": { "sfx": "none", "bgm": "none", "loudnorm": { "tp": -1.5, "i": -14 } },
+  "loop": { "required": false, "enabled": false },
+  "card": {
+    "opening": "キャスターの映像から始める",
+    "tempo": "一つの話題を文の切れ目で整理し、話し手の横に資料を重ねる",
+    "telop": "逐語字幕、話題の見出し、顔・字幕を避けた資料の小窓",
+    "sound": "主音声を明瞭に（BGM・効果音は既定でなし）"
+  },
+  "examples": [
+    { "title": "Satya Nadella's Ignite Keynote in under 5 minutes | Microsoft Ignite 2026", "url": "https://www.youtube.com/watch?v=8Wtr78o1wnI" },
+    { "title": "Microsoft Ignite highlights | VEN001", "url": "https://www.youtube.com/watch?v=yFYcnh3fpKk" },
+    { "title": "This Morning’s Top Headlines | Morning News NOW", "url": "https://www.youtube.com/watch?v=D8gAOoWlhxM" }
+  ],
+  "selection_rules": "一つのニュースや更新情報について、何が起きたか、背景、影響または次の行動が元の発言から分かる区間を選ぶ。数字、日付、固有名詞、出典と不確実性を変えず、文脈や留保を切り落とさない。話題と資料の対応は利用者が確認する。",
+  "planner": "pip",
+  "screen": { "min_hold_sec": 2, "lead_sec": 0.3, "tail_sec": 0.5, "hook_presenter_sec": 2, "main_min_scale": 1, "split_anchors": true },
+  "reframe": "blur"
+}

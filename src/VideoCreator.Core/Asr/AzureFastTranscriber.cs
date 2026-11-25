@@ -13,7 +13,7 @@ public interface ITranscriber
     Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct);
 }
 
-public sealed class AsrException(string message, bool transient) : Exception(message)
+public sealed class AsrException(string message, bool transient, Exception? innerException = null) : Exception(message, innerException)
 {
     public bool Transient { get; } = transient;
     public HttpStatusCode? StatusCode { get; init; }
@@ -166,8 +166,15 @@ public sealed class AzureFastTranscriber : ITranscriber
                 bool transient = resp.StatusCode is HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError;
                 if (!transient || delay == 16) throw new AsrException($"Speech API {(int)resp.StatusCode}: {Truncate(body)}", transient) { StatusCode = resp.StatusCode };
             }
-            catch (HttpRequestException ex) when (delay < 16) { body = ex.Message; }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested && delay < 16) { body = "timeout"; }
+            catch (HttpRequestException ex)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (delay == 16) throw new AsrException("Speech に接続できません。接続先、ネットワーク、プロキシやファイアウォールを確認してください。", true, ex);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                if (delay == 16) throw new AsrException("Speech の応答がタイムアウトしました。接続先とネットワークを確認して、もう一度お試しください。", true, ex);
+            }
         }
         throw new AsrException("Speech API failed: " + Truncate(body), true);
     }
