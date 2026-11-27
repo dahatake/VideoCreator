@@ -262,7 +262,7 @@ public sealed class PipelineRunner(PipelineServices s)
         void Mark(string name) { stageTimes[name] = Math.Round(sw.Elapsed.TotalSeconds, 2); sw.Restart(); }
 
         var project = s.Store.Get<Project>(Kinds.Project, job.ProjectId) ?? throw new PipelineException("E-NOT-FOUND", "プロジェクトがありません");
-        var assets = s.Store.List<SourceAsset>(Kinds.Asset, project.Id);
+        var assets = s.Store.Assets(project.Id);
         var main = AssetRoles.Master(assets) ?? throw new PipelineException("E-ING-UNSUPPORTED", "素材が登録されていません");
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, project.Id).Select(r => r.AssetId).ToHashSet();
         if (assets.Any(a => !rights.Contains(a.Id))) throw new PipelineException("E-RIGHTS-REQUIRED", "素材の権利確認が完了していません");
@@ -726,7 +726,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>Re-plan an existing plan's candidate after the user edited the segments (PATCH /editplans).</summary>
     public async Task<(EditPlan plan, List<string> notes)> ReplanAsync(Candidate c, EditPlan old, Job job, IReadOnlyList<Interval> segments, CancellationToken ct)
     {
-        var assets = s.Store.List<SourceAsset>(Kinds.Asset, old.ProjectId);
+        var assets = s.Store.Assets(old.ProjectId);
         var main = assets.First(a => a.Id == old.Audio.Master);
         var p = s.Presets[old.Preset.Id];
         if (p.Planner == "pip" && AssetRoles.Master(assets)?.Id != main.Id)
@@ -751,7 +751,7 @@ public sealed class PipelineRunner(PipelineServices s)
 
     public QaContext QaContextFor(EditPlan plan)
     {
-        var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId);
+        var assets = s.Store.Assets(plan.ProjectId);
         var main = assets.First(a => a.Id == plan.Audio.Master);
         var tr = LoadTranscript(main, plan.Language);
         var rights = s.Store.List<RightsConfirmation>(Kinds.Rights, plan.ProjectId).Select(r => r.AssetId).ToHashSet();
@@ -806,7 +806,7 @@ public sealed class PipelineRunner(PipelineServices s)
     public async Task<Render> RenderAsync(EditPlan plan, bool preview, CancellationToken ct, string? exportBaseName = null, string? renderId = null, IProgress<(double Progress, string Step)>? progress = null, string? patternName = null)
     {
         var project = s.Store.Get<Project>(Kinds.Project, plan.ProjectId)!;
-        var assets = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).ToDictionary(a => a.Id);
+        var assets = s.Store.Assets(plan.ProjectId).ToDictionary(a => a.Id);
         var preset = s.Presets[plan.Preset.Id];
         var ctx = QaContextFor(plan);
         var persist = renderId == null;
@@ -974,7 +974,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>Copy-and-paste YouTube / Viva Engage texts with chapters on the rendered file's timeline.</summary>
     public Task<PostKit> PostKitAsync(Candidate c, EditPlan plan, CancellationToken ct, string? previous = null)
     {
-        var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
+        var main = s.Store.Assets(plan.ProjectId).First(a => a.Id == plan.Audio.Master);
         return PostCopy.BuildAsync(s.Llm, plan, c, LoadTranscript(main, plan.Language), MaskWordsFor(plan), DictionaryFor(plan.ProjectId), s.Log, ct, previous);
     }
 
@@ -1006,7 +1006,7 @@ public sealed class PipelineRunner(PipelineServices s)
     /// <summary>FR-EXP-03: posting metadata suggestions (LLM when available, otherwise a template).</summary>
     public async Task<string> MetadataAsync(Candidate c, EditPlan plan, CancellationToken ct)
     {
-        var main = s.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
+        var main = s.Store.Assets(plan.ProjectId).First(a => a.Id == plan.Audio.Master);
         var text = CandidateValidator.TextOf(Masking.Apply(LoadTranscript(main, plan.Language), MaskWordsFor(plan)).Masked, plan.Timeline.Select(x => new Interval(x.MasterIn, x.MasterOut)));
         string titles = "", desc = "", tags = "";
         if (s.Llm != null && text.Length > 0)

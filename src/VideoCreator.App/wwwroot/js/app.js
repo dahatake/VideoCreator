@@ -2,7 +2,7 @@
 // Every dynamic string is escaped with esc() before reaching innerHTML (LLM/user text is untrusted).
 import { trUi, getLanguage, setLanguage, formatDate, formatNumber, applyShell, VIDEO_LANGUAGES } from './i18n.js';
 import { serverText, localizePreset, localizeQa, jobMessage, errorMessage, libraryTrackName, shownPatternNames } from './server-i18n.js';
-import { layoutSvg, layoutPanel, assetChip } from './layout-preview.js';
+import { layoutSvg, layoutPanel, assetChip, assetLetter } from './layout-preview.js';
 import { initTips, helpSettingsHtml, wireHelpSettings, startTour, shouldAutoStartTour } from './help.js';
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1039,7 +1039,8 @@ async function project(id, showSettings = false) {
                 <div class="role-pick" role="radiogroup" aria-labelledby="role-label-${esc(a.id)} asset-name-${esc(a.id)}" data-asset="${esc(a.id)}">${Object.entries(roleLabel).map(([k, v]) => {
                   const since = a.role === k && rolePicked?.asset === a.id && rolePicked.role === k ? performance.now() - rolePicked.t : Infinity;
                   return `<div class="role-opt${since < 2400 ? ' picked' : ''}" role="radio" aria-checked="${a.role === k}" tabindex="-1" data-role="${k}"${since < 2400 ? ` style="--since:${since.toFixed(0)}ms"` : ''}>${roleIcon(k)}<span>${v}</span></div>`;
-                }).join('')}</div></div>
+                }).join('')}</div>
+                ${a.role !== 'screen' && assets.some(o => o.id !== a.id && o.role === a.role) ? `<div class="caption warn" role="status">${trUi('role.dup')}</div>` : ''}</div>
                 <label class="caption audio-ref"><input type="checkbox" class="aref" data-asset="${esc(a.id)}" ${a.id === mainAsset?.id ? 'checked' : ''}${a.media.audio_channels ? '' : ' disabled'}> ${trUi('audioref.label')}</label>
                 <div class="row" style="margin:8px 0">
                 <label class="caption">${trUi('m168')} <input class="native spk" type="number" min="1" max="8" style="width:64px" data-asset="${esc(a.id)}" value="${a.speaker ?? ''}" placeholder="${trUi('m169')}"></label>
@@ -1628,7 +1629,20 @@ async function project(id, showSettings = false) {
   }));
   { const flash = sessionStorage.getItem('vc.bgmFlash'); if (flash) { sessionStorage.removeItem('vc.bgmFlash'); $('#bgmMsg').innerHTML = info(flash, 'success'); } }
   { const flash = sessionStorage.getItem('vc.sharedBgmFlash'); if (flash) { sessionStorage.removeItem('vc.sharedBgmFlash'); $('#sharedBgmMsg').innerHTML = info(flash, 'success'); $('#sharedBgmForm').closest('details').open = true; } }
-  const patchAsset = async (aid, body) => { try { await api(`/api/assets/${aid}`, { method: 'PATCH', body }); router(); } catch (e) { $('#assetMsg').innerHTML = errorBar(e); } };
+  const patchAsset = async (aid, body) => {
+    // router() re-renders the whole page; keep the column and window scroll positions so choosing a role doesn't jump
+    const col = $$('.col-body').find(c => c.querySelector(`[data-asset="${aid}"]`));
+    const colIndex = $$('.col-body').indexOf(col), colTop = col?.scrollTop ?? 0, winTop = window.scrollY;
+    try { await api(`/api/assets/${aid}`, { method: 'PATCH', body }); await router(); } catch (e) { $('#assetMsg').innerHTML = errorBar(e); return; }
+    const restore = () => { const c = $$('.col-body')[colIndex]; if (c) c.scrollTop = colTop; window.scrollTo(0, winTop); };
+    restore(); requestAnimationFrame(restore);
+    if (!body.role) return;
+    // the server gives a role only one asset may hold to the picked asset and moves the other holder to the role it gave up: say so next to the pick
+    const roleNow = id => $$('.role-pick').find(g => g.dataset.asset === id)?.querySelector('[aria-checked="true"]')?.dataset.role;
+    const moved = assets.map((o, i) => ({ o, i, now: roleNow(o.id) })).filter(x => x.o.id !== aid && x.now && x.now !== x.o.role);
+    const field = $$('.role-pick').find(g => g.dataset.asset === aid)?.closest('.role-field');
+    if (moved.length && field) field.insertAdjacentHTML('beforeend', moved.map(x => info(trUi('role.swapped', [roleLabel[x.o.role], assetLetter(x.i), roleLabel[x.now]]), 'warning')).join(''));
+  };
   $$('.role-pick').forEach(group => {
     const aid = group.dataset.asset, saved = assets.find(a => a.id === aid)?.role;
     const radios = $$('[role=radio]', group);

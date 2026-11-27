@@ -128,12 +128,23 @@ public sealed class AssetUploadTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, change.StatusCode);
         var oldMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!;
         var newMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "screen")!;
-        Assert.Equal(AssetRole.CamB, oldMain.Role);
+        Assert.Equal(AssetRole.Screen, oldMain.Role);   // "main" is exclusive: the previous holder takes the role the picked asset gave up
         Assert.Equal(AssetRole.Main, newMain.Role);
         Assert.Null(oldMain.SyncMethod);
         Assert.Null(newMain.SyncConfidence);
         Assert.Equal(0, oldMain.SyncOffset);
         Assert.Single(newMain.PipScenes);
+
+        // a role nobody else holds changes only the picked asset; screens may be shared
+        using (var free = await _http.PatchAsJsonAsync("/api/assets/screen", new { role = "cam_a" }, ct)) Assert.Equal(HttpStatusCode.OK, free.StatusCode);
+        Assert.Equal(AssetRole.Screen, rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!.Role);
+        using (var shared = await _http.PatchAsJsonAsync("/api/assets/screen", new { role = "screen" }, ct)) Assert.Equal(HttpStatusCode.OK, shared.StatusCode);
+        Assert.Equal((AssetRole.Screen, AssetRole.Screen), (rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!.Role, rt.Store.Get<SourceAsset>(Kinds.Asset, "screen")!.Role));
+        // editing an asset never moves it in the project's list
+        Assert.Equal(["main", "screen"], rt.Store.Assets(_id).Select(a => a.Id));
+        rt.Store.Put(Kinds.Asset, "main", _id, oldMain with { Role = AssetRole.CamB });
+        rt.Store.Put(Kinds.Asset, "screen", _id, newMain);
+        oldMain = rt.Store.Get<SourceAsset>(Kinds.Asset, "main")!;
 
         // the audio source is a separate mark: moving it re-bases the sync but leaves every picture role alone
         rt.Store.Put(Kinds.Asset, "main", _id, oldMain with { SyncOffset = 5, SyncMethod = "manual", SyncConfidence = 9999 });

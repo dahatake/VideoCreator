@@ -44,10 +44,10 @@ try {
   assert.equal(await page.locator('.preset-radio[data-id="P11"]').getAttribute('aria-checked'), 'true');
   await request(`/assets/${screen.id}`, 'PATCH', { sync_offset: 2 });
   await page.locator(`.role-pick[data-asset="${screen.id}"] [data-role="main"]`).click();
-  await page.waitForFunction(id => document.querySelector(`.role-pick[data-asset="${id}"] [aria-checked="true"]`)?.dataset.role !== 'main', main.id);
+  await page.waitForFunction(id => document.querySelector(`.role-pick[data-asset="${id}"] [aria-checked="true"]`)?.dataset.role === 'screen', main.id);
   saved = await request(`/projects/${project.id}`);
   assert.equal(saved.assets.find(a => a.id === screen.id).sync_offset, 0);
-  assert.equal(saved.assets.find(a => a.id === main.id).role, 'cam_b');
+  assert.equal(saved.assets.find(a => a.id === main.id).role, 'screen');
   assert.deepEqual(errors, []);
   console.log('PASS PiP scene detection, editable selection, persistence, P11 selection, main camera change and sync invalidation');
 } finally {

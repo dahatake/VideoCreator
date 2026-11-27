@@ -163,3 +163,10 @@ public static class Kinds
 {
     public const string Project = "project", Asset = "asset", Rights = "rights", Job = "job", Candidate = "candidate", EditPlan = "editplan", Render = "render", Bgm = "bgm", BrandKit = "brandkit", Setting = "setting", QaRepair = "qarepair";
 }
+
+public static class StoreAssets
+{
+    /// <summary>A project's assets in a stable order (<see cref="Models.AssetRoles.InOrder"/>); <see cref="Store.List{T}"/> puts the last edited first.</summary>
+    public static List<Models.SourceAsset> Assets(this Store store, string projectId) =>
+        Models.AssetRoles.InOrder(store.List<Models.SourceAsset>(Kinds.Asset, projectId));
+}

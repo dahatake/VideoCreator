@@ -198,7 +198,7 @@ public static class ScreenPlanner
 
         // 5. framing per run of consecutive screen clips: one zoom level and one PiP corner per run, the pan follows the activity
         var clips = res.Select(x => x.Clip).ToList();
-        int framedRuns = 0, fitRuns = 0;
+        int framedRuns = 0, fitRuns = 0, groupShown = 0, groupMissed = 0;
         for (int i = 0; i < clips.Count;)
         {
             if (clips[i].Reframe.Mode != "screen") { i++; continue; }
@@ -206,9 +206,16 @@ public static class ScreenPlanner
             bool fit = Frame(clips, i, j, screen, act, lay, cfg);
             if (fit) fitRuns++; else framedRuns++;
             var withPip = Enumerable.Range(i, j - i).Where(k => res[k].Screen).ToList();
-            if (presenter != null && withPip.Count > 0) PlacePip(clips, withPip, screen, presenter, master, act, ctx.Details ?? [], faces.GetValueOrDefault(presenter.Id), lay);
+            if (presenter != null && withPip.Count > 0)
+            {
+                PlacePip(clips, withPip, screen, presenter, master, act, ctx.Details ?? [], faces.GetValueOrDefault(presenter.Id), lay, out var crowd);
+                if (crowd.Shown >= 2) groupShown = Math.Max(groupShown, crowd.Shown);
+                else if (crowd.Seen >= 2) groupMissed = Math.Max(groupMissed, crowd.Seen);
+            }
             i = j;
         }
+        if (groupShown >= 2) notes.Add($"話し手のワイプに {groupShown} 人をまとめて表示しました");
+        if (groupMissed >= 2) notes.Add($"話し手のカメラに {groupMissed} 人映っていますが、離れていてワイプに収まらないため、最も大きく映る 1 人を表示しました");
         // contiguous pieces of one presenter stretch (split only by the grid) join again
         var merged = new List<Clip>();
         foreach (var c in clips)
@@ -310,10 +317,11 @@ public static class ScreenPlanner
 
     /// <summary>
     /// One PiP for a run: the corner whose square, mapped back onto the screen through the zoom/pan, covers the least of (a) the localised changes and
-    /// (b) the detailed parts of the picture (text, UI) — so it never hides where the user works nor a slide's title. The presenter is cropped square
-    /// around the median face (head and shoulders), or the upper centre when no face was measured.
+    /// (b) the detailed parts of the picture (text, UI) — so it never hides where the user works nor a slide's title. The presenter crop is
+    /// <see cref="PresenterCrop"/> (everyone who keeps appearing on the camera, or the upper centre when no face was measured).
     /// </summary>
-    static void PlacePip(List<Clip> clips, List<int> idx, SourceAsset screen, SourceAsset presenter, SourceAsset master, IReadOnlyList<ActivitySample> act, IReadOnlyList<DetailSample> details, List<FaceSample>? faces, ScreenLayout lay)
+    static void PlacePip(List<Clip> clips, List<int> idx, SourceAsset screen, SourceAsset presenter, SourceAsset master, IReadOnlyList<ActivitySample> act, IReadOnlyList<DetailSample> details, List<FaceSample>? faces, ScreenLayout lay,
+        out PresenterFraming crowd)
     {
         int sw = screen.Media.Width, sh = screen.Media.Height;
         var cost = ScreenLayout.Corners.ToDictionary(k => k, _ => 0.0);
@@ -345,31 +353,110 @@ public static class ScreenPlanner
         var best = ScreenLayout.Corners.OrderBy(k => Math.Round(cost[k] / Math.Max(1, n), 3)).First();
         var (x, y) = lay.Corner(best);
 
-        int pw = presenter.Media.Width, ph = presenter.Media.Height;
-        var boxes = new List<FaceBox>();
+        var samples = new List<FaceSample>();
         if (faces != null)
             foreach (var k in idx)
             {
                 double p0 = presenter.CameraTime(clips[k].MasterIn, master.Id), p1 = p0 + (clips[k].SrcOut - clips[k].SrcIn);
-                boxes.AddRange(faces.Where(f => f.T >= p0 - 0.5 && f.T <= p1 + 0.5 && f.Boxes.Count > 0).Select(f => f.Boxes.MaxBy(b => b.W * b.H)!));
+                samples.AddRange(faces.Where(f => f.T >= p0 - 0.5 && f.T <= p1 + 0.5));
             }
-        int S; int cx0, cy0;
-        if (boxes.Count > 0)
-        {
-            double Med(IEnumerable<double> v) { var o = v.OrderBy(z => z).ToList(); return o[o.Count / 2]; }
-            double fx = Med(boxes.Select(b => b.Cx)) * pw, fy = Med(boxes.Select(b => b.Cy)) * ph, fh = Med(boxes.Select(b => b.H)) * ph;
-            S = (int)Math.Round(Math.Clamp(2.6 * fh, 0.35 * Math.Min(pw, ph), Math.Min(pw, ph))) & ~1;
-            cx0 = (int)Math.Round(Math.Clamp(fx - S / 2.0, 0, pw - S)); cy0 = (int)Math.Round(Math.Clamp(fy - 0.45 * S, 0, ph - S));
-        }
-        else
-        {
-            S = (int)Math.Round(Math.Min(pw, ph) * 0.8) & ~1;
-            cx0 = (pw - S) / 2; cy0 = (int)Math.Round(Math.Min(ph - S, ph * 0.05));
-        }
+        var crop = PresenterCrop(samples, presenter.Media.Width, presenter.Media.Height);
+        int S = crop.S, cx0 = crop.X, cy0 = crop.Y;
+        crowd = crop;
         foreach (var k in idx)
         {
             var c = clips[k];
             clips[k] = c with { Pip = new PipSpec { AssetId = presenter.Id, SrcIn = Math.Round(presenter.CameraTime(c.MasterIn, master.Id), 3), CropX = cx0 & ~1, CropY = cy0 & ~1, CropS = S, X = x, Y = y, D = lay.D, Border = lay.Border, Corner = best } };
         }
+    }
+
+    /// <summary>The PiP's square crop in the presenter's source pixels; <see cref="Shown"/> &lt; <see cref="Seen"/> when the people on camera could not all fit.</summary>
+    public sealed record PresenterFraming(int X, int Y, int S, int Shown, int Seen);
+
+    /// <summary>A person counts when seen in this share of the sampled moments that have a face (passers-by and stray detections do not)…</summary>
+    public const double MinPersonPresence = 0.3;
+    /// <summary>…and when their face is at least this share of the largest face's height at that moment (people far in the background do not).</summary>
+    public const double MinPersonFaceRatio = 0.5;
+    /// <summary>The smallest face, as a share of the crop, that still reads in the circle (≈ 43 px of a 360 px PiP); a smaller group falls back to one person.</summary>
+    public const double MinGroupFaceShare = 0.12;
+    /// <summary>Heads must stay this far inside the circle (the white ring covers its edge).</summary>
+    const double CircleSafe = 0.97;
+
+    /// <summary>
+    /// One person (or none measured): a head-and-shoulders square around the median largest face, as before. Several people who keep appearing:
+    /// the smallest square whose inscribed circle — the PiP is round — holds every face (its oval with a little margin, over the spread of that
+    /// person's positions), never tighter than one person's framing. When they are too far apart for a square of the frame's short side, or their
+    /// faces would be smaller than <see cref="MinGroupFaceShare"/>, the most prominent person is framed alone and the caller says so.
+    /// </summary>
+    public static PresenterFraming PresenterCrop(IReadOnlyList<FaceSample> samples, int pw, int ph)
+    {
+        int side = Math.Min(pw, ph);
+        var seen = samples.Where(s => s.Boxes.Count > 0).ToList();
+        if (seen.Count == 0)
+        {
+            int s0 = (int)Math.Round(side * 0.8) & ~1;
+            return new((pw - s0) / 2, (int)Math.Round(Math.Min(ph - s0, ph * 0.05)), s0, 0, 0);
+        }
+        var people = People(seen);
+        if (people.Count <= 1) return Single(seen.Select(f => f.Boxes.MaxBy(b => b.W * b.H)!).ToList(), pw, ph, people.Count);
+
+        // each face's oval with a little margin (forehead and hair may be clipped, the face may not); a face cut by the frame only needs its visible part
+        var heads = people.Select(p => (
+            L: Math.Max(0, Q(p.Select(b => (b.X - 0.1 * b.W) * pw), 0.15)), R: Math.Min(pw, Q(p.Select(b => (b.X + 1.1 * b.W) * pw), 0.85)),
+            T: Math.Max(0, Q(p.Select(b => (b.Y - 0.2 * b.H) * ph), 0.15)), B: Math.Min(ph, Q(p.Select(b => (b.Y + 1.1 * b.H) * ph), 0.85)),
+            H: Q(p.Select(b => b.H * ph), 0.5))).ToList();
+        double cx = (heads.Min(h => h.L) + heads.Max(h => h.R)) / 2, cy = (heads.Min(h => h.T) + heads.Max(h => h.B)) / 2;
+        double smallest = heads.Min(h => h.H);
+        for (int s = (int)Math.Ceiling(Math.Min(side, Math.Max(2.6 * heads.Max(h => h.H), 0.35 * side))) & ~1; s <= side; s += 2)
+        {
+            if (smallest / s < MinGroupFaceShare) break;
+            int x0 = (int)Math.Round(Math.Clamp(cx - s / 2.0, 0, pw - s)), y0 = (int)Math.Round(Math.Clamp(cy - s / 2.0, 0, ph - s));
+            double ox = x0 + s / 2.0, oy = y0 + s / 2.0, r = CircleSafe * s / 2;
+            bool inside = heads.All(h => Enumerable.Range(0, 16).Select(k => k * Math.PI / 8).All(a =>
+                Math.Pow((h.L + h.R) / 2 + (h.R - h.L) / 2 * Math.Cos(a) - ox, 2) + Math.Pow((h.T + h.B) / 2 + (h.B - h.T) / 2 * Math.Sin(a) - oy, 2) <= r * r));
+            if (inside) return new(x0, y0, s, people.Count, people.Count);
+        }
+        var lead = people.MaxBy(p => p.Count * Q(p.Select(b => b.W * b.H), 0.5))!;
+        return Single(lead, pw, ph, people.Count);
+    }
+
+    static PresenterFraming Single(IReadOnlyList<FaceBox> boxes, int pw, int ph, int seen)
+    {
+        double fx = Q(boxes.Select(b => b.Cx), 0.5) * pw, fy = Q(boxes.Select(b => b.Cy), 0.5) * ph, fh = Q(boxes.Select(b => b.H), 0.5) * ph;
+        int s = (int)Math.Round(Math.Clamp(2.6 * fh, 0.35 * Math.Min(pw, ph), Math.Min(pw, ph))) & ~1;
+        return new((int)Math.Round(Math.Clamp(fx - s / 2.0, 0, pw - s)), (int)Math.Round(Math.Clamp(fy - 0.45 * s, 0, ph - s)), s, 1, Math.Max(1, seen));
+    }
+
+    /// <summary>Upper median for q = 0.5 (as the single-person framing always used); nearest rank otherwise.</summary>
+    static double Q(IEnumerable<double> v, double q)
+    {
+        var o = v.Order().ToList();
+        return o[q == 0.5 ? o.Count / 2 : (int)Math.Round(q * (o.Count - 1))];
+    }
+
+    /// <summary>Faces linked over time by position into people; only those who keep appearing, large enough, are returned (left to right).</summary>
+    static List<List<FaceBox>> People(List<FaceSample> seen)
+    {
+        var tracks = new List<(List<FaceBox> Boxes, double[] At)>();   // At = smoothed cx, cy, w, h
+        foreach (var s in seen)
+        {
+            double hmax = s.Boxes.Max(b => b.H);
+            var taken = new HashSet<int>();
+            foreach (var b in s.Boxes.Where(b => b.H >= MinPersonFaceRatio * hmax).OrderByDescending(b => b.W * b.H))
+            {
+                int best = -1; double bd = double.MaxValue;
+                for (int i = 0; i < tracks.Count; i++)
+                {
+                    var a = tracks[i].At;
+                    double dx = Math.Abs(b.Cx - a[0]) / Math.Max(a[2], b.W), dy = Math.Abs(b.Cy - a[1]) / Math.Max(a[3], b.H);
+                    if (taken.Contains(i) || dx > 0.75 || dy > 0.75 || dx + dy >= bd) continue;
+                    best = i; bd = dx + dy;
+                }
+                if (best < 0) { tracks.Add(([b], [b.Cx, b.Cy, b.W, b.H])); taken.Add(tracks.Count - 1); continue; }
+                tracks[best].Boxes.Add(b); taken.Add(best);
+                var t = tracks[best].At; t[0] += 0.3 * (b.Cx - t[0]); t[1] += 0.3 * (b.Cy - t[1]); t[2] += 0.3 * (b.W - t[2]); t[3] += 0.3 * (b.H - t[3]);
+            }
+        }
+        return tracks.Where(t => t.Boxes.Count >= MinPersonPresence * seen.Count).OrderBy(t => t.At[0]).Select(t => t.Boxes).ToList();
     }
 }

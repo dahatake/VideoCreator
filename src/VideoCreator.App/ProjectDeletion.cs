@@ -38,7 +38,7 @@ public static class ProjectDeletion
         docs.AddRange(renderIds.Select(id => (Kinds.Render, id)));
         docs.AddRange(planIds.SelectMany(e => store.Ids(Kinds.QaRepair, e)).Select(id => (Kinds.QaRepair, id)));
         docs.Add((Kinds.Project, p.Id));
-        var shas = store.List<SourceAsset>(Kinds.Asset, p.Id).Select(a => CacheKey(a.Sha256)).Where(s => s != null).ToHashSet();
+        var shas = store.Assets(p.Id).Select(a => CacheKey(a.Sha256)).Where(s => s != null).ToHashSet();
 
         string folder; string? folderPath = null;
         var owned = projectsRoots.Any(r => OwnsFolder(p, r));

@@ -56,7 +56,7 @@ Top **Rename** opens save/cancel input. Storage path also appears. Renaming does
 | Asset information | Name/duration/display resolution/fps/VFR/audio/codec |
 | Warnings | Rotation/VFR/no audio; visible video does not guarantee subtitles |
 | Confirm rights / Confirmed | Personally check copyright/likeness etc.; confirmed checkbox not editable |
-| Role (multiple assets) | Master/camera/wide/audio master/screen; affects P7/P10 |
+| Role (multiple assets) | Master/camera/wide/audio master/screen; affects P7/P10. Only one video can hold each role except Screen: picking a role another video has swaps that video to the role you gave up, with a warning next to your pick. Videos keep the order they were added (A, B…) |
 | Speaker (multiple assets) | Camera's speaker 1–8 in transcript appearance order; blank automatic/unset |
 | Offset (seconds)/sync | Camera time relative to master audio; inspect evidence/residual/drift before manual changes |
 

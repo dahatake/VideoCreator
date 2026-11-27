@@ -86,6 +86,13 @@ public static class AssetRoles
 
     public static List<SourceAsset> Screens(IReadOnlyList<SourceAsset> assets) => assets.Where(a => a.Role == AssetRole.Screen).ToList();
 
+    /// <summary>Roles that only one asset may hold; any number of recordings can be screens.</summary>
+    public static bool Exclusive(AssetRole role) => role != AssetRole.Screen;
+
+    /// <summary>A project's assets in the order they were added, so lists, A/B labels and "first asset" fallbacks never move when one is edited.</summary>
+    public static List<SourceAsset> InOrder(IEnumerable<SourceAsset> assets) =>
+        assets.OrderBy(a => a.Added ?? DateTimeOffset.MinValue).ThenBy(a => a.Id, StringComparer.Ordinal).ToList();
+
     /// <summary>
     /// News anchors: every recording with a picture whose role shows a person (Main, camera A, camera B), Main first. Each one is a box of the split screen
     /// when no material is shown; with one anchor the pattern stays a single camera.
@@ -120,6 +127,8 @@ public sealed record SourceAsset
     public required string Sha256 { get; init; }
     public required MediaInfo Media { get; init; }
     public AssetRole Role { get; init; } = AssetRole.Main;
+    /// <summary>When the asset was first added to its project (null for assets added before this was recorded); fixes its place in the list.</summary>
+    public DateTimeOffset? Added { get; init; }
     /// <summary>
     /// This asset's audio is the dialogue master (transcript and time spine), independent of <see cref="Role"/>: the video of such an asset is used as
     /// its role says. Several recordings can show the scene while only the one with the clearest sound is chosen as the audio source.

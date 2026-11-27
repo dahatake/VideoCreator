@@ -231,7 +231,7 @@ public static class Api
         // Like the recent-projects list of a video editor's start-up dialog: newest work first, where to continue, and whether a source file went missing.
         api.MapGet("/projects", (Runtime rt, JobQueue q) => Results.Json(rt.Store.List<Project>(Kinds.Project).Select(p =>
         {
-            var assets = rt.Store.List<SourceAsset>(Kinds.Asset, p.Id);
+            var assets = rt.Store.Assets(p.Id);
             var jobs = rt.Store.List<Job>(Kinds.Job, p.Id);
             return new
             {
@@ -251,7 +251,7 @@ public static class Api
             return Results.Json(new
             {
                 project = p,
-                assets = rt.Store.List<SourceAsset>(Kinds.Asset, id),
+                assets = rt.Store.Assets(id),
                 rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, id),
                 jobs,
                 resume_state = resumeState,
@@ -438,7 +438,7 @@ public static class Api
         });
         api.MapGet("/projects/{id}/estimate", (Runtime rt, string id, string? preset) =>
         {
-            var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
+            var assets = rt.Store.Assets(id);
             var main = AssetRoles.Master(assets);
             if (main == null) return Error(404, "E-NOT-FOUND", "素材がありません");
             var runner = rt.CreateRunner();
@@ -464,7 +464,7 @@ public static class Api
             if (rt.Store.Get<Project>(Kinds.Project, id) is not { } project) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             orientation ??= project.GenerationSettings.Orientation;
             if (!Canvas.Orientations.Contains(orientation)) return Error(422, "E-VALIDATION", "出力の向きは auto / portrait / landscape のどれかを指定してください");
-            var assets = rt.Store.List<SourceAsset>(Kinds.Asset, id);
+            var assets = rt.Store.Assets(id);
             var main = AssetRoles.Master(assets);
             var shape = AssetRoles.Presenter(assets) ?? main;
             var faces = shape == null ? [] : rt.CreateRunner().CachedFaces(shape);
@@ -553,12 +553,13 @@ public static class Api
             if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
             if (req.PipScenes != null && !ScreenScenes.Valid(req.PipScenes, a.Media.Duration))
                 return Error(422, "E-VALIDATION", "シーンの開始・終了は素材内の重ならない区間にしてください");
-            var siblings = rt.Store.List<SourceAsset>(Kinds.Asset, a.ProjectId);
-            bool newMain = req.Role is AssetRole.Main && a.Role != AssetRole.Main;
+            var siblings = rt.Store.Assets(a.ProjectId);
             bool newRef = req.AudioRef == true && !a.AudioRef;
-            // one asset keeps each exclusive mark: the picture role "main" and the audio source
-            var after = siblings.Select(o => o.Id == id ? a with { Role = req.Role ?? a.Role, AudioRef = req.AudioRef ?? a.AudioRef }
-                : o with { Role = newMain && o.Role == AssetRole.Main ? AssetRole.CamB : o.Role, AudioRef = newRef ? false : o.AudioRef }).ToList();
+            // A role only one asset may hold moves the other holder to the role this asset gives up (a swap); the UI tells the user.
+            var role = req.Role ?? a.Role;
+            bool Taken(SourceAsset o) => req.Role != null && role != a.Role && AssetRoles.Exclusive(role) && o.Role == role;
+            var after = siblings.Select(o => o.Id == id ? a with { Role = role, AudioRef = req.AudioRef ?? a.AudioRef }
+                : o with { Role = Taken(o) ? a.Role : o.Role, AudioRef = newRef ? false : o.AudioRef }).ToList();
             if (AssetRoles.Master(siblings)?.Id != AssetRoles.Master(after)?.Id)
             {
                 // Every stored offset is relative to the old master, including manual offsets. Never reuse it against a different master.
@@ -940,7 +941,7 @@ public static class Api
                 {
                     var cand = rt.Store.Get<Candidate>(Kinds.Candidate, plan.Provenance.CandidateId ?? "") ?? throw new KeyNotFoundException("candidate");
                     var job = rt.Store.Get<Job>(Kinds.Job, plan.Provenance.JobId ?? "") ?? throw new KeyNotFoundException("job");
-                    var main = rt.Store.List<SourceAsset>(Kinds.Asset, plan.ProjectId).First(a => a.Id == plan.Audio.Master);
+                    var main = rt.Store.Assets(plan.ProjectId).First(a => a.Id == plan.Audio.Master);
                     var tr = runner.LoadTranscript(main, plan.Language);
                     var segs = PlanEditor.AdjustSegments(MergedSegments(updated), tr, adj.Edge ?? "end", adj.Op == "replan" ? 0 : adj.Delta ?? 1);
                     var (rebuilt, _) = await runner.ReplanAsync(cand, updated, job, segs, ct);
@@ -1303,7 +1304,7 @@ public static class Api
         var groups = new List<List<string>>();
         if (others.Count > 0) groups.Add(others);
         if (shorts.Count > 0) groups.Add(shorts);
-        var assets = rt.Store.List<SourceAsset>(Kinds.Asset, projectId);
+        var assets = rt.Store.Assets(projectId);
         if (assets.Count == 0) return Error(422, "E-ING-UNSUPPORTED", "素材を追加してください");
         var rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, projectId).Select(r => r.AssetId).ToHashSet();
         if (assets.Any(a => !rights.Contains(a.Id))) return Error(409, "E-RIGHTS-REQUIRED", "素材の権利確認が完了していません（AT-08）");
@@ -1364,13 +1365,13 @@ public static class Api
             var media = await probe.ProbeAsync(path, ct);
             var warnings = MediaProbe.Validate(media);
             var sha = await MediaProbe.Sha256Async(path, ct);
-            var existing = rt.Store.List<SourceAsset>(Kinds.Asset, projectId);
+            var existing = rt.Store.Assets(projectId);
             var id = $"a_{sha[..10]}_{projectId[2..Math.Min(projectId.Length, 8)]}";   // per project: the same file can be used in several projects
             var prev = existing.FirstOrDefault(a => a.Id == id);
             var asset = new SourceAsset
             {
                 Id = id, ProjectId = projectId, Path = path, Sha256 = sha, Media = media, Warnings = warnings,
-                Role = prev?.Role ?? (existing.Count == 0 ? AssetRole.Main : AssetRole.CamB),
+                Role = prev?.Role ?? (existing.Count == 0 ? AssetRole.Main : AssetRole.CamB), Added = prev?.Added ?? DateTimeOffset.UtcNow,
                 Speaker = prev?.Speaker, SyncOffset = prev?.SyncOffset ?? 0, SyncConfidence = prev?.SyncConfidence,
                 SyncDriftPpm = prev?.SyncDriftPpm ?? 0, SyncMethod = prev?.SyncMethod, SyncResidualMs = prev?.SyncResidualMs, SyncWindows = prev?.SyncWindows, SyncMap = prev?.SyncMap ?? [],
                 PipScenes = prev?.PipScenes ?? [], PipContent = prev?.PipContent, AudioRef = prev?.AudioRef ?? false, AutoPipScenes = prev?.AutoPipScenes ?? [],

@@ -924,6 +924,94 @@ public class MultiSourceTests : IAsyncLifetime
         Assert.NotEqual("tl", shot.Pip.Corner);
     }
 
+    static bool InCircle(FaceBox f, ScreenPlanner.PresenterFraming c, int pw, int ph)
+    {
+        double ox = c.X + c.S / 2.0, oy = c.Y + c.S / 2.0;
+        return Enumerable.Range(0, 16).Select(k => k * Math.PI / 8)    // the face's oval (inscribed in its box)
+            .All(a => Math.Pow((f.Cx + f.W / 2 * Math.Cos(a)) * pw - ox, 2) + Math.Pow((f.Cy + f.H / 2 * Math.Sin(a)) * ph - oy, 2) <= c.S * c.S / 4.0);
+    }
+
+    [Fact] // two people who stay on camera both fit in the round PiP; a passer-by, a tiny face in the background and jitter do not change who counts
+    public void Pip_frames_everyone_who_keeps_appearing()
+    {
+        var left = new FaceBox(0.30, 0.30, 0.10, 0.18, 1); var right = new FaceBox(0.55, 0.32, 0.10, 0.18, 1);
+        var poster = new FaceBox(0.90, 0.08, 0.03, 0.05, 1); var passer = new FaceBox(0.02, 0.45, 0.10, 0.18, 1);
+        FaceBox J(FaceBox b, int i) => b with { X = b.X + (i % 3 - 1) * 0.004, Y = b.Y + (i % 2) * 0.004 };
+        var samples = Enumerable.Range(0, 40).Select(i => new FaceSample(i / 2.0,
+            [J(left, i), J(right, i), poster, .. i < 4 ? new[] { passer } : []])).ToList();
+        var c = ScreenPlanner.PresenterCrop(samples, 1280, 720);
+        Assert.Equal((2, 2), (c.Shown, c.Seen));
+        Assert.True(InCircle(left, c, 1280, 720) && InCircle(right, c, 1280, 720), $"{c}");
+        Assert.True(c.S < 720, $"not wider than needed: {c}");
+
+        // one person: the framing is the same whether or not a background face is detected too
+        var alone = ScreenPlanner.PresenterCrop(samples.Select(s => s with { Boxes = [s.Boxes[0]] }).ToList(), 1280, 720);
+        var withPoster = ScreenPlanner.PresenterCrop(samples.Select(s => s with { Boxes = [s.Boxes[0], poster] }).ToList(), 1280, 720);
+        Assert.Equal(alone, withPoster);
+        Assert.Equal((1, 1), (alone.Shown, alone.Seen));
+    }
+
+    [Fact] // people at both edges of a wide shot cannot share one circle: the larger one is framed, never half of each, and the plan says so
+    public void Pip_falls_back_to_the_most_prominent_person_when_a_group_cannot_fit()
+    {
+        var small = new FaceBox(0.03, 0.30, 0.09, 0.16, 1); var big = new FaceBox(0.85, 0.28, 0.11, 0.20, 1);
+        var faces = Enumerable.Range(0, 60).Select(i => new FaceSample(5 + i / 2.0, [small, big])).ToList();
+        var c = ScreenPlanner.PresenterCrop(faces, 1280, 720);
+        Assert.Equal((1, 2), (c.Shown, c.Seen));
+        Assert.True(InCircle(big, c, 1280, 720), $"{c}");
+
+        var pres = Asset("a1", "pres.mp4", 60, 1280, 720, AssetRole.Main);
+        var scr = Asset("a2", "scr.mp4", 60, 1920, 1080);
+        var act = Enumerable.Range(1, 120).Select(i => new ActivitySample(i / 2.0, 0.2, 0.6, 0.1, 0.9, 0.3)).ToList();
+        PipSpec Pip(List<FaceSample> f, List<string> notes) => ScreenPlanner.Plan([new Clip { ClipId = "s", AssetId = "a1", SrcIn = 5, SrcOut = 20, AudioIn = 5 }],
+            new Transcript { Provider = "t", Duration = 60, Sentences = [new Sentence(0, 5, 20, "ここをクリックしてください", 1, 0, 0)] },
+            [pres, scr], pres, new ScreenContext("a2", "a1", act, []), new Dictionary<string, List<FaceSample>> { ["a1"] = f }, Fixtures.Presets["P10"], new Canvas(), notes)
+            .First(x => x.Pip != null).Pip!;
+        var n1 = new List<string>(); var p1 = Pip(faces, n1);
+        Assert.Equal((c.X & ~1, c.Y & ~1, c.S), (p1.CropX, p1.CropY, p1.CropS));
+        Assert.Contains(n1, n => n.Contains("2 人映っていますが"));
+        var n2 = new List<string>();
+        Pip(faces.Select(s => s with { Boxes = [small with { X = 0.36 }, big with { X = 0.55 }] }).ToList(), n2);
+        Assert.Contains("話し手のワイプに 2 人をまとめて表示しました", n2);
+    }
+
+    [Fact] // AT: a real two-person shot through the whole P10 path (detector → plan → render); an independent detection on the output's circle finds both
+    public async Task Pip_shows_both_people_of_a_real_photo_in_the_rendered_circle()
+    {
+        var det = new VideoCreator.Faces.FaceService(Ff, Path.Combine(Fixtures.RepoRoot, "tools", "models", "ultraface.onnx"));
+        string presFile = P("pair.mp4"), scrFile = P("desk.mp4");
+        // the left two of the three people in the group photo (the third is cropped off), as a wider shot with room above their heads; a tone as the master audio
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-loop", "1", "-framerate", "30", "-i", Path.Combine(Fixtures.Dir, "faces", "face3.jpg"),
+            "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000", "-t", "8",
+            "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,crop=800:450:0:0,scale=960:540,pad=1280:720:160:180:color=0x6a6a72,format=yuv420p",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", presFile], Ct);
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=30:d=8", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+            "-t", "8", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", scrFile], Ct);
+        var faces = await det.AnalyzeAsync(presFile, [new Interval(0, 8)], P("faces.json"), Ct);
+        Assert.All(faces, s => Assert.Equal(2, s.Boxes.Count));
+
+        var pres = Asset("a1", presFile, 8, 1280, 720, AssetRole.Main);
+        var scr = Asset("a2", scrFile, 8, 1920, 1080);
+        var act = Enumerable.Range(1, 16).Select(i => new ActivitySample(i / 2.0, 0.2, 0.6, 0.1, 0.9, 0.3)).ToList();
+        var p = Fixtures.Presets["P10"]; var notes = new List<string>();
+        var tr = new Transcript { Provider = "t", Duration = 8, Sentences = [new Sentence(0, 0.5, 7.5, "ここをクリックしてください", 1, 0, 0)] };
+        var timeline = ScreenPlanner.Plan([new Clip { ClipId = "s", AssetId = "a1", SrcIn = 0.5, SrcOut = 7.5, AudioIn = 0.5 }], tr, [pres, scr], pres,
+            new ScreenContext("a2", "a1", act, []), new Dictionary<string, List<FaceSample>> { ["a1"] = faces }, p, new Canvas(), notes);
+        Assert.Contains("話し手のワイプに 2 人をまとめて表示しました", notes);
+        var shot = timeline.First(c => c.Pip != null);
+        var plan = new EditPlan { EditplanId = "ep", ProjectId = "p", Preset = p.Ref, Timeline = timeline, Audio = new AudioSpec { Master = "a1" } };
+        var outp = await new Renderer(Ff).RenderAsync(plan, p, new[] { pres, scr }.ToDictionary(a => a.Id), P("p10.mp4"), preview: true, Ct);
+
+        // the circle as rendered (preview = half size), padded to the detector's 4:3 input
+        var pip = shot.Pip!; int ring = (pip.D + 2 * pip.Border) / 2, x = pip.X / 2, y = pip.Y / 2;
+        var still = P("pip.png");
+        await Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y", "-ss", F(shot.Length / 2), "-i", outp.Path, "-frames:v", "1",
+            "-vf", $"crop={ring}:{ring}:{x}:{y},pad={ring * 4 / 3}:{ring}:(ow-iw)/2:0", still], Ct);
+        var seen = await det.DetectAtAsync(still, 0, Ct);
+        Assert.True(seen.Count == 2, $"{seen.Count} faces in the rendered PiP (crop {pip.CropX},{pip.CropY} {pip.CropS})");
+        Assert.True(seen.Min(f => f.Cx) < 0.5 && seen.Max(f => f.Cx) > 0.5, "one person on each side");
+    }
+
     [Fact] // the screen band sits between the headline and the emphasis telops; the PiP fits in it
     public void Screen_layout_keeps_telops_off_the_screen()
     {
