@@ -185,21 +185,24 @@ public static class FaceTrack
         return keep.Select(i => pts[i]).ToList();
     }
 
-    /// <summary>FFmpeg expression for the crop's left edge as a function of clip time t.</summary>
+    /// <summary>FFmpeg expression for the crop's left edge as a function of clip time t: the first value before the first key, linear ramps between keys,
+    /// the last value after it. Built as a binary search (<see cref="FfExpr.Piecewise"/>): a long pan-and-zoom track has hundreds of keys, and a flat sum of one term
+    /// per ramp exceeds FFmpeg's expression depth limit (~96 ramps), which made the whole render fail.</summary>
     public static string XExpression(IReadOnlyList<TrackPoint> k)
     {
         var IC = CultureInfo.InvariantCulture;
         if (k.Count == 1) return k[0].X.ToString("0.#", IC);
-        var sb = new StringBuilder();
-        sb.Append($"lt(t,{k[0].T.ToString("0.###", IC)})*{k[0].X.ToString("0.#", IC)}+");
+        var pieces = new List<string> { k[0].X.ToString("0.#", IC) }; var starts = new List<string>();
         for (int i = 0; i + 1 < k.Count; i++)
         {
             double t0 = k[i].T, t1 = k[i + 1].T;
             if (t1 <= t0) continue;
-            sb.Append($"gte(t,{t0.ToString("0.###", IC)})*lt(t,{t1.ToString("0.###", IC)})*({k[i].X.ToString("0.#", IC)}+({(k[i + 1].X - k[i].X).ToString("0.#", IC)})*(t-{t0.ToString("0.###", IC)})/{(t1 - t0).ToString("0.###", IC)})+");
+            starts.Add(t0.ToString("0.###", IC));
+            pieces.Add($"({k[i].X.ToString("0.#", IC)}+({(k[i + 1].X - k[i].X).ToString("0.#", IC)})*(t-{t0.ToString("0.###", IC)})/{(t1 - t0).ToString("0.###", IC)})");
         }
-        sb.Append($"gte(t,{k[^1].T.ToString("0.###", IC)})*{k[^1].X.ToString("0.#", IC)}");
-        return sb.ToString();
+        starts.Add(k[^1].T.ToString("0.###", IC));
+        pieces.Add(k[^1].X.ToString("0.#", IC));
+        return FfExpr.Piecewise(pieces, starts);
     }
 
     /// <summary>Expected crop-left at clip time t (used by QA S-05 to know where the face is on the output).</summary>

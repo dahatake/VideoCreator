@@ -21,7 +21,7 @@ export const translated = `
 19|No suitable segments found. Choose another preset or a longer video.|未找到符合条件的片段。请选择其他模式或更长的视频。|조건에 맞는 구간이 없습니다. 다른 프리셋이나 더 긴 영상을 사용하세요.
 20|Some automatic checks failed. Fix the items below before exporting again.|自动检查中有项目不符合发布标准。请修复下方项目后重新导出。|자동 검사에서 게시 기준을 충족하지 못했습니다. 아래 항목을 수정한 후 다시 내보내세요.
 21|This preset is not available yet.|此模式暂不可用。|아직 사용할 수 없는 프리셋입니다.
-22|Video export failed. Check free disk space and retry.|视频导出失败。请检查磁盘空间后重试。|내보내기에 실패했습니다. 디스크 여유 공간을 확인하고 다시 시도하세요.
+22|Video export failed. The first line of the FFmpeg message above shows the cause; include it when you report the problem.|视频导出失败。上方 FFmpeg 消息的第一行即为原因；报告问题时请附上此消息。|내보내기에 실패했습니다. 위 FFmpeg 메시지의 첫 줄이 원인입니다. 문제를 보고할 때 이 메시지를 함께 보내 주세요.
 23|Cancel the job or wait for completion before deleting.|请先取消任务或等待完成后再删除。|작업을 취소하거나 완료될 때까지 기다린 후 삭제하세요.
 24|Close apps using files in this folder and retry. The project has not been deleted.|请关闭正在使用此文件夹文件的应用后重试。项目尚未删除。|폴더의 파일을 사용하는 앱을 닫고 다시 시도하세요. 프로젝트는 삭제되지 않았습니다.
 25|Back to {0}|返回{0}|{0}(으)로 돌아가기

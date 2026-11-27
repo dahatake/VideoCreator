@@ -411,11 +411,14 @@ public sealed class QaEngine(FFmpeg ff)
             await File.WriteAllTextAsync(ass, AssWriter.Write(plan, ctx.Preset, layout), new UTF8Encoding(false), ct);
             int W = canvasW / 2, H = canvasH / 2; const double fps = 10;
             var frames = times.Select(t => (int)Math.Round(t * fps)).Distinct().OrderBy(x => x).ToList();
-            var select = string.Join("+", frames.Select(f => $"eq(n,{f})"));
+            var select = FfExpr.Sum(frames.Select(f => $"eq(n,{f})").ToList());
             using var ms = new MemoryStream();
             var dur = (total + 1).ToString("0.##", IC);
-            await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", $"color=black:s={W}x{H}:r={fps.ToString(IC)}:d={dur}",
+            var run = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", $"color=black:s={W}x{H}:r={fps.ToString(IC)}:d={dur}",
                 "-vf", $"subtitles={FFmpeg.FilterPath(ass)}:fontsdir={FFmpeg.FilterPath(ff.FontsDir)},select='{select}'", "-fps_mode", "passthrough", "-pix_fmt", "gray", "-f", "rawvideo", "-"], ct, stdout: ms);
+            // no frames would read as "all inside": a measurement that did not run must not pass
+            if (run.ExitCode != 0)
+                return new("H-05", QaStatus.Warn, "measurement failed: " + FFmpeg.Tail(run.StdErr, 2), "safe zone", "テロップの安全領域（実測できませんでした）");
             var buf = ms.GetBuffer(); int n = (int)(ms.Length / (W * H));
             for (int k = 0; k < n; k++)
             {

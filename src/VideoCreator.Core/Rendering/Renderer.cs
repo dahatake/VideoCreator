@@ -301,7 +301,7 @@ public sealed partial class Renderer(FFmpeg ff)
         if (a.Bleeps.Count > 0)
         {
             // 伏せ字: silence the dialogue and gate a 1 kHz tone into exactly the same spans (before the duck, so the BGM ducks under the bleep too)
-            var gate = string.Join("+", a.Bleeps.Select(b => $"between(t,{F(b.T0)},{F(b.T1)})"));
+            var gate = FfExpr.Sum(a.Bleeps.Select(b => $"between(t,{F(b.T0)},{F(b.T1)})").ToList());
             g.Append($"[{cur}]volume=volume=0:enable='{gate}'[bq];aevalsrc='{F(BleepAmplitude)}*sin(2*PI*1000*t)*gt({gate},0)':s=48000:d={F(a.Bleeps.Max(b => b.T1) + 0.1)},aformat=sample_fmts=fltp:channel_layouts=stereo[bt];" +
                      "[bq][bt]amix=inputs=2:normalize=0:duration=first[bl];");
             cur = "bl";

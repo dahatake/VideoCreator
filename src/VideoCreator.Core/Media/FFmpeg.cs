@@ -154,7 +154,23 @@ public sealed class FFmpeg
         return need.Where(f => !System.Text.RegularExpressions.Regex.IsMatch(r.StdOut, $@"\s{f}\s")).ToList();
     }
 
-    public static string Tail(string s, int lines = 6) => string.Join('\n', s.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(lines)).Trim();
+    /// <summary>
+    /// The last lines of ffmpeg's stderr, preceded by the first error line when it has scrolled out of them: when one filter fails, the filter graph,
+    /// encoders, muxer and threads each report a follow-on error afterwards ("Could not open encoder before EOF", …), which would otherwise hide the cause.
+    /// </summary>
+    public static string Tail(string s, int lines = 6)
+    {
+        var all = s.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var tail = all.TakeLast(lines).ToList();
+        var cause = all.Take(all.Length - tail.Count).FirstOrDefault(IsCause);
+        return string.Join('\n', cause == null ? tail : tail.Prepend(cause)).Trim();
+    }
+
+    static readonly string[] FollowOn = ["Task finished with error", "Terminating thread with error", "Could not open encoder before EOF", "Nothing was written into output file",
+        "Error reinitializing filters", "Conversion failed", "Error while filtering", "Error sending frames to consumers", "Error while processing the decoded data"];
+
+    static bool IsCause(string line) => System.Text.RegularExpressions.Regex.IsMatch(line, @"error|fail|invalid|unable|cannot|could not|not found|no such|too (large|big)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        && !FollowOn.Any(f => line.Contains(f, StringComparison.Ordinal));
 
     /// <summary>Path for a libavfilter option value inside -filter_complex: quoted at graph level, ':' escaped for the option parser
     /// (verified: unquoted "C\:/..." fails, "'C\:/...'" works).</summary>
