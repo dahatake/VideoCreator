@@ -53,7 +53,7 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
         events.Publish(new JobUpdate(job.Id, JobStatus.Queued, 0, "待機中"));
         var cts = new CancellationTokenSource();
         _running[job.Id] = cts;
-        _work.Writer.TryWrite(ct => RunJobAsync(job.Id, CancellationTokenSource.CreateLinkedTokenSource(ct, cts.Token).Token));
+        _work.Writer.TryWrite(ct => RunJobAsync(job.Id, cts.Token, ct));
     }
 
     public bool Cancel(string jobId)
@@ -146,8 +146,10 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
     public ExportStatus? LatestExport(string editplanId) =>
         Exports.Values.Where(e => e.EditplanId == editplanId).MaxBy(e => e.QueuedAt);
 
-    async Task RunJobAsync(string jobId, CancellationToken ct)
+    async Task RunJobAsync(string jobId, CancellationToken cancel, CancellationToken stopping)
     {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stopping, cancel);
+        var ct = linked.Token;
         var job = store.Get<Job>(Kinds.Job, jobId);
         if (job == null || job.Status is JobStatus.Cancelled or JobStatus.Done or JobStatus.Ready) return;
         job = job with { Status = JobStatus.Ingesting, StartedAt = DateTimeOffset.UtcNow };
@@ -171,6 +173,11 @@ public sealed class JobQueue(Store store, Func<PipelineRunner> runnerFactory, Jo
             done = done with { FinishedAt = DateTimeOffset.UtcNow };
             store.Put(Kinds.Job, job.Id, job.ProjectId, done);
             events.Publish(new JobUpdate(job.Id, JobStatus.Ready, 1, done.Message));
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested && !cancel.IsCancellationRequested)
+        {
+            // the app is shutting down, not the user cancelling: the job stays unfinished and the next start resumes it (NFR-REL-02)
+            log.LogInformation("job {Job} interrupted by shutdown; it resumes on the next start", jobId);
         }
         catch (OperationCanceledException)
         {

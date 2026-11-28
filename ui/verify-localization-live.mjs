@@ -18,8 +18,10 @@ const created = new Set();
 page.on('pageerror', error => errors.push(error.message));
 const headers = { 'X-VideoCreator': '1' };
 const switchLocale = async locale => {
-  await page.locator('#ui-language').selectOption(locale);
-  await page.waitForFunction(value => document.documentElement.lang === value && !document.querySelector('#ui-language').disabled, locale);
+  const button = page.locator(`#ui-language [data-language="${locale}"]`);
+  await button.click();
+  await page.waitForFunction(value => document.documentElement.lang === value && [...document.querySelectorAll('#ui-language [data-language]')].every(button => !button.disabled), locale);
+  assert.equal(await button.getAttribute('aria-pressed'), 'true', `${locale}: selected language toggle`);
 };
 try {
   assert.equal((await context.request.get(`${base}/api/health`)).status(), 200);

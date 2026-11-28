@@ -32,17 +32,30 @@ public static class PlanBuilder
         r = r with { Job = r.Job with { Options = p.Apply(r.Job.Options) } };
         var segs = r.OverrideSegments ?? r.Candidate.Segments;
         // the picture-in-picture pattern follows the speaker's recording, which need not be the audio source
-        var shape = p.Planner == "pip" && AssetRoles.Presenter(r.Assets) is { } speaker ? speaker : master;
+        var shape = r.Job.Options.BodyTrim != null ? BodyTrimmer.Main(r.Assets) ?? master :
+            p.Planner == "pip" && AssetRoles.Presenter(r.Assets) is { } speaker ? speaker : master;
         var canvas = Canvas.For(shape.Media.Width, shape.Media.Height, r.Job.Options.Orientation);
         var bursts = r.Bursts ?? [];
-        if (p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && r.Part == null && tr.Sentences.Count > 0)
+        if (r.Job.Options.BodyTrim == null && p.Loop.Enabled && p.Planner == "speech" && r.Llm != null && r.OverrideSegments == null && r.Part == null && tr.Sentences.Count > 0)
         {
             try { if (await LoopEnding.ChooseAsync(r.Llm, tr, segs, sig, p, master.Media, master.Id, ct) is { } lp) { segs = lp.Segments; notes.Add(lp.Note); } }
             catch (Exception ex) when (ex is not OperationCanceledException) { notes.Add("ループの終わりの判定に失敗しました: " + ex.Message); }
         }
         List<Clip> clips;
-        switch (r.Part != null ? "series" : p.Planner)
+        switch (r.Job.Options.BodyTrim != null ? "body" : r.Part != null ? "series" : p.Planner)
         {
+            case "body":
+            {
+                var picture = BodyTrimmer.Main(r.Assets) ?? throw new PlanException("E-TRIM-RANGE", "主動画がありません。");
+                var allowed = BodyTrimmer.MasterRange(r.Job.Options.BodyTrim!, picture, master);
+                if (segs.Any(s => s.T0 < allowed.T0 || s.T1 > allowed.T1 || s.Length < 0.1))
+                    throw new PlanException("E-TRIM-RANGE", "編集区間は保存した本編範囲内にしてください。");
+                clips = segs.SelectMany(s => BodyTrimmer.Clips(s, picture, master)).ToList();
+                if (p.Planner == "switch") clips = SwitchPlanner.Plan(clips, tr, r.Assets, master, p, bursts, notes, picture);
+                clips = Screen(clips, r, canvas, notes);
+                notes.Add("本編全体を保持し、ハイライト抽出・無音の中抜き・早送り・ループ編集は行いません。");
+                break;
+            }
             case "series":
             {
                 clips = SeriesPlanner.Clips(r.Part!, tr, sig, p, master.Media, master.Id, notes);
@@ -226,6 +239,7 @@ public static class PlanBuilder
             EditplanId = $"ep_{r.Candidate.Id}", ProjectId = r.ProjectId, Preset = p.Ref, Canvas = canvas, Timeline = packed, Telops = telops, Audio = audio,
             Provenance = new Provenance { JobId = r.Job.Id, CandidateId = r.Candidate.Id, LlmModel = r.Job.LlmModel ?? r.Llm?.Model, PromptVersion = SelectionPrompt.Version },
             Series = series, Inserts = inserts, Language = tr.Language,
+            BodyRange = r.Job.Options.BodyTrim != null ? new Interval(segs.Min(s => s.T0), segs.Max(s => s.T1)) : null,
             TelopFaces = r.Assets.ToDictionary(a => a.Id, a => new TelopFaceSource(a.Media, r.Faces.GetValueOrDefault(a.Id) ?? [])),
         };
         var layout = Rendering.TelopLayout.Resolve(plan, p);

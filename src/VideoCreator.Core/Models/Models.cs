@@ -13,6 +13,7 @@ public sealed record Project
     public List<ProjectProperNoun> ProperNouns { get; init; } = [];
     public ProjectGenerationSettings GenerationSettings { get; init; } = new();
     public ProjectWorkflowState? WorkflowState { get; init; }
+    public BodyTrim? BodyTrim { get; init; }
     public List<SceneCardImage> SceneCardImages { get; init; } = [];
     /// <summary>The user's 作る / 作らない choice for video-extracted scene-card images. Null (older projects) = use them when some exist.</summary>
     public bool? MakeSceneCardImages { get; init; }
@@ -302,6 +303,9 @@ public sealed record Interval(double T0, double T1)
 {
     public double Length => T1 - T0;
 }
+
+/// <summary>Non-destructive body boundaries in the main video's own time, snapshotted into each job.</summary>
+public sealed record BodyTrim(string AssetId, double Start, double End, string Mode = "manual");
 
 public sealed record SignalEvent(double T, string Kind, double Strength);
 
@@ -613,6 +617,7 @@ public sealed record EditPlan
     public required AudioSpec Audio { get; init; }
     public Provenance Provenance { get; init; } = new();
     public SeriesInfo? Series { get; init; }
+    public Interval? BodyRange { get; init; }
     /// <summary>Opening / closing videos and scene-change cards placed between timeline clips. Telops, SFX and chapters stay on the BODY timeline; see Planning.InsertMap.</summary>
     public List<Insert> Inserts { get; init; } = [];
     /// <summary>Review acknowledgements, excluded from the rendered-content fingerprint.</summary>
@@ -757,6 +762,7 @@ public sealed record CostEstimate(double AsrMinutes, int LlmInputTokens, int Llm
 /// <summary>User-selectable options for one generation (PRD FR-SEL-10 and §7.9/7.6).</summary>
 public sealed record JobOptions
 {
+    public BodyTrim? BodyTrim { get; init; }
     public bool MakeEngageImage { get; init; }
     public string EngageImageDeployment { get; init; } = "";
     /// <summary>How much of a long transcript is sent to the AI: full | balanced | economy.</summary>

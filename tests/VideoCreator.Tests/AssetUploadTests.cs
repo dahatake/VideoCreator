@@ -83,6 +83,169 @@ public sealed class AssetUploadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Same_file_name_from_two_cameras_keeps_both_videos_and_a_re_upload_or_rejected_file_leaves_nothing_behind()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ff = Fixtures.Ff ?? throw new InvalidOperationException("run scripts/get-tools.ps1");
+        async Task<string> Make(string color)
+        {
+            var file = Path.Combine(_root, color, "GX010001.MP4");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", $"color=c={color}:s=640x360:r=30:d=11", "-c:v", "libx264", "-preset", "ultrafast", file], ct);
+            return file;
+        }
+        async Task<HttpResponseMessage> Upload(string file, string name)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StreamContent(File.OpenRead(file)), "file", name);
+            return await _http.PostAsync($"/api/projects/{_id}/assets/upload", form, ct);
+        }
+        var red = await Make("red"); var blue = await Make("blue");
+        var redSha = await MediaProbe.Sha256Async(red, ct); var blueSha = await MediaProbe.Sha256Async(blue, ct);
+
+        using (var a = await Upload(red, "GX010001.MP4")) Assert.Equal(HttpStatusCode.Created, a.StatusCode);
+        using (var b = await Upload(blue, "GX010001.MP4")) Assert.Equal(HttpStatusCode.Created, b.StatusCode);
+        using (var again = await Upload(red, "GX010001.MP4")) Assert.Equal(HttpStatusCode.Created, again.StatusCode);
+        var assets = _app.Services.GetRequiredService<Runtime>().Store.Assets(_id);
+        Assert.Equal(2, assets.Count);
+        foreach (var asset in assets) Assert.Equal(asset.Sha256, await MediaProbe.Sha256Async(asset.Path, ct));
+        Assert.Equal([redSha, blueSha], assets.Select(a => a.Sha256));
+        var folder = Path.GetDirectoryName(assets[0].Path)!;
+        Assert.Equal(2, Directory.GetFiles(folder).Length);
+
+        var text = Path.Combine(_root, "notes.txt");
+        await File.WriteAllTextAsync(text, "not a video", ct);
+        using (var bad = await Upload(text, "notes.txt")) Assert.Equal(HttpStatusCode.UnprocessableEntity, bad.StatusCode);
+        Assert.Equal(2, Directory.GetFiles(folder).Length);
+    }
+
+    [Fact]
+    public async Task Each_video_keeps_its_own_slides_and_a_failed_replaced_or_removed_deck_leaves_the_right_files()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ff = Fixtures.Ff ?? throw new InvalidOperationException("run scripts/get-tools.ps1");
+        async Task<string> Register(string color)
+        {
+            var file = Path.Combine(_root, "cam-" + color, "GX010001.MP4");
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", $"color=c={color}:s=640x360:r=30:d=11", "-c:v", "libx264", "-preset", "ultrafast", file], ct);
+            using var r = await _http.PostAsJsonAsync($"/api/projects/{_id}/assets", new { path = file }, ct);
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            return (await r.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("id").GetString()!;
+        }
+        async Task<string> Zip(string name, params string[] colors)
+        {
+            var dir = Path.Combine(_root, "zip-" + name);
+            Directory.CreateDirectory(dir);
+            for (int i = 0; i < colors.Length; i++)
+                await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", $"color=c={colors[i]}:s=1280x720", "-frames:v", "1", Path.Combine(dir, $"Slide{i + 1}.PNG")], ct);
+            var zip = Path.Combine(_root, name + ".zip");
+            System.IO.Compression.ZipFile.CreateFromDirectory(dir, zip);
+            return zip;
+        }
+        async Task<HttpResponseMessage> AddDeck(string asset, string zip)
+        {
+            using var form = new MultipartFormDataContent();
+            form.Add(new StreamContent(File.OpenRead(zip)), "file", "slides.zip");
+            return await _http.PostAsync($"/api/assets/{asset}/deck", form, ct);
+        }
+        async Task<(string Deck, string Slides)> Added(HttpResponseMessage r)
+        {
+            var body = await r.Content.ReadAsStringAsync(ct);
+            Assert.True(r.StatusCode == HttpStatusCode.OK, body);
+            var deck = JsonDocument.Parse(body).RootElement.GetProperty("deck");
+            var slide = deck.GetProperty("slides")[0].GetProperty("path").GetString()!;
+            Assert.True(File.Exists(slide));
+            return (deck.GetProperty("path").GetString()!, Path.GetDirectoryName(slide)!);
+        }
+
+        var a = await Register("red"); var b = await Register("blue");
+        (string Deck, string Slides) deckA, deckB;
+        using (var r = await AddDeck(a, await Zip("a", "yellow", "green"))) deckA = await Added(r);
+        using (var r = await AddDeck(b, await Zip("b", "white"))) deckB = await Added(r);
+        // same file name, different videos: neither deck replaces the other's files
+        Assert.NotEqual(deckA.Deck, deckB.Deck);
+        Assert.NotEqual(deckA.Slides, deckB.Slides);
+        Assert.Equal(2, Directory.GetFiles(deckA.Slides, "slide-*.png").Length);
+        Assert.Single(Directory.GetFiles(deckB.Slides, "slide-*.png"));
+
+        // a replacement that cannot be rendered leaves the current slides as they are
+        var empty = Path.Combine(_root, "empty.zip");
+        using (var z = System.IO.Compression.ZipFile.Open(empty, System.IO.Compression.ZipArchiveMode.Create))
+            using (var w = new StreamWriter(z.CreateEntry("notes.txt").Open())) w.Write("no slides");
+        using (var r = await AddDeck(a, empty)) Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
+        Assert.True(File.Exists(deckA.Deck));
+        Assert.Equal(2, Directory.GetFiles(deckA.Slides, "slide-*.png").Length);
+
+        // a replacement removes the files of the deck it replaces, and only those
+        (string Deck, string Slides) next;
+        using (var r = await AddDeck(a, await Zip("a2", "gray"))) next = await Added(r);
+        Assert.False(File.Exists(deckA.Deck));
+        Assert.False(Directory.Exists(deckA.Slides));
+        Assert.True(File.Exists(deckB.Deck));
+
+        using (var r = await _http.DeleteAsync($"/api/assets/{b}/deck", ct)) Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.False(File.Exists(deckB.Deck));
+        Assert.False(Directory.Exists(deckB.Slides));
+        Assert.True(File.Exists(next.Deck));
+
+        // slides an already generated edit plan shows stay, so that video still renders; the deck file itself goes
+        var store = _app.Services.GetRequiredService<Runtime>().Store;
+        var slide = Directory.GetFiles(next.Slides, "slide-*.png")[0];
+        store.Put(Kinds.EditPlan, "ep_deck", _id, new EditPlan
+        {
+            EditplanId = "ep_deck", ProjectId = _id, Preset = Fixtures.Presets["P4"].Ref, Audio = new AudioSpec { Master = a },
+            Timeline = [new Clip { ClipId = "c1", AssetId = a, SrcIn = 0, SrcOut = 5, Role = "body", Reframe = new ReframeSpec { Mode = "screen", Image = slide } }],
+        });
+
+        // while the project generates or exports, its decks stay as they are (a running job holds them in memory, not yet in a stored plan)
+        var queue = _app.Services.GetRequiredService<JobQueue>();
+        queue.Exports["r_busy"] = new ExportStatus("r_busy", "ep_deck", "rendering");
+        using (var r = await AddDeck(a, await Zip("busy", "black"))) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        using (var r = await _http.DeleteAsync($"/api/assets/{a}/deck", ct)) Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        Assert.True(File.Exists(next.Deck));
+        queue.Exports.TryRemove("r_busy", out _);
+
+        using (var r = await _http.DeleteAsync($"/api/assets/{a}/deck", ct)) Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.False(File.Exists(next.Deck));
+        Assert.True(File.Exists(slide));
+        var assets = Path.GetDirectoryName(next.Deck)!;
+        Assert.Empty(Directory.GetFiles(assets));
+        Assert.Equal([Path.GetFileName(next.Slides)], Directory.GetDirectories(assets).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public async Task A_zip_whose_image_inflates_beyond_the_limit_is_refused_without_writing_it_out()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var ff = Fixtures.Ff ?? throw new InvalidOperationException("run scripts/get-tools.ps1");
+        var video = Path.Combine(_root, "screen.mp4");
+        await ff.RunFfmpegCheckedAsync(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=640x360:r=30:d=11", "-c:v", "libx264", "-preset", "ultrafast", video], ct);
+        string asset;
+        using (var r = await _http.PostAsJsonAsync($"/api/projects/{_id}/assets", new { path = video }, ct))
+            asset = (await r.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("id").GetString()!;
+        // ~65 KB on disk, 65 MiB when inflated
+        var bomb = Path.Combine(_root, "bomb.zip");
+        using (var z = System.IO.Compression.ZipFile.Open(bomb, System.IO.Compression.ZipArchiveMode.Create))
+        await using (var s = z.CreateEntry("Slide1.png", System.IO.Compression.CompressionLevel.SmallestSize).Open())
+        {
+            var zeros = new byte[1 << 20];
+            for (int i = 0; i < 65; i++) await s.WriteAsync(zeros, ct);
+        }
+        Assert.True(new FileInfo(bomb).Length < 1 << 20);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StreamContent(File.OpenRead(bomb)), "file", "slides.zip");
+        using var response = await _http.PostAsync($"/api/assets/{asset}/deck", form, ct);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var error = (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("error");
+        Assert.Equal("E-DECK", error.GetProperty("code").GetString());
+        Assert.Contains("大きすぎます", error.GetProperty("message").GetString());
+        var projectDir = (await _http.GetFromJsonAsync<JsonElement>($"/api/projects/{_id}", ct)).GetProperty("project").GetProperty("directory").GetString()!;
+        var assets = Path.Combine(projectDir, "assets");
+        Assert.True(!Directory.Exists(assets) || Directory.GetFileSystemEntries(assets).Length == 0, string.Join(", ", Directory.GetFileSystemEntries(assets)));
+    }
+
+    [Fact]
     public async Task Missing_file_remains_a_validation_error()
     {
         using var form = new MultipartFormDataContent();

@@ -195,7 +195,7 @@ public sealed class LocalizationTests : IDisposable
             Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
             foreach (var language in new[] { "en-US", "zh-CN", "ko-KR" })
             {
-                using var created = await http.PostAsJsonAsync("/api/projects", new { name = "video", language }, Ct);
+                using var created = await http.PostAsJsonAsync("/api/projects", new { name = "video " + language, language }, Ct);
                 Assert.Equal(HttpStatusCode.Created, created.StatusCode);
                 var json = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
                 var id = json.GetProperty("id").GetString();
@@ -204,7 +204,7 @@ public sealed class LocalizationTests : IDisposable
                 Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
                 var saved = await http.GetFromJsonAsync<JsonElement>($"/api/projects/{id}", Ct);
                 Assert.Equal("ja-JP", saved.GetProperty("project").GetProperty("language").GetString());
-                Assert.Equal("video", saved.GetProperty("project").GetProperty("name").GetString());
+                Assert.Equal("video " + language, saved.GetProperty("project").GetProperty("name").GetString());
                 using var badPatch = await http.PatchAsJsonAsync($"/api/projects/{id}", new { language = "en" }, Ct);
                 Assert.Equal(HttpStatusCode.UnprocessableEntity, badPatch.StatusCode);
             }

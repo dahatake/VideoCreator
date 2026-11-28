@@ -12,7 +12,7 @@ namespace VideoCreator.App;
 
 public static class Api
 {
-    public sealed record CreateProject(string Name, string Language = "ja-JP");
+    public sealed record CreateProject(string? Name, string Language = "ja-JP", string? DefaultName = null);
     public sealed record RenameProject(string? Name, string? Language = null);
     public sealed record PutProjectProperNouns(List<ProjectProperNoun?>? ProperNouns);
     public sealed record AddAsset(string Path);
@@ -144,6 +144,7 @@ public static class Api
     public static void Map(WebApplication app)
     {
         var api = app.MapGroup("/api");
+        BodyTrimApi.Map(api);
 
         api.MapGet("/health", async (Runtime rt) => Results.Json(new
         {
@@ -219,10 +220,22 @@ public static class Api
         api.MapPost("/projects", (Runtime rt, ProjectsLocation loc, CreateProject req) =>
         {
             if (!VideoLanguages.IsSupported(req.Language)) return Error(422, "E-VALIDATION", "language must be ja-JP | en-US | zh-CN | ko-KR");
-            var name = string.IsNullOrWhiteSpace(req.Name) ? "新しいプロジェクト" : req.Name;
-            if (ValidateProjectName(name, out name) is string err) return Error(422, "E-VALIDATION", err);
             var id = "p_" + Guid.NewGuid().ToString("N")[..10];
-            var dir = Path.Combine(loc.Root, $"{SafeName(name)}_{id[2..8]}");
+            string name;
+            if (string.IsNullOrWhiteSpace(req.Name))
+            {
+                // left empty: the default name (in the UI's language), numbered like "New project (2)" when its folder is taken
+                if (ValidateProjectName(string.IsNullOrWhiteSpace(req.DefaultName) ? "新しいプロジェクト" : req.DefaultName, out var stem) is string derr) return Error(422, "E-VALIDATION", derr);
+                name = stem;
+                for (int n = 2; FolderNameConflict(rt, loc.Root, name, null) is string clash; n++)
+                    if (n > 999 || ValidateProjectName($"{stem} ({n})", out name) != null) return Error(409, "E-NAME-IN-USE", clash);
+            }
+            else
+            {
+                if (ValidateProjectName(req.Name, out name) is string err) return Error(422, "E-VALIDATION", err);
+                if (FolderNameConflict(rt, loc.Root, name, null) is string clash) return Error(409, "E-NAME-IN-USE", clash);
+            }
+            var dir = Path.Combine(loc.Root, ProjectFolderName(name));
             Directory.CreateDirectory(dir);
             var p = new Project { Id = id, Name = name, Directory = dir, Language = req.Language };
             rt.Store.Put(Kinds.Project, id, null, p);
@@ -258,8 +271,8 @@ public static class Api
                 rights_statement = RightsStatement.Text,
             }, Json.Options);
         });
-        // The folder and every stored absolute path stay as they are.
-        api.MapPatch("/projects/{id}", (Runtime rt, JobQueue q, string id, RenameProject req) =>
+        // The folder is renamed with the project (the name and the folder name always match) and every stored absolute path follows it.
+        api.MapPatch("/projects/{id}", (Runtime rt, ProjectsLocation loc, JobQueue q, SceneCardService cards, string id, RenameProject req) =>
         {
             var p = rt.Store.Get<Project>(Kinds.Project, id);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
@@ -268,7 +281,35 @@ public static class Api
             if (!VideoLanguages.IsSupported(language)) return Error(422, "E-VALIDATION", "language must be ja-JP | en-US | zh-CN | ko-KR");
             if (language != p.Language && q.IsBusy(id)) return Error(409, "E-PROJECT-BUSY", "生成または書き出しの終了後に動画の言語を変更してください");
             if (ValidateProjectName(req.Name ?? p.Name, out var name) is string err) return Error(422, "E-VALIDATION", err);
-            if (name == p.Name && language == p.Language) return Results.Json(p, Json.Options);
+            var root = loc.KnownRoots.FirstOrDefault(r => ProjectDeletion.OwnsFolder(p, r));
+            var folderDiffers = root != null && Directory.Exists(p.Directory)
+                && !string.Equals(Path.GetFileName(StorePaths.Normalize(p.Directory)), ProjectFolderName(name), StringComparison.Ordinal);
+            var renamed = name != p.Name;
+            // anything that may be writing into the folder right now: generation, export, a preview re-render or scene-card images
+            bool filesBusy() => q.IsBusy(id) || cards.IsBusy(id) || q.Previews.Keys.Any(plan => rt.Store.Get<EditPlan>(Kinds.EditPlan, plan)?.ProjectId == id);
+            // a new name always moves the folder; otherwise an older "<name>_<id>" folder is brought in line only when that is possible right now
+            var moveFolder = folderDiffers && (renamed || (!filesBusy() && FolderNameConflict(rt, root!, name, id) == null));
+            if (!renamed && language == p.Language && !moveFolder) return Results.Json(p, Json.Options);
+            if (moveFolder)
+            {
+                if (filesBusy()) return Error(409, "E-PROJECT-BUSY", "生成または書き出しの終了後に名前を変更してください（フォルダー名も変わります）");
+                if (FolderNameConflict(rt, root!, name, id) is string clash) return Error(409, "E-NAME-IN-USE", clash);
+                var from = p.Directory;
+                var to = Path.Combine(root!, ProjectFolderName(name));
+                var moved = false;
+                try { Directory.Move(from, to); moved = true; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    app.Logger.LogWarning(ex, "Renaming the project folder failed");
+                    if (renamed) return Error(500, "E-PROJECT-FOLDER", "プロジェクトのフォルダー名を変更できませんでした。動画を開いているアプリ（プレーヤーやエクスプローラー）を閉じてから、もう一度お試しください");
+                }
+                if (moved)
+                {
+                    try { StorePaths.Rewrite(rt.Store, from, to); }
+                    catch { Directory.Move(to, from); throw; }
+                    p = rt.Store.Get<Project>(Kinds.Project, id) ?? p;
+                }
+            }
             p = p with { Name = name, Language = language };
             rt.Store.Put(Kinds.Project, id, null, p);
             return Results.Json(p, Json.Options);
@@ -421,11 +462,23 @@ public static class Api
             var form = await request.ReadFormAsync(new FormOptions { MultipartBodyLengthLimit = long.MaxValue }, ct);
             var file = form.Files.FirstOrDefault();
             if (file == null) return Error(422, "E-VALIDATION", "ファイルがありません");
+            // reading a large form takes a while; a rename may have moved the project folder meanwhile
+            p = rt.Store.Get<Project>(Kinds.Project, id);
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             var dir = Path.Combine(p.Directory, "assets"); Directory.CreateDirectory(dir);
-            var dest = Path.Combine(dir, SafeName(Path.GetFileNameWithoutExtension(file.FileName)) + Path.GetExtension(file.FileName).ToLowerInvariant());
-            PipelineRunner.EnsureInside(p.Directory, dest);   // NFR-SEC-05
-            await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
-            return await RegisterAsset(rt, id, dest, ct);
+            var stem = SafeName(Path.GetFileNameWithoutExtension(file.FileName));
+            var ext = new string(Path.GetExtension(file.FileName).Where(char.IsAsciiLetterOrDigit).ToArray()).ToLowerInvariant();
+            ext = ext.Length == 0 ? "" : "." + ext;
+            var part = Path.Combine(dir, $".upload-{Guid.NewGuid():N}.part");
+            PipelineRunner.EnsureInside(p.Directory, Path.Combine(dir, stem + ext));   // NFR-SEC-05
+            string dest; bool created;
+            try
+            {
+                await using (var fs = File.Create(part)) await file.CopyToAsync(fs, ct);
+                (dest, created) = await PlaceUploadAsync(dir, stem, ext, part, ct);
+            }
+            finally { File.Delete(part); }
+            return await RegisterAsset(rt, id, dest, ct, onRejected: created ? () => File.Delete(dest) : null);
         }).DisableAntiforgery();
         api.MapPost("/projects/{id}/rights", (Runtime rt, string id, ConfirmRights req) =>
         {
@@ -485,10 +538,11 @@ public static class Api
             return Results.Json(SlideDecks.Suggest(ScreenScenes.Detect(analysis, a.Media.Duration), slides, a.Deck != null), Json.Options);
         });
         // the presentation shown in a screen recording: rendered to sharp images that replace the recorded slide in the PiP
-        api.MapPost("/assets/{id}/deck", async (Runtime rt, string id, HttpRequest request, CancellationToken ct) =>
+        api.MapPost("/assets/{id}/deck", async (Runtime rt, JobQueue q, string id, HttpRequest request, CancellationToken ct) =>
         {
             var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
             if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+            if (q.IsBusy(a.ProjectId)) return DeckBusy();
             var p = rt.Store.Get<Project>(Kinds.Project, a.ProjectId);
             if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             if (!request.HasFormContentType) return Error(422, "E-VALIDATION", "multipart/form-data で送信してください");
@@ -497,35 +551,66 @@ public static class Api
             if (file == null) return Error(422, "E-VALIDATION", "ファイルがありません");
             var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
             if (!SlideDecks.DeckExtensions.Contains(ext)) return Error(422, "E-VALIDATION", "スライドは PowerPoint ファイル（.pptx）か、スライドを書き出した画像の zip を指定してください");
+            p = rt.Store.Get<Project>(Kinds.Project, a.ProjectId);   // the folder may have been renamed while the form was read
+            if (p == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
             var dir = Path.Combine(p.Directory, "assets"); Directory.CreateDirectory(dir);
-            var stem = SafeName(Path.GetFileNameWithoutExtension(a.Path)) + ".deck";
+            // a new name per upload: a deck never shares files with another video's deck (same file name in two folders),
+            // and a replacement that fails leaves the current deck untouched
+            var stem = $"{SafeName(Path.GetFileNameWithoutExtension(a.Path))}.deck-{Guid.NewGuid().ToString("N")[..8]}";
             var dest = Path.Combine(dir, stem + ext);
             var slidesDir = Path.Combine(dir, stem + "-slides");
             PipelineRunner.EnsureInside(p.Directory, dest);   // NFR-SEC-05
             PipelineRunner.EnsureInside(p.Directory, slidesDir);
-            await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
-            SlideDeck deck;
-            try { deck = await SlideDecks.RenderAsync(rt.Ff, dest, slidesDir, ct); }
-            catch (SlideDeckException ex) { File.Delete(dest); return Error(422, "E-DECK", ex.Message); }
-            var withDeck = a with { Deck = deck };
-            var slides = await SlideDecks.AnalyzeAsync(rt.Ff, withDeck, Path.Combine(rt.Options.ResolvedDataDir, "cache", a.Sha256), ct);
-            return rt.Store.Atomic<IResult>(() =>
+            SlideDeck deck; SlideAnalysis slides;
+            var kept = false;
+            try
             {
-                var cur = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
-                if (cur == null) return Error(404, "E-NOT-FOUND", "素材がありません");
-                var u = cur with { Deck = deck, SlideSpans = slides.Spans };
-                rt.Store.Put(Kinds.Asset, id, cur.ProjectId, u);
+                await using (var fs = File.Create(dest)) await file.CopyToAsync(fs, ct);
+                try { deck = await SlideDecks.RenderAsync(rt.Ff, dest, slidesDir, ct); }
+                catch (SlideDeckException ex) { return Error(422, "E-DECK", ex.Message); }
+                slides = await SlideDecks.AnalyzeAsync(rt.Ff, a with { Deck = deck }, Path.Combine(rt.Options.ResolvedDataDir, "cache", a.Sha256), ct);
+                SlideDeck? replaced = null;
+                var result = rt.Store.Atomic<IResult>(() =>
+                {
+                    var cur = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+                    if (cur == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+                    if (q.IsBusy(cur.ProjectId)) return DeckBusy();   // a job started while the slides were rendered
+                    var u = cur with { Deck = deck, SlideSpans = slides.Spans };
+                    rt.Store.Put(Kinds.Asset, id, cur.ProjectId, u);
+                    replaced = cur.Deck;
+                    kept = true;
+                    return Results.Json(u, Json.Options);
+                });
+                if (replaced != null) RemoveUnusedDeckFiles(rt, p, replaced);
+                return result;
+            }
+            finally
+            {
+                if (!kept)
+                {
+                    File.Delete(dest);
+                    try { if (Directory.Exists(slidesDir)) Directory.Delete(slidesDir, true); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { app.Logger.LogWarning(ex, "Could not remove the unused slides at {Path}", slidesDir); }
+                }
+            }
+        }).DisableAntiforgery();
+        api.MapDelete("/assets/{id}/deck", (Runtime rt, JobQueue q, string id) =>
+        {
+            SlideDeck? removed = null;
+            var result = rt.Store.Atomic<IResult>(() =>
+            {
+                var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
+                if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
+                if (q.IsBusy(a.ProjectId)) return DeckBusy();
+                removed = a.Deck;
+                var u = a with { Deck = null, SlideSpans = [] };
+                rt.Store.Put(Kinds.Asset, id, a.ProjectId, u);
                 return Results.Json(u, Json.Options);
             });
-        }).DisableAntiforgery();
-        api.MapDelete("/assets/{id}/deck", (Runtime rt, string id) => rt.Store.Atomic<IResult>(() =>
-        {
-            var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
-            if (a == null) return Error(404, "E-NOT-FOUND", "素材がありません");
-            var u = a with { Deck = null, SlideSpans = [] };
-            rt.Store.Put(Kinds.Asset, id, a.ProjectId, u);
-            return Results.Json(u, Json.Options);
-        }));
+            if (removed != null && rt.Store.Get<SourceAsset>(Kinds.Asset, id) is { } asset && rt.Store.Get<Project>(Kinds.Project, asset.ProjectId) is { } project)
+                RemoveUnusedDeckFiles(rt, project, removed);
+            return result;
+        });
         api.MapGet("/assets/{id}/slides/{n:int}", async (Runtime rt, string id, int n, CancellationToken ct) =>
         {
             var a = rt.Store.Get<SourceAsset>(Kinds.Asset, id);
@@ -1294,8 +1379,12 @@ public static class Api
             return Error(422, "E-VALIDATION", $"伏せる語は {Planning.Masking.MaxWords} 語まで、1語 {Planning.Masking.MaxWordLength} 文字までです");
         options = options with { MaskWords = Planning.Masking.Clean(options.MaskWords) };
         if (options.Bgm is not ("auto" or "none" or "scene") && rt.CreateRunner().SelectableBgm(projectId, options.Bgm) == null) return Error(422, "E-BGM-NOTFOUND", "指定した BGM が見つかりません");
-        if (rt.Store.Get<Project>(Kinds.Project, projectId) == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
+        var project = rt.Store.Get<Project>(Kinds.Project, projectId);
+        if (project == null) return Error(404, "E-NOT-FOUND", "プロジェクトがありません");
         if (presetIds is not { Count: > 0 } || presetIds.Any(id => !rt.Presets.ContainsKey(id))) return Error(422, "E-VALIDATION", "パターンを選んでください");
+        options = options with { BodyTrim = project.BodyTrim };
+        if (options.BodyTrim != null && (options.IsSeries || presetIds.Any(id => rt.Presets.GetValueOrDefault(id)?.Short == true)))
+            return Error(422, "E-TRIM-RANGE", "本編全体の保持では、前編・後編とショートの追加をオフにしてください。");
         if (presetIds.Any(a => presetIds.Any(b => rt.Presets[a].IncompatibleWith.Contains(b)))) return Error(422, "E-PRESET-CONFLICT", "同時に選べないパターンの組み合わせです（§8.2）");
         // A short (Preset.Short) chosen together with another template becomes a second, linked job; both are validated before either is queued.
         var shorts = presetIds.Where(id => rt.Presets[id].Short).Distinct().ToList();
@@ -1306,6 +1395,8 @@ public static class Api
         if (shorts.Count > 0) groups.Add(shorts);
         var assets = rt.Store.Assets(projectId);
         if (assets.Count == 0) return Error(422, "E-ING-UNSUPPORTED", "素材を追加してください");
+        if (options.BodyTrim is { } trim && (Planning.BodyTrimmer.Main(assets) is not { } picture || !Planning.BodyTrimmer.Valid(trim, picture)))
+            return Error(422, "E-TRIM-RANGE", "主動画が変わったか本編範囲が不正です。範囲を指定し直してください。");
         var rights = rt.Store.List<RightsConfirmation>(Kinds.Rights, projectId).Select(r => r.AssetId).ToHashSet();
         if (assets.Any(a => !rights.Contains(a.Id))) return Error(409, "E-RIGHTS-REQUIRED", "素材の権利確認が完了していません（AT-08）");
         if (instruction is { Length: > 200 }) return Error(422, "E-VALIDATION", "追加指示は200文字以内にしてください");
@@ -1323,7 +1414,7 @@ public static class Api
                 if (o.Opening && kit?.Files.Any(f => f.Kind == "opening") != true) return Error(422, "E-BRANDKIT", "オープニング動画が登録されていません。「オープニング・クロージング」で登録してください");
                 if (o.Closing && kit?.Files.Any(f => f.Kind == "closing") != true) return Error(422, "E-BRANDKIT", "クロージング動画が登録されていません。「オープニング・クロージング」で登録してください");
             }
-            if (!o.IsSeries && mainAsset.Media.Duration < main.Target.Min)
+            if (o.BodyTrim == null && !o.IsSeries && mainAsset.Media.Duration < main.Target.Min)
                 return Error(422, "E-SOL-INFEASIBLE", $"素材が{main.Id}の尺の下限（{main.Target.Min:0.#}秒）より短い");
             if (o.PartMinutes != null && o.Parts != null) return Error(422, "E-VALIDATION", "本数と1本あたりの長さは、どちらか一方だけを指定してください");
             if (o.Parts is int np)
@@ -1357,7 +1448,7 @@ public static class Api
             Json.Options, statusCode: 202);
     }
 
-    static async Task<IResult> RegisterAsset(Runtime rt, string projectId, string path, CancellationToken ct)
+    static async Task<IResult> RegisterAsset(Runtime rt, string projectId, string path, CancellationToken ct, Action? onRejected = null)
     {
         try
         {
@@ -1379,7 +1470,63 @@ public static class Api
             rt.Store.Put(Kinds.Asset, asset.Id, projectId, asset);
             return Results.Json(asset, Json.Options, statusCode: 201);
         }
-        catch (IngestException ex) { return Error(422, ex.Code, ex.Message); }
+        catch (IngestException ex) { onRejected?.Invoke(); return Error(422, ex.Code, ex.Message); }
+    }
+
+    /// <summary>A running generation job holds the screen recording's deck in memory (and writes the asset back), so decks change only while the project is idle.</summary>
+    static IResult DeckBusy() => Error(409, "E-PROJECT-BUSY", "生成または書き出しの途中はスライド資料を変更できません。終わってから、もう一度お試しください");
+
+    /// <summary>
+    /// Deletes the files of a deck that was replaced or removed, unless something still refers to them: another asset's deck, or an edit plan
+    /// (its PiP shows slide images by path, so already generated videos keep rendering). Only files under the project's assets folder are touched.
+    /// </summary>
+    static void RemoveUnusedDeckFiles(Runtime rt, Project project, SlideDeck deck)
+    {
+        var assets = StorePaths.Normalize(Path.Combine(project.Directory, "assets")) + Path.DirectorySeparatorChar;
+        bool Inside(string path) => Path.GetFullPath(path).StartsWith(assets, StringComparison.OrdinalIgnoreCase);
+        var docs = rt.Store.RawAll().Where(d => d.Kind is Kinds.Asset or Kinds.EditPlan).Select(d => d.Json).ToList();
+        bool Used(string path) { var json = Json.Serialize(path)[1..^1]; return docs.Any(d => d.Contains(json, StringComparison.OrdinalIgnoreCase)); }
+        try
+        {
+            if (Inside(deck.Path) && File.Exists(deck.Path) && !Used(deck.Path)) File.Delete(deck.Path);
+            foreach (var folder in deck.Slides.Select(s => Path.GetDirectoryName(Path.GetFullPath(s.Path))).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+                if (Inside(folder) && Directory.Exists(folder) && !Used(folder + Path.DirectorySeparatorChar)) Directory.Delete(folder, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }   // in use: left for the project deletion to clean up
+    }
+
+    /// <summary>
+    /// Moves an uploaded file to "&lt;stem&gt;&lt;ext&gt;" in <paramref name="dir"/>, or "&lt;stem&gt; (2)&lt;ext&gt;"… when that name holds another video
+    /// (two cameras both write GX010001.MP4): an existing source is never overwritten. The same video uploaded again reuses its file.
+    /// </summary>
+    static async Task<(string Path, bool Created)> PlaceUploadAsync(string dir, string stem, string ext, string part, CancellationToken ct)
+    {
+        for (int n = 1; ; n++)
+        {
+            var dest = Path.Combine(dir, n == 1 ? stem + ext : $"{stem} ({n}){ext}");
+            if (File.Exists(dest))
+            {
+                if (await SameBytesAsync(dest, part, ct)) return (dest, false);
+                continue;
+            }
+            try { File.Move(part, dest); return (dest, true); }
+            catch (IOException) when (File.Exists(dest)) { n--; }   // another upload took the name meanwhile: compare with it
+        }
+    }
+
+    static async Task<bool> SameBytesAsync(string a, string b, CancellationToken ct)
+    {
+        if (new FileInfo(a).Length != new FileInfo(b).Length) return false;
+        await using var fa = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, true);
+        await using var fb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, true);
+        var ba = new byte[1 << 20]; var bb = new byte[1 << 20];
+        while (true)
+        {
+            var na = await fa.ReadAtLeastAsync(ba, ba.Length, false, ct);
+            var nb = await fb.ReadAtLeastAsync(bb, bb.Length, false, ct);
+            if (na != nb || !ba.AsSpan(0, na).SequenceEqual(bb.AsSpan(0, nb))) return false;
+            if (na == 0) return true;
+        }
     }
 
     public const int MaxProjectNameLength = 80;
@@ -1405,5 +1552,29 @@ public static class Api
         var bad = Path.GetInvalidFileNameChars();
         var r = new string(s.Select(c => bad.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
         return r.Length == 0 ? "file" : r.Length > 60 ? r[..60] : r;
+    }
+
+    /// <summary>The project's folder name is its name, as is: only characters Windows refuses in a folder name become "_".</summary>
+    public static string ProjectFolderName(string name)
+    {
+        var bad = Path.GetInvalidFileNameChars();
+        var r = new string(name.Select(c => bad.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim().TrimEnd('.').Trim();
+        if (r.Length == 0 || PipelineRunner.IsReservedDeviceName(r)) r = "_" + r;
+        return r;
+    }
+
+    /// <summary>Why <paramref name="name"/> cannot be the folder of project <paramref name="self"/> (null = free): another project, a pattern folder of finished videos or any existing item already has that name.</summary>
+    static string? FolderNameConflict(Runtime rt, string root, string name, string? self)
+    {
+        var folder = ProjectFolderName(name);
+        var target = Path.Combine(root, folder);
+        if (rt.Presets.Values.Any(p => string.Equals(PipelineRunner.PatternFolderName(p), folder, StringComparison.OrdinalIgnoreCase)))
+            return "このプロジェクト名は、書き出した動画のフォルダー名と同じため使えません。別の名前にしてください";
+        var other = rt.Store.List<Project>(Kinds.Project).FirstOrDefault(o => o.Id != self && !string.IsNullOrWhiteSpace(o.Directory)
+            && string.Equals(StorePaths.Normalize(o.Directory), StorePaths.Normalize(target), StringComparison.OrdinalIgnoreCase));
+        if (other != null) return $"同じ名前のフォルダーを使うプロジェクト「{other.Name}」があります。別の名前にしてください";
+        var mine = self != null && rt.Store.Get<Project>(Kinds.Project, self) is { } me && !string.IsNullOrWhiteSpace(me.Directory)
+            && string.Equals(StorePaths.Normalize(me.Directory), StorePaths.Normalize(target), StringComparison.OrdinalIgnoreCase);
+        return !mine && Path.Exists(target) ? "同じ名前のフォルダーがすでにあります。別の名前にしてください" : null;
     }
 }

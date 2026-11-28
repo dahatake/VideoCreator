@@ -103,6 +103,67 @@ public sealed class ProgressTests : IDisposable
         }
     }
 
+    sealed class BlockingAsr : ITranscriber
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Name => "blocking";
+        public async Task<Transcript> TranscribeAsync(string audioFile, double duration, IReadOnlyList<string> phrases, int maxSpeakers, CancellationToken ct)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
+    [Fact]
+    public async Task App_shutdown_leaves_a_running_job_unfinished_so_the_next_start_resumes_it()
+    {
+        Directory.CreateDirectory(_dir);
+        using var store = new Store(Path.Combine(Data, "db.sqlite"));
+        var project = new Project { Id = "p_stop", Name = "stop", Directory = Path.Combine(_dir, "project") };
+        var asset = new SourceAsset { Id = "a_stop", ProjectId = project.Id, Path = Path.Combine(_dir, "source.mp4"), Sha256 = new string('b', 64), Media = Fixtures.Landscape(30) };
+        store.Put(Kinds.Project, project.Id, null, project);
+        store.Put(Kinds.Asset, asset.Id, project.Id, asset);
+        store.Put(Kinds.Rights, "rights", project.Id, new RightsConfirmation { Id = "rights", ProjectId = project.Id, AssetId = asset.Id });
+        var cache = Path.Combine(Data, "cache", asset.Sha256[..16]);
+        Directory.CreateDirectory(cache);
+        await File.WriteAllBytesAsync(Path.Combine(cache, "proxy.mp4"), [0], Ct);
+        await File.WriteAllBytesAsync(Path.Combine(cache, "audio16k.flac"), [0], Ct);
+        var job = new Job { Id = "job_stop", ProjectId = project.Id, PresetIds = ["P4"] };
+
+        var asr = new BlockingAsr();
+        var q = new JobQueue(store, () => new PipelineRunner(new PipelineServices { Ff = Ff, Store = store, Presets = Fixtures.Presets, DataDir = Data, Asr = asr }), new JobEvents(), NullLogger<JobQueue>.Instance);
+        await q.StartAsync(Ct);
+        q.EnqueueJob(job);
+        await asr.Started.Task.WaitAsync(TimeSpan.FromSeconds(60), Ct);
+        await q.StopAsync(CancellationToken.None);
+        var stopped = store.Get<Job>(Kinds.Job, job.Id)!;
+        Assert.NotEqual(JobStatus.Cancelled, stopped.Status);
+        Assert.Null(stopped.FinishedAt);
+
+        // the next start picks it up again, and a cancel by the user is still recorded as cancelled
+        var again = new BlockingAsr();
+        var events = new JobEvents();
+        var q2 = new JobQueue(store, () => new PipelineRunner(new PipelineServices { Ff = Ff, Store = store, Presets = Fixtures.Presets, DataDir = Data, Asr = again }), events, NullLogger<JobQueue>.Instance);
+        var (subscriber, updates) = events.Subscribe(job.Id);
+        await q2.StartAsync(Ct);
+        try
+        {
+            await again.Started.Task.WaitAsync(TimeSpan.FromSeconds(60), Ct);
+            Assert.True(q2.Cancel(job.Id));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            JobUpdate update;
+            do { update = await updates.ReadAsync(timeout.Token); } while (update.Stage != JobStatus.Cancelled);
+            Assert.Equal(JobStatus.Cancelled, store.Get<Job>(Kinds.Job, job.Id)!.Status);
+        }
+        finally
+        {
+            events.Unsubscribe(job.Id, subscriber);
+            await q2.StopAsync(CancellationToken.None);
+        }
+    }
+
     async Task<(Store Store, Project Project, SourceAsset Asset)> SetupAsync()
     {
         Directory.CreateDirectory(_dir);

@@ -882,7 +882,7 @@ async function home() {
     ev.preventDefault();
     const button = $('#new fluent-button'); button.disabled = true;
     try {
-      const p = await api('/api/projects', { method: 'POST', body: { name: $('#name').value || trUi('project.defaultName'), language: $('#new-video-language').value } });
+      const p = await api('/api/projects', { method: 'POST', body: { name: $('#name').value ?? '', default_name: trUi('project.defaultName'), language: $('#new-video-language').value } });
       location.hash = `#/p/${p.id}`;
     } catch (e) { $('#homeMsg').innerHTML = errorBar(e); }
     finally { button.disabled = false; }
@@ -961,6 +961,9 @@ async function project(id, showSettings = false) {
   if (gone()) return;
   // same rule as Canvas.For: the main video (role main, else the first) decides 'auto'
   const mainAsset = assets.find(a => a.audio_ref && a.media.audio_channels > 0) ?? assets.find(a => a.role === 'main') ?? assets[0];
+  const trimMain = assets.find(a => a.role === 'main' && a.media.width > 0) ?? assets.find(a => a.role === 'cam_a') ?? assets.find(a => a.role === 'cam_b') ?? mainAsset;
+  const savedTrim = d.project.body_trim?.asset_id === trimMain?.id ? d.project.body_trim : null;
+  if (d.project.body_trim) { opts.series = false; opts.short = 'off'; }
   const mainLandscape = !!mainAsset && mainAsset.media.width > mainAsset.media.height * 1.05;
   const orientationLabel = (o) => ({ portrait: trUi('out.portrait'), landscape: trUi('out.landscape') }[o] ?? trUi('out.auto', [mainLandscape ? trUi('out.shapeLandscape') : trUi('out.shapePortrait')]));
   const multiPlanner = (p) => ['switch', 'screen', 'pip'].includes(p.planner);
@@ -1008,7 +1011,7 @@ async function project(id, showSettings = false) {
       </form>
       ${lastJob ? `<fluent-anchor-button href="#/job/${esc(lastJob.id)}" appearance="subtle">${trUi('m164')}</fluent-anchor-button>` : ''}</div>
     <div id="renameMsg"></div>
-    <p class="caption">${trUi('m280', [esc(d.project.directory)])}</p>
+    <p class="caption" id="pdir">${trUi('m280', [esc(d.project.directory)])}</p>
     <div class="video-language">
       <label>${trUi('video.language')} <select class="native" id="project-video-language" aria-describedby="video-language-help">${videoLanguageOptions(d.project.language ?? 'ja-JP')}</select></label>
       <p class="caption" id="video-language-help">${trUi('video.languageHelp')}</p><div id="video-language-message" role="status"></div>
@@ -1060,6 +1063,23 @@ async function project(id, showSettings = false) {
             </div>
             <fluent-badge appearance="tint" color="${rights.has(a.id) ? 'success' : 'warning'}">${rights.has(a.id) ? trUi('m171') : trUi('m172')}</fluent-badge>
           </div>`).join('')}
+        ${trimMain ? `<section class="stack" aria-labelledby="trim-title">
+          <h3 id="trim-title">${trUi('trim.title')}</h3>
+          <p class="caption">${trUi('trim.help')}</p>
+          <p class="caption">${trUi('trim.cost')}</p>
+          <video id="trim-player" controls preload="none" src="/api/assets/${encodeURIComponent(trimMain.id)}/source-preview" style="width:100%;max-width:480px" aria-label="${trUi('trim.title')}"></video>
+          <div class="row"><label>${trUi('pip.start')} <input class="native" id="trim-start" type="number" min="0" max="${trimMain.media.duration}" step="0.01" value="${savedTrim?.start ?? 0}"></label>
+            <label>${trUi('pip.end')} <input class="native" id="trim-end" type="number" min="0" max="${trimMain.media.duration}" step="0.01" value="${savedTrim?.end ?? trimMain.media.duration}"></label></div>
+          <div class="row"><fluent-button id="trim-current-start">${trUi('trim.currentStart')}</fluent-button><fluent-button id="trim-current-end">${trUi('trim.currentEnd')}</fluent-button></div>
+          <div class="row"><fluent-button id="trim-preview-start">${trUi('trim.previewStart')}</fluent-button><fluent-button id="trim-preview-end">${trUi('trim.previewEnd')}</fluent-button></div>
+          <fluent-button id="trim-analyze">${trUi('trim.analyze')}</fluent-button>
+          <div id="trim-analysis" class="stack" aria-live="polite"></div>
+          <fluent-button id="trim-suggest" disabled>${trUi('trim.suggest')}</fluent-button>
+          <fluent-button id="trim-auto">${trUi('trim.auto')}</fluent-button>
+          <fluent-button id="trim-save">${trUi('trim.save')}</fluent-button>
+          <fluent-button id="trim-reset">${trUi('trim.reset')}</fluent-button>
+          <div id="trim-message" role="status">${savedTrim ? info(trUi('trim.saved', [savedTrim.start, savedTrim.end])) : d.project.body_trim ? info(trUi('trim.mainChanged'), 'warning') : ''}</div>
+        </section>` : ''}
         ${assets.length > 1 ? '<div id="layoutPreview" aria-live="polite"></div>' : ''}
         </div>
       </section>
@@ -1217,7 +1237,7 @@ async function project(id, showSettings = false) {
                 const items = sources.filter(source => source.group === group);
                 if (!items.length) return '';
                 const label = group === 'project' ? trUi('m254') : trUi('m258');
-                return `<optgroup label="${label}">${items.map(source => `<option value="${esc(source.value)}" ${source.value === previousSource ? 'selected' : ''}>${source.label}</option>`).join('')}</optgroup>`;
+                return `<optgroup label="${label}">${items.map(source => `<option value="${esc(source.value)}" ${source.value === previousSource ? 'selected' : ''}>${esc(source.label)}</option>`).join('')}</optgroup>`;
               }).join('');
               return `<fluent-radio-group id="cardMake" orientation="horizontal" aria-labelledby="cardMakeLabel" value="${make ? 'make' : 'skip'}">
                   ${field(trUi('m249'), '<fluent-radio slot="input" value="make"></fluent-radio>')}
@@ -1284,6 +1304,7 @@ async function project(id, showSettings = false) {
     try {
       const p = await api(`/api/projects/${id}`, { method: 'PATCH', body: { language: select.value } });
       d.project.language = p.language;
+      if (p.directory !== d.project.directory) { d.project.directory = p.directory; $('#pdir').textContent = trUi('m280', [p.directory]); }
       $('#video-language-message').innerHTML = info(trUi('video.saved'), 'success');
     } catch (err) {
       select.value = previous;
@@ -1356,7 +1377,9 @@ async function project(id, showSettings = false) {
     try {
       const p = await api(`/api/projects/${id}`, { method: 'PATCH', body: { name: nameInput.value ?? '' } });
       d.project.name = p.name;
+      d.project.directory = p.directory;
       $('#pname').textContent = p.name;
+      $('#pdir').textContent = trUi('m280', [p.directory]);
       showTitleEditor(false);
     } catch (e) { $('#renameMsg').innerHTML = errorBar(e); nameInput.focus(); }
     finally { renaming = false; }
@@ -1663,6 +1686,86 @@ async function project(id, showSettings = false) {
   $$('input.aref').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { audio_ref: i.checked })));
   $$('input.spk').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, i.value ? { speaker: Number(i.value) } : { clear_speaker: true })));
   $$('input.off').forEach(i => i.addEventListener('change', () => patchAsset(i.dataset.asset, { sync_offset: Number(i.value) })));
+  if (trimMain) {
+    const requests = new AbortController(), player = $('#trim-player'), message = $('#trim-message');
+    { const prev = cleanup; cleanup = () => { requests.abort(); player.pause(); player.removeAttribute('src'); player.load(); prev?.(); }; }
+    let analysis = null, stopAt = null;
+    const markUnsaved = () => { message.innerHTML = info(trUi('trim.unsaved'), 'warning'); };
+    $('#trim-start').addEventListener('input', markUnsaved);
+    $('#trim-end').addEventListener('input', markUnsaved);
+    const showAnalysis = a => {
+      analysis = a;
+      $('#trim-analysis').innerHTML = `<p class="caption">${esc(trUi('trim.candidates', [trimMain.path.split(/[\\/]/).pop(), a.suggested.t0, a.suggested.t1, a.automatic.t0, a.automatic.t1]))}</p>
+        <p class="caption">${trUi('trim.reason')}</p>
+        ${a.first_speech ? `<p class="caption">${esc(trUi('trim.speech', [a.first_speech, a.last_speech ?? '']))}</p>` : info(trUi('trim.noSpeech'), 'warning')}
+        ${a.sound_before >= 1 || a.sound_after >= 1 ? info(trUi('trim.sound', [a.sound_before, a.sound_after]), 'warning') : ''}
+        ${a.automatic.t0 === 0 && a.automatic.t1 === a.duration ? info(trUi('trim.noAuto'), 'warning') : ''}`;
+      $('#trim-suggest').disabled = false;
+    };
+    const action = async work => {
+      const buttons = ['#trim-analyze', '#trim-auto', '#trim-save', '#trim-reset'].map(s => $(s));
+      buttons.forEach(b => { b.disabled = true; });
+      message.textContent = trUi('pip.scan');
+      try { await work(); }
+      catch (e) { if (!gone() && e.name !== 'AbortError') message.innerHTML = errorBar(e); }
+      finally { if (!gone()) buttons.forEach(b => { b.disabled = false; }); }
+    };
+    const readRange = () => {
+      const start = $('#trim-start'), end = $('#trim-end');
+      const lo = Number(start.value), hi = Number(end.value);
+      if (!start.value || !end.value || !Number.isFinite(lo) || !Number.isFinite(hi) || lo < 0 || hi > trimMain.media.duration || hi - lo < 0.1) {
+        message.innerHTML = info(trUi('trim.invalid'), 'warning'); return null;
+      }
+      return { start: lo, end: hi };
+    };
+    const save = async mode => {
+      const range = mode === 'manual' ? readRange() : {};
+      if (!range) return;
+      await action(async () => {
+        if (mode === 'auto' || mode === 'manual' && !analysis) {
+          const a = await api(`/api/projects/${id}/body-trim/analyze`, { method: 'POST', signal: requests.signal });
+          if (gone()) return;
+          showAnalysis(a);
+        }
+        const r = await api(`/api/projects/${id}/body-trim`, { method: 'PUT', body: { mode, asset_id: trimMain.id, ...range }, signal: requests.signal });
+        if (gone()) return;
+        d.project.body_trim = r.body_trim;
+        $('#trim-start').value = r.body_trim?.start ?? 0;
+        $('#trim-end').value = r.body_trim?.end ?? trimMain.media.duration;
+        message.innerHTML = info(r.body_trim ? trUi('trim.saved', [r.body_trim.start, r.body_trim.end]) : trUi('trim.cleared'), 'success');
+        if (r.body_trim) {
+          opts.series = false; opts.short = 'off';
+          $('#seriesSw').checked = false;
+          if ($('#shortMode')) $('#shortMode').value = 'off';
+          $('#shortCountRow')?.setAttribute('hidden', '');
+          showShort(); showSeries();
+        }
+      });
+    };
+    $('#trim-analyze').addEventListener('click', () => action(async () => {
+      const a = await api(`/api/projects/${id}/body-trim/analyze`, { method: 'POST', signal: requests.signal });
+      if (gone()) return;
+      showAnalysis(a); message.textContent = '';
+    }));
+    $('#trim-suggest').addEventListener('click', () => {
+      if (analysis) { $('#trim-start').value = analysis.suggested.t0; $('#trim-end').value = analysis.suggested.t1; markUnsaved(); }
+    });
+    $('#trim-auto').addEventListener('click', () => save('auto'));
+    $('#trim-save').addEventListener('click', () => save('manual'));
+    $('#trim-reset').addEventListener('click', () => save('off'));
+    $('#trim-current-start').addEventListener('click', () => { $('#trim-start').value = player.currentTime.toFixed(2); markUnsaved(); });
+    $('#trim-current-end').addEventListener('click', () => { $('#trim-end').value = player.currentTime.toFixed(2); markUnsaved(); });
+    player.addEventListener('error', () => { if (!gone()) message.innerHTML = info(trUi('trim.playerError'), 'warning'); });
+    player.addEventListener('timeupdate', () => { if (stopAt != null && player.currentTime >= stopAt) { player.pause(); stopAt = null; } });
+    const preview = async tail => {
+      const range = readRange(); if (!range) return;
+      stopAt = tail ? range.end : Math.min(range.end, range.start + 4);
+      try { player.currentTime = tail ? Math.max(range.start, range.end - 4) : range.start; await player.play(); }
+      catch { if (!gone()) message.innerHTML = info(trUi('trim.playerError'), 'warning'); }
+    };
+    $('#trim-preview-start').addEventListener('click', () => preview(false));
+    $('#trim-preview-end').addEventListener('click', () => preview(true));
+  }
   $$('.pip-scenes').forEach(button => button.addEventListener('click', async () => {
     const aid = button.dataset.asset, asset = assets.find(a => a.id === aid);
     const box = $$('.pip-scene-list').find(el => el.dataset.asset === aid);
@@ -1772,6 +1875,12 @@ async function project(id, showSettings = false) {
     if (notReady) {
       $('#genMsg').innerHTML = info(`${notReady}。`, 'warning');
       (!assets.length ? $('#pick') : $$('.rights').find(c => !c.checked))?.focus();
+      return;
+    }
+    if (trimMain && (Number($('#trim-start').value) !== (d.project.body_trim?.start ?? 0) ||
+        Number($('#trim-end').value) !== (d.project.body_trim?.end ?? trimMain.media.duration))) {
+      $('#genMsg').innerHTML = info(trUi('trim.unsaved'), 'warning');
+      $('#trim-save').focus();
       return;
     }
     const { series, series_by, parts, part_minutes, short, ...rest } = opts;
@@ -2950,10 +3059,12 @@ async function exportView(renderId) {
 }
 
 applyShell();
-$('#ui-language').value = getLanguage();
-$('#ui-language').addEventListener('change', async e => {
-  const selector = e.currentTarget;
-  selector.disabled = true;
+const languageButtons = $$('#ui-language [data-language]');
+languageButtons.forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.language === getLanguage())); });
+$('#ui-language').addEventListener('click', async e => {
+  const selector = e.target.closest('[data-language]');
+  if (!selector || selector.dataset.language === getLanguage()) return;
+  languageButtons.forEach(button => { button.disabled = true; });
   const hash = location.hash;
   try {
     if (await flushLocaleWrites() === false) return;
@@ -2972,7 +3083,8 @@ $('#ui-language').addEventListener('change', async e => {
       });
       localeDraft = { projectId, properNouns };
     }
-    setLanguage(selector.value);
+    setLanguage(selector.dataset.language);
+    languageButtons.forEach(button => { button.setAttribute('aria-pressed', String(button === selector)); });
     applyShell();
     refreshProvider();
     if (location.hash !== hash) return;
@@ -2990,7 +3102,13 @@ $('#ui-language').addEventListener('change', async e => {
       if (el) el.open = expander.open;
     }
   } catch (err) { main.insertAdjacentHTML('afterbegin', errorBar(err)); }
-  finally { selector.value = getLanguage(); selector.disabled = false; selector.focus(); }
+  finally {
+    languageButtons.forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.language === getLanguage()));
+      button.disabled = false;
+    });
+    selector.focus();
+  }
 });
 refreshProvider();
 initTips();

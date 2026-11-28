@@ -46,6 +46,14 @@ select.native:focus-visible, input.native:focus-visible { outline: 2px solid var
 .spacer { flex: 1; }
 .provider { font-size: 12px; color: var(--colorNeutralForeground2); }
 .ui-language { display: flex; align-items: center; gap: var(--s8); font-size: 12px; white-space: nowrap; }
+.ui-language-toggle { display: inline-flex; overflow: hidden; border: 1px solid var(--colorNeutralStroke1, #d1d1d1); border-radius: var(--borderRadiusMedium, 4px); }
+.ui-language-toggle button { min-height: 32px; padding: 4px 8px; border: 0; border-right: 1px solid var(--colorNeutralStroke1, #d1d1d1); color: var(--colorNeutralForeground1, #242424); background: var(--colorNeutralBackground1, #fff); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.ui-language-toggle button:last-child { border-right: 0; }
+.ui-language-toggle button:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--colorNeutralBackground1Hover, #f5f5f5); }
+.ui-language-toggle button[aria-pressed="true"] { color: var(--colorNeutralForegroundOnBrand, #fff); background: var(--colorBrandBackground, #0f6cbd); font-weight: 600; }
+.ui-language-toggle button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--colorStrokeFocus2, #000); outline-offset: -2px; }
+.ui-language-toggle button:disabled { opacity: .5; cursor: default; }
+@media (forced-colors: active) { .ui-language-toggle button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; } }
 .video-language { display: grid; gap: var(--s4); max-width: 640px; margin-bottom: var(--s12); }
 .video-language label { display: flex; align-items: center; gap: var(--s8); }
 html:lang(zh-CN) { --font: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif; }

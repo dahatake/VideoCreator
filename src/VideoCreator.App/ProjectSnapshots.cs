@@ -5,7 +5,7 @@ namespace VideoCreator.App;
 
 /// <summary>
 /// Keeps each project's snapshot (<see cref="ProjectSnapshot"/>) in its folder up to date, and brings projects back from snapshots found in the projects folder.
-/// Writes are batched a couple of seconds after the last change and paused while the projects folder is being moved.
+/// Writes are batched until the store has been quiet for a couple of seconds (at most <see cref="MaxDelay"/> while it keeps changing) and paused while the projects folder is being moved.
 /// </summary>
 public sealed class ProjectSnapshots : BackgroundService
 {
@@ -19,6 +19,14 @@ public sealed class ProjectSnapshots : BackgroundService
     /// <summary>How long the store must be quiet before snapshots are written.</summary>
     internal TimeSpan Debounce { get; set; } = TimeSpan.FromSeconds(2);
 
+    /// <summary>The longest a change waits while the store keeps changing (a running job reports progress every second).</summary>
+    internal TimeSpan MaxDelay { get; set; } = TimeSpan.FromSeconds(30);
+
+    long _changes;
+    int _flushes;
+    /// <summary>Snapshot passes run so far (each reads the whole store).</summary>
+    internal int Flushes => Volatile.Read(ref _flushes);
+
     public ProjectSnapshots(Runtime rt, ProjectsLocation loc, ILogger<ProjectSnapshots> log)
     {
         _rt = rt; _loc = loc; _log = log;
@@ -26,7 +34,11 @@ public sealed class ProjectSnapshots : BackgroundService
         Signal();
     }
 
-    void Signal() { if (_wake.CurrentCount == 0) { try { _wake.Release(); } catch (SemaphoreFullException) { } } }
+    void Signal()
+    {
+        Interlocked.Increment(ref _changes);
+        if (_wake.CurrentCount == 0) { try { _wake.Release(); } catch (SemaphoreFullException) { } }
+    }
 
     /// <summary>Brings back projects saved in the projects folders (current and earlier) that this device does not know yet.</summary>
     public RestoreResult Restore()
@@ -48,6 +60,7 @@ public sealed class ProjectSnapshots : BackgroundService
         _gate.Wait();
         try
         {
+            Interlocked.Increment(ref _flushes);
             var rows = _rt.Store.Rows();
             var written = 0;
             foreach (var project in rows.Where(r => r.Kind == Kinds.Project))
@@ -82,8 +95,18 @@ public sealed class ProjectSnapshots : BackgroundService
             while (true)
             {
                 await _wake.WaitAsync(stoppingToken);
-                await Task.Delay(Debounce, stoppingToken);
+                // wait until the store has been quiet for Debounce, but never longer than MaxDelay after the first change
+                var first = System.Diagnostics.Stopwatch.GetTimestamp();
+                long seen;
+                do
+                {
+                    seen = Interlocked.Read(ref _changes);
+                    await Task.Delay(Debounce, stoppingToken);
+                }
+                while (Interlocked.Read(ref _changes) != seen && System.Diagnostics.Stopwatch.GetElapsedTime(first) + Debounce <= MaxDelay);
                 while (_loc.IsMoving) await Task.Delay(500, stoppingToken);
+                // the changes signalled until now are all in this pass; a later one wakes the loop again
+                while (_wake.Wait(0)) { }
                 Flush();
             }
         }

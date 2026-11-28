@@ -146,6 +146,7 @@ public class V12Tests : IAsyncLifetime
         float[] Cam(double own, double other) { var r = new Random(7); var a = new float[30 * R]; foreach (var s in sents) for (int k = (int)(s.T0 * R); k < (int)(s.T1 * R); k++) a[k] = (float)((r.NextDouble() * 2 - 1) * (s.Speaker == 2 ? own : other)); return a; }
         // camera 0 is speaker 2's mic, camera 1 is speaker 1's mic
         var res = SpeakerAssign.Assign([Cam(0.5, 0.05), Cam(0.05, 0.5)], R, tr);
+        Assert.NotNull(res);
         Assert.Equal([2, 1], res);
         Assert.Null(SpeakerAssign.Assign([Cam(0.3, 0.3), Cam(0.3, 0.3)], R, tr));
     }

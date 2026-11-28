@@ -47,6 +47,14 @@ Top **Rename** opens save/cancel input. Storage path also appears. Renaming does
 
 ### Left: assets
 
+#### Trim the beginning and end
+
+In the assets column, “Trim beginning / end” sets the main video's body in its own seconds. “Analyze and suggest edit points” shows manual boundaries padded around the first and last timestamped speech (transcript times corrected by the measured sound), plus automatic boundaries supported by both black picture and silence. When unbroken sound (music, applause or noise) runs for 1 second or more before or after the speech, its length is shown too. New transcription can incur charges through the configured speech service; previous analysis is reused.
+
+Copy the manual suggestion to the inputs, review the picture and sound in the preview, adjust boundaries with the playhead, and save. Automatic application removes only continuous black, silent edges, keeping the whole recording when evidence is insufficient. It does not semantically identify greetings, setup conversations, silent demonstrations, conclusions or end screens.
+
+The next generation keeps the entire body rather than extracting highlights: no internal cuts, speed changes, series splitting or additional shorts. Secondary recordings with different start times follow the same body through their sync information; portions they do not cover use only the main video. If the audio source does not cover the body, or the main video changes, revise the boundaries or sync. Clear trimming to restore ordinary generation. Original files and previously generated videos remain unchanged. Separately configured inserts, including closing videos, are outside this source-trimming operation.
+
 ![Asset controls](../images/screen-assets.svg)
 
 | Component | Meaning/decision |

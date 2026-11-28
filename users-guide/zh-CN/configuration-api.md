@@ -60,7 +60,7 @@ dotnet run --project src\VideoCreator.App -c Release
 - JSON 使用 `snake_case`，枚举也是字符串。共享定义见 [Json](../../src/VideoCreator.Core/Json.cs) 和 [Models](../../src/VideoCreator.Core/Models/Models.cs)。
 - 写入操作必须带 `X-VideoCreator: 1`。JSON 使用 `Content-Type: application/json`。
 - GET/HEAD 不要求此标头。它不是身份验证或 API 密钥，而是防止跨站写入的保护。
-- 通常错误为 `{ "error": { "code": "...", "message": "...", "detail": ... } }`。同时处理 HTTP 状态和 code。Host 拒绝或缺少标头时也可能返回纯文本。
+- 通常错误为 `{ "error": { "code": "...", "message": "...", "detail": ... } }`。同时处理 HTTP 状态和 code。在 `/api` 下，缺少标头（`E-CSRF`）、JSON 格式错误（`E-VALIDATION`）、不存在的 API（`E-NOT-FOUND`）和不支持的方法（`E-METHOD`）也使用同一格式；只有 Host 拒绝返回纯文本。
 - 异步导出的 `202` 表示已接受，不表示完成。需轮询返回的 render ID。
 - 一般请求上限为 64MiB。**视频 upload 路由取消了自身上限**，对 multipart 临时缓冲后复制。BGM 将 HTTP body 上限改为 2000MiB（一次最多 20 首），但 multipart 解析另有上限。不要将视频的无限制条件应用到其他路由。
 
@@ -81,12 +81,12 @@ dotnet run --project src\VideoCreator.App -c Release
 | 保存位置 | PUT `/settings/projects-dir` | 以相同格式实际修改／迁移 |
 | 保存位置 | POST `/projects/restore` | 从保存文件夹中的 `.videocreator\state.json` 恢复此电脑没有的项目；返回 `scanned`、`restored`、`already_present`、`failed`、`missing_sources`（不覆盖已有项目） |
 | 模式 | GET `/presets` | 启动时已加载的预设 |
-| Project | GET / POST `/projects` | 列表／以 `{"name":"工作名称","language":"zh-CN"}` 创建。language 支持 ja-JP、en-US、zh-CN、ko-KR，默认 ja-JP |
+| Project | GET / POST `/projects` | 列表／以 `{"name":"工作名称","language":"zh-CN"}` 创建。language 支持 ja-JP、en-US、zh-CN、ko-KR，默认 ja-JP。已有同名文件夹时返回 409；`name` 为空时使用 `default_name`，已被占用则编号为“名称 (2)” |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 详情（`resume_state` 返回恢复阶段和目标 ID）／`{"name":"新名称","language":"zh-CN"}`／删除。修改语言后需重新生成，已有 EditPlan 保留原语言 |
 | Project | PUT `/projects/{id}/generation-settings` | 将模式及生成选项保存到项目 |
 | Project | PUT `/projects/{id}/workflow-state` | 保存当前阶段（`project` / `settings` / `job` / `candidates` / `exports` / `review` / `render`）。`exports` 必须带 `job_id`，且 Job 仅可为 `ready` / `done` |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`，不复制 |
-| Asset | POST `/projects/{id}/assets/upload` | 通过 multipart 的 `file` 字段复制视频 |
+| Asset | POST `/projects/{id}/assets/upload` | 通过 multipart 的 `file` 字段复制视频。文件名相同的其他视频保存为“名称 (2)”，不会覆盖已有素材 |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
 | 估算 | GET `/projects/{id}/estimate?preset=P4` | 按 scope 估算发送量及基于单价的费用 |
 | Asset | PATCH `/assets/{id}` | role、speaker、sync_offset、clear_speaker |

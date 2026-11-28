@@ -58,7 +58,7 @@ dotnet run --project src\VideoCreator.App -c Release
 - JSONは `snake_case`。enumも文字列。共有定義は[Json](../src/VideoCreator.Core/Json.cs)と[Models](../src/VideoCreator.Core/Models/Models.cs)。
 - 書き込み系は `X-VideoCreator: 1` が必須。JSONは `Content-Type: application/json`。
 - GET/HEADにはこのヘッダーを要求しません。ヘッダーは認証やAPIキーではなく、クロスサイト書き込みを防ぐガードです。
-- 通常のエラーは `{ "error": { "code": "...", "message": "...", "detail": ... } }`。HTTP statusとcodeの両方を扱う。Host拒否やヘッダー不足はプレーンテキストの場合もあります。
+- 通常のエラーは `{ "error": { "code": "...", "message": "...", "detail": ... } }`。HTTP statusとcodeの両方を扱う。`/api` では、ヘッダー不足（`E-CSRF`）・不正な JSON（`E-VALIDATION`）・存在しない API（`E-NOT-FOUND`）・未対応のメソッド（`E-METHOD`）も同じ形です。Host の拒否だけはプレーンテキストです。
 - 非同期書き出しの `202` は受付であり、完了ではありません。返されたrender IDをポーリングします。
 - 一般の要求上限は64MiB。**動画uploadルートは独自の上限を解除**し、multipartを一時バッファしてコピーします。BGMはHTTP bodyを2000MiBへ変更します（1回で最大20曲）が、multipart解析にも別の上限があります。他ルートに動画と同じ無制限条件を適用しないでください。
 
@@ -79,12 +79,12 @@ dotnet run --project src\VideoCreator.App -c Release
 | 保存先 | PUT `/settings/projects-dir` | 同形式で実際に変更／移動 |
 | 保存先 | POST `/projects/restore` | 保存先フォルダー内の `.videocreator\state.json` から、このPCに無いプロジェクトを復元。`scanned`・`restored`・`already_present`・`failed`・`missing_sources` を返す（既存は上書きしない） |
 | パターン | GET `/presets` | 起動時ロード済みプリセット |
-| Project | GET / POST `/projects` | 一覧／`{"name":"作業名"}` で作成 |
+| Project | GET / POST `/projects` | 一覧／`{"name":"作業名"}` で作成（同じ名前のフォルダーがあれば 409）。`name` を空にすると `default_name` を名前にし、使用中なら「名前 (2)」のように番号を付ける |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 詳細（`resume_state` に再開段階と対象IDを返す）／`{"name":"新しい名前"}`／削除 |
 | Project | PUT `/projects/{id}/generation-settings` | パターンと生成オプションをプロジェクトに保存 |
 | Project | PUT `/projects/{id}/workflow-state` | 現在の段階（`project` / `settings` / `job` / `candidates` / `exports` / `review` / `render`）を保存。`exports` は `job_id` 必須で、Job が `ready` / `done` のときだけ |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`。コピーしない |
-| Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー |
+| Asset | POST `/projects/{id}/assets/upload` | multipartの `file` フィールドで動画をコピー。同じファイル名の別の動画は「名前 (2)」として保存し、既存の素材を上書きしない |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
 | 見積もり | GET `/projects/{id}/estimate?preset=P4` | scope別の送信量・単価ベースの推定 |
 | 画面構成 | GET `/projects/{id}/layouts` | パターンごとの画面構成の図データの配列 `[{preset_id, planner, width, height, captions, beats:[{kind, sec, speaker, boxes:[{slot, asset_id, shape, x, y, w, h, backdrop}]}], issues, face_basis}]`。位置は生成と同じ計算（現在の役割・選択シーン・解析済みの顔）、`sec` は代表値。`asset_id` が null の枠は未登録の素材の例示。`issues` は生成できない・映らない組み合わせ（`need_screen`・`no_scenes`・`many_screens`・`only_main`・`auto_screen`・`auto_speaker`・`one_camera`・`implicit_main`・`no_place`） |

@@ -28,6 +28,7 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true });
   for (const language of ['ja', 'en', 'ko', 'zh-CN']) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+    await page.addInitScript(() => localStorage.setItem('vc.help.tourSeen', '1'));
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const settings = {
@@ -68,8 +69,11 @@ try {
       return route.fulfill({ json: fixtures[url.pathname] });
     });
     await page.goto(`http://127.0.0.1:${server.address().port}`);
-    await page.locator('#ui-language').selectOption(language);
-    await page.waitForFunction(value => document.documentElement.lang === value && !document.querySelector('#ui-language').disabled, language);
+    const languageButton = page.locator(`#ui-language [data-language="${language}"]`);
+    await languageButton.click();
+    await page.waitForFunction(value => document.documentElement.lang === value && [...document.querySelectorAll('#ui-language [data-language]')].every(button => !button.disabled), language);
+    assert.equal(await languageButton.getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('#ui-language [aria-pressed="true"]').count(), 1);
     await page.locator('#settings-btn').click();
     await page.locator('#aiCopilot').evaluate(element => { element.open = true; });
     assert.deepEqual(await page.locator('#aiFlash ~ details.setgroup > summary h3').allInnerTexts(),

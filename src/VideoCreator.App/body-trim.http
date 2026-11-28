@@ -1,0 +1,35 @@
+@baseUrl = http://localhost:8765
+@project = replace-project-id
+@asset = replace-main-asset-id
+
+### Analyze (cached transcription is reused; new transcription can incur configured ASR charges)
+POST {{baseUrl}}/api/projects/{{project}}/body-trim/analyze
+X-VideoCreator: 1
+
+### Manual boundaries in the main video's own seconds
+PUT {{baseUrl}}/api/projects/{{project}}/body-trim
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"mode":"manual","asset_id":"{{asset}}","start":5,"end":100}
+
+### Apply measured automatic boundaries (not client-supplied times)
+PUT {{baseUrl}}/api/projects/{{project}}/body-trim
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"mode":"auto","asset_id":"{{asset}}"}
+
+### Restore normal generation; the source is never modified
+PUT {{baseUrl}}/api/projects/{{project}}/body-trim
+X-VideoCreator: 1
+Content-Type: application/json
+
+{"mode":"off"}
+
+### Preview original media
+GET {{baseUrl}}/api/assets/{{asset}}/source-preview
+
+### Missing project (404)
+POST {{baseUrl}}/api/projects/missing/body-trim/analyze
+X-VideoCreator: 1

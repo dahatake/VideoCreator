@@ -65,9 +65,15 @@ public sealed class PipelineRunner(PipelineServices s)
     int _asrCalls;
     bool Cached(string file) => File.Exists(file) && (_redo == null || _redo.Contains(file));
     bool Redo(string file) => _redo != null && _redo.Add(file);
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> CacheLocks = new(StringComparer.OrdinalIgnoreCase);
     string ProxyFile(SourceAsset a) => Path.Combine(CacheDir(a), "proxy.mp4");
-    Task<(string proxy, string audio)> ProxyAsync(SourceAsset a, CancellationToken ct, IProgress<double>? progress = null) =>
-        s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct, progress, Redo(ProxyFile(a)));
+    async Task<(string proxy, string audio)> ProxyAsync(SourceAsset a, CancellationToken ct, IProgress<double>? progress = null)
+    {
+        var gate = CacheLocks.GetOrAdd(ProxyFile(a), _ => new(1));
+        await gate.WaitAsync(ct);
+        try { return await s.Probe.MakeProxyAsync(a.Path, a.Media, CacheDir(a), ct, progress, Redo(ProxyFile(a))); }
+        finally { gate.Release(); }
+    }
 
     /// <summary>Cache files are replaced whole, so a reader never sees a half-written file while a run makes them again.</summary>
     static async Task WriteCacheAsync(string file, string json, CancellationToken ct)
@@ -235,6 +241,56 @@ public sealed class PipelineRunner(PipelineServices s)
         return sig;
     }
 
+    public async Task<BodyTrimAnalysis> AnalyzeBodyAsync(SourceAsset main, CancellationToken ct)
+    {
+        var gate = CacheLocks.GetOrAdd(Path.Combine(CacheDir(main), "body-analysis"), _ => new(1));
+        await gate.WaitAsync(ct);
+        try { return await AnalyzeBodyCoreAsync(main, ct); }
+        finally { gate.Release(); }
+    }
+
+    async Task<BodyTrimAnalysis> AnalyzeBodyCoreAsync(SourceAsset main, CancellationToken ct)
+    {
+        var (proxy, audio) = await ProxyAsync(main, ct);
+        var tr = await TranscriptAsync(main, audio, ct);
+        var sig = await SignalsAsync(main, proxy, main.Media.AudioChannels > 0 ? audio : null, ct);
+        var blackFile = Path.Combine(CacheDir(main), "trim-blacks-v1.json");
+        List<Interval> blacks;
+        if (File.Exists(blackFile)) blacks = Json.Deserialize<List<Interval>>(await File.ReadAllTextAsync(blackFile, ct));
+        else
+        {
+            // Unlike scene-fade detection, do not call a mostly black title card an empty picture.
+            var r = await s.Ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostats", "-i", proxy, "-an",
+                "-vf", "blackdetect=d=0.2:pix_th=0.02:pic_th=1", "-f", "null", "-"], ct);
+            blacks = SignalExtractor.ParseBlacks(r.StdErr);
+            await WriteCacheAsync(blackFile, Json.Serialize(blacks), ct);
+        }
+        sig = sig with { Blacks = blacks };
+        return BodyTrimmer.Analyze(main, tr, sig);
+    }
+
+    public async Task<string> SourcePreviewAsync(SourceAsset asset, CancellationToken ct)
+    {
+        var gate = CacheLocks.GetOrAdd(Path.Combine(CacheDir(asset), "body-preview.mp4"), _ => new(1));
+        await gate.WaitAsync(ct);
+        try { return await SourcePreviewCoreAsync(asset, ct); }
+        finally { gate.Release(); }
+    }
+
+    async Task<string> SourcePreviewCoreAsync(SourceAsset asset, CancellationToken ct)
+    {
+        var (proxy, audio) = await ProxyAsync(asset, ct);
+        if (asset.Media.AudioChannels == 0) return proxy;
+        var file = Path.Combine(CacheDir(asset), "body-preview.mp4");
+        if (File.Exists(file)) return file;
+        await s.Ff.RunFfmpegCheckedAsync(["-hide_banner", "-loglevel", "error", "-y",
+            "-i", proxy, "-i", audio, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
+            "-af", "apad", "-t", asset.Media.Duration.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture),
+            "-movflags", "+faststart", file + ".tmp.mp4"], ct);
+        File.Move(file + ".tmp.mp4", file, true);
+        return file;
+    }
+
     /// <summary>Generate candidates + previews for a job (FR-SEL, FR-SOL, FR-TEL, FR-RND-02).</summary>
     public async Task<Job> GenerateAsync(Job job, IProgress<JobUpdate> progress, CancellationToken ct)
     {
@@ -290,7 +346,9 @@ public sealed class PipelineRunner(PipelineServices s)
                 .OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
         }
         else if (assets.Count > 1) warnings.Add("このパターンは基準の素材（最初に選んだ動画）だけを使います");
-        if (!job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
+        if (job.Options.BodyTrim != null)
+            used = assets.OrderBy(a => a.Id == main.Id ? 0 : 1).ToList();
+        if (job.Options.BodyTrim == null && !job.Options.IsSeries && main.Media.Duration < preset.Target.Min)
             throw new PipelineException("E-SOL-INFEASIBLE", $"素材が{preset.Id}の尺の下限（{preset.Target.Min:0.#}秒）より短い");
         if (preset.HasTelop("caption") && main.Media.AudioChannels > 0 && s.Asr == null)
             throw new PipelineException("E-ASR-PROVIDER", "字幕には書き起こしが必要ですが、書き起こしサービス（Azure Speech）が設定されていません。設定を確認してください。");
@@ -394,6 +452,17 @@ public sealed class PipelineRunner(PipelineServices s)
                 if (scr != used[i]) { used[i] = scr; s.Store.Put(Kinds.Asset, scr.Id, scr.ProjectId, scr); }
             }
         if (preset.Planner == "switch" && used.Count < 2) throw new PipelineException("E-SWT-SYNC", "カメラの音声を同期できませんでした。同じ場面を撮影した素材を選んでください");
+        if (job.Options.BodyTrim != null)
+        {
+            var picture = BodyTrimmer.Main(assets);
+            foreach (var a in used.Where(a => a.Id != main.Id && a.Id != picture?.Id && a.SyncMethod is not ("audio" or "audio-map" or "manual")).ToList())
+            {
+                warnings.Add($"{Path.GetFileName(a.Path)} は同期が未確定のため、本編には使いません。ずれを手動指定してください。");
+                used.Remove(a);
+            }
+            if (picture == null || used.All(a => a.Id != picture.Id))
+                throw new PipelineException("E-TRIM-SYNC", "主動画を同期できませんでした。音声の元とのずれを手動指定してください。");
+        }
         Mark("ingest");
 
         bool trCached = reuse && main.Media.AudioChannels > 0 && s.Asr != null && File.Exists(TranscriptFile(main, DictionaryFor(project.Id)));
@@ -456,7 +525,25 @@ public sealed class PipelineRunner(PipelineServices s)
         var exclude = job.ExcludeCandidateIds.Select(id => s.Store.Get<Candidate>(Kinds.Candidate, id)).Where(c => c != null).SelectMany(c => c!.Segments).ToList();
         SelectionOutcome outcome;
         var seriesParts = new Dictionary<string, SeriesPart>();
-        if (job.Options.IsSeries)
+        if (job.Options.BodyTrim is { } trim)
+        {
+            var picture = BodyTrimmer.Main(used) ?? throw new PipelineException("E-TRIM-RANGE", "主動画がありません。");
+            Interval body;
+            try { body = BodyTrimmer.MasterRange(trim, picture, main); }
+            catch (PlanException ex) { throw new PipelineException(ex.Code, ex.Message, ex); }
+            outcome = new SelectionOutcome([new Candidate
+            {
+                Id = "body", Rank = 1, Segments = [body], Source = "manual",
+                Reason = "主動画で指定した本編全体を保持します。冒頭・末尾以外は削除しません。",
+            }], "none", 0, 0, false, [], 0, 0);
+            foreach (var a in used.Where(a => a.Id != picture.Id))
+            {
+                double lo = a.CameraTime(body.T0, main.Id), hi = a.CameraTime(body.T1, main.Id);
+                warnings.Add($"{Path.GetFileName(a.Path)}: 本編に対応する素材内時刻 {lo:0.###}〜{hi:0.###} 秒"
+                    + (lo < 0 || hi > a.Media.Duration ? "（範囲外では主動画だけを使います）" : ""));
+            }
+        }
+        else if (job.Options.IsSeries)
         {
             var (o, partsById) = await SelectSeriesAsync(tr, sig, preset, main, job.Options.PartMinutes, job.Options.Parts, await laughsTask, warnings, ct);
             outcome = o; seriesParts = partsById;
@@ -540,7 +627,7 @@ public sealed class PipelineRunner(PipelineServices s)
         if (candidates.Count == 0) throw new PipelineException("E-SOL-INFEASIBLE", "条件を満たす区間が見つかりませんでした。別のパターンを試してください。");
         if (seriesParts.Count > 0 && candidates.Count != seriesParts.Count) throw new PipelineException("E-SOL-INFEASIBLE", "一部のパートの編集計画を作れませんでした: " + string.Join(" / ", warnings.TakeLast(seriesParts.Count - candidates.Count)));
         int presented = preset.Short ? job.Options.ShortCount : SelectionService.PresentCount;
-        if (!job.Options.IsSeries && candidates.Count < presented)
+        if (job.Options.BodyTrim == null && !job.Options.IsSeries && candidates.Count < presented)
             warnings.Add($"条件を満たす重複しない区間が{candidates.Count}件だけのため、候補は{candidates.Count}本です（希望{presented}本）。重複する区間や条件外の区間は追加しません");
         Mark("plan");
 
@@ -731,7 +818,8 @@ public sealed class PipelineRunner(PipelineServices s)
         var p = s.Presets[old.Preset.Id];
         if (p.Planner == "pip" && AssetRoles.Master(assets)?.Id != main.Id)
             throw new PipelineException("E-PIP-SYNC", "音声の元が変更されています。現在の設定で新しく生成して、音声を再同期してください");
-        var used = p.Planner == "pip"
+        var used = job.Options.BodyTrim != null ? assets :
+            p.Planner == "pip"
             ? assets.Where(a => a.Id == main.Id || a.Role == AssetRole.Screen || AssetRoles.Presenter(assets)?.Id == a.Id
                 || p.Screen?.SplitAnchors == true && AssetRoles.Anchors(assets).Any(x => x.Id == a.Id)).OrderBy(a => a.Id == main.Id ? 0 : 1).ToList()
             : p.Planner is "switch" or "screen"
@@ -956,7 +1044,7 @@ public sealed class PipelineRunner(PipelineServices s)
     }
 
     // Windows refuses these as folder names (with or without an extension)
-    static bool IsReservedDeviceName(string name) =>
+    public static bool IsReservedDeviceName(string name) =>
         System.Text.RegularExpressions.Regex.IsMatch(name.Split('.')[0].TrimEnd(), @"^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     public static string ExportBaseName(Project project, EditPlan plan, int rank)

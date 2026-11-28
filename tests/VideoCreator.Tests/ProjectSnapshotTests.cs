@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using VideoCreator.App;
 using VideoCreator.Models;
 using VideoCreator.Storage;
 
@@ -236,5 +238,36 @@ public sealed class ProjectSnapshotServiceTests : IAsyncLifetime
         Assert.Equal(1, body.GetProperty("scanned").GetInt32());
         Assert.Equal(1, body.GetProperty("already_present").GetInt32());
         Assert.Equal(0, body.GetProperty("restored").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task A_store_that_keeps_changing_is_saved_once_per_max_delay_and_its_last_state_once_quiet()
+    {
+        var snapshots = _app.Services.GetRequiredService<ProjectSnapshots>();
+        snapshots.Debounce = TimeSpan.FromMilliseconds(200);
+        snapshots.MaxDelay = TimeSpan.FromSeconds(1);
+        using var created = await _http.PostAsJsonAsync("/api/projects", new { name = "連続変更" }, Ct);
+        created.EnsureSuccessStatusCode();
+        var project = await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(Ct);
+        var id = project.GetProperty("id").GetString()!;
+        var state = ProjectSnapshot.StatePath(project.GetProperty("directory").GetString()!);
+        for (var i = 0; i < 100 && !File.Exists(state); i++) await Task.Delay(100, Ct);
+        await Task.Delay(500, Ct);
+
+        // like a running job reporting progress: a change every 50 ms for 3 seconds
+        var store = _app.Services.GetRequiredService<Runtime>().Store;
+        var before = snapshots.Flushes;
+        var n = 0;
+        for (var until = DateTime.UtcNow.AddSeconds(3); DateTime.UtcNow < until; n++)
+        {
+            store.Put(Kinds.Job, "job_burst", id, new Job { Id = "job_burst", ProjectId = id, PresetIds = ["P4"], Status = JobStatus.Done, Message = $"step {n}" });
+            await Task.Delay(50, Ct);
+        }
+        var during = snapshots.Flushes - before;
+        Assert.InRange(during, 2, 4);   // about every MaxDelay, not every Debounce (that would be ~15)
+
+        var last = $"step {n - 1}";
+        for (var i = 0; i < 50 && !File.ReadAllText(state).Contains(last); i++) await Task.Delay(100, Ct);
+        Assert.Contains(last, File.ReadAllText(state));
     }
 }

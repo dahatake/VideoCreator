@@ -303,25 +303,44 @@ public static class SlideDecks
             throw new SlideDeckException($"{app} でスライドを画像にできませんでした{causes}。PowerPoint で PNG を書き出し、zip にして追加してください: " + FFmpeg.Tail(await err));
     }
 
+    /// <summary>Limits on what a zip of slide images may inflate to, counted on the bytes actually read (the sizes a zip declares are not trusted).</summary>
+    public const long MaxZipImageBytes = 64L << 20, MaxZipTotalBytes = 1L << 30;
+
     static async Task FromZipAsync(FFmpeg ff, string zip, string outDir, CancellationToken ct)
     {
         var tmp = Path.Combine(outDir, "_zip");
         Directory.CreateDirectory(tmp);
-        using (var z = ZipFile.OpenRead(zip))
+        try
         {
+            using var z = ZipFile.OpenRead(zip);
             // natural order of the names: PowerPoint exports "Slide1.PNG … Slide10.PNG"
             var entries = z.Entries.Where(e => e.Length > 0 && ImageExtensions.Contains(Path.GetExtension(e.Name).ToLowerInvariant()) && !e.FullName.Contains("__MACOSX"))
                 .OrderBy(e => NaturalKey(e.FullName), StringComparer.Ordinal).ToList();
             if (entries.Count > 500) throw new SlideDeckException("zip の画像が多すぎます（500 枚まで）");
+            long total = 0;
+            var buffer = new byte[1 << 16];
             for (int i = 0; i < entries.Count; i++)
             {
-                var src = Path.Combine(tmp, $"{i + 1:D3}{Path.GetExtension(entries[i].Name).ToLowerInvariant()}");
-                entries[i].ExtractToFile(src, true);   // fixed local names: entry paths never reach the file system
+                var src = Path.Combine(tmp, $"{i + 1:D3}{Path.GetExtension(entries[i].Name).ToLowerInvariant()}");   // fixed local names: entry paths never reach the file system
+                await using (var input = entries[i].Open())
+                await using (var output = File.Create(src))
+                {
+                    long size = 0;
+                    for (int n; (n = await input.ReadAsync(buffer, ct)) > 0;)
+                    {
+                        size += n; total += n;
+                        if (size > MaxZipImageBytes) throw new SlideDeckException($"zip の画像 {entries[i].FullName} が大きすぎます（1 枚 {MaxZipImageBytes >> 20} MB まで）");
+                        if (total > MaxZipTotalBytes) throw new SlideDeckException($"zip の画像が合計で大きすぎます（{MaxZipTotalBytes >> 30} GB まで）");
+                        await output.WriteAsync(buffer.AsMemory(0, n), ct);
+                    }
+                }
                 var r = await ff.RunFfmpegAsync(["-v", "error", "-nostdin", "-y", "-i", src, "-frames:v", "1", "-update", "1", Path.Combine(outDir, $"slide-{i + 1:D3}.png")], ct);
+                File.Delete(src);
                 if (r.ExitCode != 0) throw new SlideDeckException($"zip の画像 {entries[i].FullName} を読めません: " + FFmpeg.Tail(r.StdErr));
             }
         }
-        Directory.Delete(tmp, true);
+        catch (InvalidDataException ex) { throw new SlideDeckException("zip を読めません（壊れているか、zip ではありません）: " + ex.Message); }
+        finally { try { Directory.Delete(tmp, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     }
 
     static string NaturalKey(string s) => System.Text.RegularExpressions.Regex.Replace(s.ToLowerInvariant(), @"\d+", m => m.Value.PadLeft(8, '0'));

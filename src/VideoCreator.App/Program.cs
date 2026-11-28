@@ -125,7 +125,9 @@ app.Use(async (ctx, next) =>
     if (ctx.Request.Path.StartsWithSegments("/api") && !HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method)
         && ctx.Request.Headers["X-VideoCreator"] != "1")
     {
-        ctx.Response.StatusCode = 403; await ctx.Response.WriteAsync("missing X-VideoCreator header"); return;
+        ctx.Response.StatusCode = 403;
+        await ctx.Response.WriteAsJsonAsync(new { error = new { code = "E-CSRF", message = "X-VideoCreator: 1 ヘッダーのない変更リクエストは受け付けません" } });
+        return;
     }
     // while the projects folder is being moved, nothing else may write into it (the move itself already holds the lock)
     if (ctx.Request.Path.StartsWithSegments("/api") && !HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method)
@@ -139,6 +141,21 @@ app.Use(async (ctx, next) =>
     ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
     ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
     await next();
+});
+// Errors ASP.NET Core answers without a body (a malformed JSON body in production, an unknown route or method) get the API's JSON error shape too.
+app.UseStatusCodePages(async status =>
+{
+    var http = status.HttpContext;
+    if (!http.Request.Path.StartsWithSegments("/api")) return;
+    var (code, message) = http.Response.StatusCode switch
+    {
+        400 => ("E-VALIDATION", "リクエストの形式が正しくありません"),
+        404 => ("E-NOT-FOUND", "この API はありません"),
+        405 => ("E-METHOD", "この API はこの操作（HTTP メソッド）に対応していません"),
+        415 => ("E-VALIDATION", "Content-Type: application/json で送信してください"),
+        var other => ("E-HTTP", $"HTTP {other}"),
+    };
+    await http.Response.WriteAsJsonAsync(new { error = new { code, message } });
 });
 app.UseDefaultFiles();
 app.UseStaticFiles();

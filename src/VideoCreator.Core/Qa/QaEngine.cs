@@ -245,6 +245,7 @@ public sealed class QaEngine(FFmpeg ff)
 
     /// <summary>Shorts: the preset's range and the 180 s cap (C-1); a Preset.Short file as a whole stays within its own max (60 s). Series parts: the part's own range around the requested length.</summary>
     public static (double Min, double Max, double Cap) DurationRange(EditPlan plan, Preset p) =>
+        plan.BodyRange is { } body ? (body.Length, body.Length, double.PositiveInfinity) :
         plan.Series is { } s ? (s.MinSec, s.MaxSec, double.PositiveInfinity) : (p.Target.Min, p.Target.Max, p.Short ? p.Target.Max : 180);
 
     static string RangeText(double min, double max, double cap) =>

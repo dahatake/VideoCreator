@@ -77,14 +77,16 @@ public static class ProjectDeletion
 
     static string? CacheKey(string? sha) => sha is { Length: >= 16 } ? sha[..16] : null;
 
-    /// <summary>Only folders the app created: directly under the projects root and named "&lt;name&gt;_&lt;id[2..8]&gt;".</summary>
+    /// <summary>Only folders the app created: directly under the projects root and named like the project (older projects: "&lt;name&gt;_&lt;id[2..8]&gt;").</summary>
     public static bool OwnsFolder(Project p, string projectsRoot)
     {
         if (string.IsNullOrWhiteSpace(p.Directory) || p.Id.Length < 8) return false;
         var dir = Path.GetFullPath(p.Directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var root = Path.GetFullPath(projectsRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var folder = Path.GetFileName(dir);
         return string.Equals(Path.GetDirectoryName(dir), root, StringComparison.OrdinalIgnoreCase)
-            && Path.GetFileName(dir).EndsWith("_" + p.Id[2..8], StringComparison.OrdinalIgnoreCase);
+            && (folder.EndsWith("_" + p.Id[2..8], StringComparison.OrdinalIgnoreCase)
+                || string.Equals(folder, Api.ProjectFolderName(p.Name), StringComparison.OrdinalIgnoreCase));
     }
 
     internal static bool TryDeleteInside(string root, string name)

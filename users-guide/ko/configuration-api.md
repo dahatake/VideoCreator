@@ -60,7 +60,7 @@ dotnet run --project src\VideoCreator.App -c Release
 - JSON은 `snake_case`이며 enum도 문자열입니다. 공유 정의는 [Json](../../src/VideoCreator.Core/Json.cs)과 [Models](../../src/VideoCreator.Core/Models/Models.cs).
 - 쓰기 요청에는 `X-VideoCreator: 1`이 필수입니다. JSON은 `Content-Type: application/json`.
 - GET/HEAD에는 이 헤더를 요구하지 않습니다. 헤더는 인증이나 API 키가 아니라 교차 사이트 쓰기를 막는 방어 장치입니다.
-- 일반 오류는 `{ "error": { "code": "...", "message": "...", "detail": ... } }`. HTTP status와 code를 모두 처리하세요. Host 거부·헤더 누락은 일반 텍스트일 수도 있습니다.
+- 일반 오류는 `{ "error": { "code": "...", "message": "...", "detail": ... } }`. HTTP status와 code를 모두 처리하세요. `/api`에서는 헤더 누락(`E-CSRF`)·잘못된 JSON(`E-VALIDATION`)·없는 API(`E-NOT-FOUND`)·지원하지 않는 메서드(`E-METHOD`)도 같은 형식입니다. Host 거부만 일반 텍스트입니다.
 - 비동기 내보내기의 `202`는 접수이며 완료가 아닙니다. 반환된 render ID를 폴링하세요.
 - 일반 요청 상한은 64MiB입니다. **영상 upload 경로는 자체 상한을 해제**하고 multipart를 임시 버퍼링한 뒤 복사합니다. BGM은 HTTP body를 2000MiB로 바꾸지만(한 번에 최대 20곡) multipart 파싱에도 별도 상한이 있습니다. 다른 경로에 영상과 같은 무제한 조건을 적용하지 마세요.
 
@@ -81,12 +81,12 @@ dotnet run --project src\VideoCreator.App -c Release
 | 저장 위치 | PUT `/settings/projects-dir` | 같은 형식으로 실제 변경/이동 |
 | 저장 위치 | POST `/projects/restore` | 저장 폴더의 `.videocreator\state.json`에서 이 PC에 없는 프로젝트를 복원. `scanned`, `restored`, `already_present`, `failed`, `missing_sources` 반환(기존 프로젝트는 덮어쓰지 않음) |
 | 패턴 | GET `/presets` | 시작 시 로드한 프리셋 |
-| Project | GET / POST `/projects` | 목록/`{"name":"작업 이름"}`으로 생성 |
+| Project | GET / POST `/projects` | 목록/`{"name":"작업 이름"}`으로 생성(같은 이름의 폴더가 있으면 409). `name`을 비우면 `default_name`을 이름으로 쓰고, 사용 중이면 "이름 (2)"처럼 번호를 붙임 |
 | Project | GET / PATCH / DELETE `/projects/{id}` | 상세(`resume_state`에 재개 단계·대상 ID 반환)/`{"name":"새 이름"}`/삭제 |
 | Project | PUT `/projects/{id}/generation-settings` | 패턴과 생성 옵션을 프로젝트에 저장 |
 | Project | PUT `/projects/{id}/workflow-state` | 현재 단계(`project` / `settings` / `job` / `candidates` / `exports` / `review` / `render`) 저장. `exports`는 `job_id` 필수이며 Job이 `ready` / `done`일 때만 가능 |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`. 복사하지 않음 |
-| Asset | POST `/projects/{id}/assets/upload` | multipart `file` 필드로 영상 복사 |
+| Asset | POST `/projects/{id}/assets/upload` | multipart `file` 필드로 영상 복사. 파일 이름이 같은 다른 영상은 "이름 (2)"로 저장하며 기존 소재를 덮어쓰지 않음 |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
 | 견적 | GET `/projects/{id}/estimate?preset=P4` | scope별 전송량·단가 기반 추정 |
 | Asset | PATCH `/assets/{id}` | role, speaker, sync_offset, clear_speaker |

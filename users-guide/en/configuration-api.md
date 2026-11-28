@@ -60,7 +60,7 @@ Variables apply to that PowerShell process and its children; reset in a new term
 - JSON uses `snake_case`; enums are strings. Shared [Json](../../src/VideoCreator.Core/Json.cs), [Models](../../src/VideoCreator.Core/Models/Models.cs).
 - Writes require `X-VideoCreator: 1`; JSON requires `Content-Type: application/json`.
 - GET/HEAD do not need that header. It is a cross-site-write guard, not authentication/API key.
-- Normal errors: `{ "error": { "code": "...", "message": "...", "detail": ... } }`. Handle HTTP status and code. Host/header rejections can be plain text.
+- Normal errors: `{ "error": { "code": "...", "message": "...", "detail": ... } }`. Handle HTTP status and code. Under `/api`, a missing header (`E-CSRF`), malformed JSON (`E-VALIDATION`), an unknown route (`E-NOT-FOUND`) or method (`E-METHOD`) use the same shape; only a Host rejection is plain text.
 - Async export `202` means accepted, not finished; poll returned render ID.
 - General limit 64 MiB. **Video uploads remove the route-specific limit**, buffer multipart temporarily, then copy. BGM raises HTTP body limit to 2000 MiB (up to 20 tracks), with a separate multipart parser limit. Do not assume other routes are unlimited.
 
@@ -81,12 +81,12 @@ Variables apply to that PowerShell process and its children; reset in a new term
 | Storage | PUT `/settings/projects-dir` | Same body; change/move |
 | Storage | POST `/projects/restore` | Restore projects this computer lacks from `.videocreator\state.json` in the projects folder; returns `scanned`, `restored`, `already_present`, `failed`, `missing_sources` (never overwrites existing projects) |
 | Patterns | GET `/presets` | Presets loaded at startup |
-| Project | GET / POST `/projects` | List / create `{"name":"Project name"}` |
+| Project | GET / POST `/projects` | List / create `{"name":"Project name"}` (409 when a folder with that name exists). With an empty `name`, `default_name` is used, numbered like "Name (2)" when taken |
 | Project | GET / PATCH / DELETE `/projects/{id}` | Details (`resume_state` includes stage/IDs) / `{"name":"New name"}` / delete |
 | Project | PUT `/projects/{id}/generation-settings` | Save pattern/options |
 | Project | PUT `/projects/{id}/workflow-state` | Save `project` / `settings` / `job` / `candidates` / `exports` / `review` / `render`; `exports` requires `job_id` and Job `ready` / `done` |
 | Asset | POST `/projects/{id}/assets` | `{"path":"C:\\Videos\\talk.mp4"}`; no copy |
-| Asset | POST `/projects/{id}/assets/upload` | Copy video from multipart `file` |
+| Asset | POST `/projects/{id}/assets/upload` | Copy video from multipart `file`. Another video with the same file name is saved as "Name (2)"; an existing source is never overwritten |
 | Rights | POST `/projects/{id}/rights` | `{"asset_id":"...","confirmed":true}` |
 | Estimate | GET `/projects/{id}/estimate?preset=P4` | Scope-specific transmission/unit-price estimates |
 | Asset | PATCH `/assets/{id}` | role, speaker, sync_offset, clear_speaker |

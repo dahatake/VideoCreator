@@ -32,18 +32,22 @@ public static class SwitchPlanner
 
     public static int SpeakerOf(SourceAsset a) => a.Speaker ?? a.Role switch { AssetRole.Main => 1, AssetRole.CamA => 1, AssetRole.CamB => 2, _ => 0 };
 
-    public static List<Clip> Plan(IReadOnlyList<Clip> speech, Transcript tr, IReadOnlyList<SourceAsset> assets, SourceAsset master, Preset p, IReadOnlyList<Interval> bursts, List<string> notes)
+    public static List<Clip> Plan(IReadOnlyList<Clip> speech, Transcript tr, IReadOnlyList<SourceAsset> assets, SourceAsset master, Preset p, IReadOnlyList<Interval> bursts, List<string> notes, SourceAsset? fallback = null)
     {
         var sw = p.Switching ?? new PresetSwitching();
         var cams = assets.Where(a => SpeakerOf(a) > 0).GroupBy(SpeakerOf).ToDictionary(g => g.Key, g => g.First());
         var wide = assets.FirstOrDefault(a => a.Role == AssetRole.Wide);
         var clips = new List<Clip>(); int ci = 0; double outT = 0, nextWide = sw.WideEverySec;
 
-        SourceAsset Cam(int speaker) => cams.TryGetValue(speaker, out var a) ? a : wide ?? master;
+        SourceAsset Cam(int speaker) => cams.TryGetValue(speaker, out var a) ? a : wide ?? fallback ?? master;
         Clip Make(SourceAsset cam, double m0, double m1, string role, double zoom = 1.0)
         {
             double s0 = cam.CameraTime(m0, master.Id), s1 = s0 + (m1 - m0);
-            if (s0 < 0 || s1 > cam.Media.Duration + 0.01) { cam = master; s0 = m0; s1 = m1; notes.Add($"{m0:F1}s は同期後のカメラ映像が範囲外のため、基準映像を使いました"); }
+            if (s0 < 0 || s1 > cam.Media.Duration + 0.01)
+            {
+                cam = fallback ?? master; s0 = cam.CameraTime(m0, master.Id); s1 = s0 + m1 - m0;
+                notes.Add($"{m0:F1}s は同期後のカメラ映像が範囲外のため、基準映像を使いました");
+            }
             return new Clip { ClipId = $"c{++ci}", AssetId = cam.Id, SrcIn = Math.Round(s0, 3), SrcOut = Math.Round(s1, 3), AudioIn = Math.Round(m0, 3), Role = role, Zoom = zoom, Reframe = new ReframeSpec { Mode = cam.Media.Aspect < 0.9 ? "fit" : "blur_bg" } };
         }
 

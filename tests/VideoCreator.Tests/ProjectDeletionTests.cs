@@ -100,6 +100,9 @@ public sealed class ProjectDeletionTests : IDisposable
     [Theory]
     [InlineData("名前_111111", true)]
     [InlineData("名前_999999", false)]            // someone else's folder
+    [InlineData("n", true)]                       // named like the project
+    [InlineData("N", true)]
+    [InlineData("other", false)]
     [InlineData("", false)]                       // the projects root itself
     [InlineData("sub/名前_111111", false)]        // not a direct child
     public void Owns_only_its_own_direct_child_folder(string rel, bool expected)
@@ -185,5 +188,81 @@ public sealed class ProjectDeletionTests : IDisposable
         var again = await http.DeleteAsync($"/api/projects/{id}", ct);
         Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
         Assert.Equal("E-NOT-FOUND", (await again.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Folder_always_has_the_project_name_and_follows_a_rename()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var app = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("VideoCreator:DataDir", Data);
+            b.UseSetting("VideoCreator:ProjectsDir", Projects);
+            b.UseSetting("VideoCreator:OpenBrowser", "false");
+        });
+        using var http = app.CreateClient(new() { BaseAddress = new Uri("http://127.0.0.1") });
+        http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
+
+        var a = await (await http.PostAsJsonAsync("/api/projects", new { name = "新しいプロジェクト" }, ct)).Content.ReadFromJsonAsync<JsonElement>(ct);
+        var id = a.GetProperty("id").GetString()!;
+        Assert.Equal(Path.Combine(Projects, "新しいプロジェクト"), a.GetProperty("directory").GetString());
+        await File.WriteAllTextAsync(Path.Combine(a.GetProperty("directory").GetString()!, "keep.txt"), "x", ct);
+
+        using var dup = await http.PostAsJsonAsync("/api/projects", new { name = "新しいプロジェクト" }, ct);
+        Assert.Equal(HttpStatusCode.Conflict, dup.StatusCode);
+
+        var renamed = await (await http.PatchAsJsonAsync($"/api/projects/{id}", new { name = "Episode 018 GEEKさん - MSIgnite 2026の思い出" }, ct)).Content.ReadFromJsonAsync<JsonElement>(ct);
+        var dir = renamed.GetProperty("directory").GetString()!;
+        Assert.Equal(Path.Combine(Projects, "Episode 018 GEEKさん - MSIgnite 2026の思い出"), dir);
+        Assert.True(File.Exists(Path.Combine(dir, "keep.txt")));
+        Assert.False(Directory.Exists(Path.Combine(Projects, "新しいプロジェクト")));
+        Assert.Equal(dir, (await http.GetFromJsonAsync<JsonElement>($"/api/projects/{id}", ct)).GetProperty("project").GetProperty("directory").GetString());
+    }
+
+    [Fact]
+    public async Task Left_empty_name_gets_a_free_numbered_default_and_older_folders_never_block_a_language_change()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var app = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("VideoCreator:DataDir", Data);
+            b.UseSetting("VideoCreator:ProjectsDir", Projects);
+            b.UseSetting("VideoCreator:OpenBrowser", "false");
+        });
+        using var http = app.CreateClient(new() { BaseAddress = new Uri("http://127.0.0.1") });
+        http.DefaultRequestHeaders.Add("X-VideoCreator", "1");
+
+        // the home screen's name box may stay empty: every new project is created, numbered when the default name is taken
+        var names = new List<string>();
+        for (int i = 0; i < 3; i++)
+        {
+            using var r = await http.PostAsJsonAsync("/api/projects", new { name = "", default_name = "New project" }, ct);
+            Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+            var p = await r.Content.ReadFromJsonAsync<JsonElement>(ct);
+            names.Add(p.GetProperty("name").GetString()!);
+            Assert.Equal(Path.Combine(Projects, names[^1]), p.GetProperty("directory").GetString());
+        }
+        Assert.Equal(["New project", "New project (2)", "New project (3)"], names);
+
+        // a project from an older version keeps its "<name>_<id>" folder while a folder with its plain name is taken
+        var store = app.Services.GetRequiredService<Runtime>().Store;
+        var legacy = new Project { Id = "p_0ld0000000", Name = "New project", Directory = Path.Combine(Projects, "New project_0ld000") };
+        Directory.CreateDirectory(legacy.Directory);
+        store.Put(Kinds.Project, legacy.Id, null, legacy);
+        using (var lang = await http.PatchAsJsonAsync($"/api/projects/{legacy.Id}", new { language = "en-US" }, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, lang.StatusCode);
+            var p = await lang.Content.ReadFromJsonAsync<JsonElement>(ct);
+            Assert.Equal("en-US", p.GetProperty("language").GetString());
+            Assert.Equal(legacy.Directory, p.GetProperty("directory").GetString());
+        }
+
+        // a project whose folder was removed outside the app can still be renamed
+        Directory.Delete(legacy.Directory);
+        using (var rename = await http.PatchAsJsonAsync($"/api/projects/{legacy.Id}", new { name = "Renamed" }, ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+            Assert.Equal("Renamed", (await rename.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("name").GetString());
+        }
     }
 }

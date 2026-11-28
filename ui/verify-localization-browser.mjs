@@ -115,8 +115,11 @@ const route = async (hash, selector) => {
   await page.locator(selector).first().waitFor();
 };
 const switchLocale = async locale => {
-  await page.locator('#ui-language').selectOption(locale);
-  await page.waitForFunction(value => document.documentElement.lang === value && !document.querySelector('#ui-language').disabled, locale);
+  const button = page.locator(`#ui-language [data-language="${locale}"]`);
+  await button.click();
+  await page.waitForFunction(value => document.documentElement.lang === value && [...document.querySelectorAll('#ui-language [data-language]')].every(button => !button.disabled), locale);
+  assert.equal(await button.getAttribute('aria-pressed'), 'true', `${locale}: selected language toggle`);
+  assert.equal(await page.locator('#ui-language [aria-pressed="true"]').count(), 1, `${locale}: one selected language`);
 };
 try {
   await route('#/', '#new');
@@ -220,8 +223,8 @@ try {
   await restricted.evaluate(() => { location.hash = '#/p/p1/settings'; });
   await restricted.locator('#gen').waitFor();
   assert.equal(await restricted.locator('html').getAttribute('lang'), 'ja');
-  await restricted.locator('#ui-language').selectOption('en');
-  await restricted.waitForFunction(() => document.documentElement.lang === 'en' && !document.querySelector('#ui-language').disabled);
+  await restricted.locator('#ui-language [data-language="en"]').click();
+  await restricted.waitForFunction(() => document.documentElement.lang === 'en' && [...document.querySelectorAll('#ui-language [data-language]')].every(button => !button.disabled));
   assert.equal(await restricted.locator('#gen').count(), 1, 'language switching works when storage is denied');
   await restricted.close();
   assets.push({ ...assets[0], id: 'a2', path: 'C:\\Media\\資料 USER.mp4', role: 'screen', sync_method: 'audio-map', sync_map: [{ d: 0.1 }, { d: 0.2 }] });

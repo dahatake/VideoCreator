@@ -31,7 +31,7 @@ public sealed partial class SignalExtractor(FFmpeg ff)
     /// <summary>Hard cuts (scdet) and black frames (blackdetect: fade-outs and dip-to-black transitions, which scdet misses) in one decode.</summary>
     public async Task<(List<double> Shots, List<Interval> Blacks)> DetectShotsAsync(string video, CancellationToken ct, IProgress<double>? progress = null, double duration = 0)
     {
-        var r = await ff.RunFfmpegAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0,blackdetect=d=0.2:pix_th=0.10", "-f", "null", "-"], ct, progress: progress, duration: duration);
+        var r = await ff.RunFfmpegCheckedAsync(["-hide_banner", "-nostats", "-i", video, "-an", "-vf", "scale=320:-2,scdet=threshold=10:sc_pass=0,blackdetect=d=0.2:pix_th=0.10", "-f", "null", "-"], ct, progress: progress, duration: duration);
         return (ScdetRegex().Matches(r.StdErr).Select(m => double.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)).Distinct().OrderBy(x => x).ToList(), ParseBlacks(r.StdErr));
     }
 
@@ -41,7 +41,8 @@ public sealed partial class SignalExtractor(FFmpeg ff)
     public async Task<List<double>> LoudnessSeriesAsync(string audio, CancellationToken ct)
     {
         using var ms = new MemoryStream();
-        await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-i", audio, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], ct, stdout: ms);
+        var r = await ff.RunFfmpegAsync(["-hide_banner", "-loglevel", "error", "-i", audio, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], ct, stdout: ms);
+        if (r.ExitCode != 0) throw new FFmpegException("音声解析に失敗しました: " + FFmpeg.Tail(r.StdErr));
         return RmsDb(ms.GetBuffer().AsSpan(0, (int)ms.Length), 1600);
     }
 
